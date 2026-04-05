@@ -1,8 +1,9 @@
 """
-VocalSync 錄音器 — 獨立啟動入口。
-只包含錄音頁面，不含下載管理介面。
+VocalSync Studio — 獨立啟動入口。
+卡拉OK 錄音工作室：載入伴奏、同步影片、錄製人聲。
 """
 
+import ctypes
 import os
 import sys
 
@@ -12,13 +13,28 @@ from ui import theme as T
 from ui.recording_page import RecordingPage
 
 _DEFAULT_SETTINGS: dict = {
-    "theme": "dark",
+    "theme": "light",
     "download_folder": os.path.join(os.path.expanduser("~"), "Downloads", "YouTube"),
 }
 
 
+def _load_bundled_font():
+    """載入打包的粉圓字體（Windows API），讓未安裝字體的使用者也能正常顯示。"""
+    if sys.platform != "win32":
+        return
+    if getattr(sys, "frozen", False):
+        base = sys._MEIPASS
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    font_path = os.path.join(base, "assets", "jf-openhuninn-2.1.ttf")
+    if os.path.isfile(font_path):
+        # FR_PRIVATE = 0x10 — 只在本行程中生效，不汙染系統字體
+        ctypes.windll.gdi32.AddFontResourceExW(font_path, 0x10, 0)
+
+
 class RecorderApp(ctk.CTk):
     def __init__(self):
+        _load_bundled_font()
         ctk.set_appearance_mode("light")
         ctk.set_default_color_theme("blue")
         super().__init__()

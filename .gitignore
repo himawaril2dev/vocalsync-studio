@@ -27,3 +27,6 @@ settings.json
 
 # Temporary audio files
 *_audio.wav
+
+# Bundled binaries (too large for git)
+assets/ffmpeg/

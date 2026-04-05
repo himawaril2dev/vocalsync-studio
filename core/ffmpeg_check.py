@@ -21,7 +21,14 @@ def find_ffmpeg() -> str | None:
     if os.path.isfile(candidate):
         return candidate
 
-    # 3. Windows 常見安裝路徑
+    # 3. 打包後的 assets/ffmpeg/ 目錄（PyInstaller _MEIPASS）
+    if getattr(sys, "frozen", False):
+        meipass = sys._MEIPASS
+        candidate = os.path.join(meipass, "assets", "ffmpeg", "ffmpeg.exe")
+        if os.path.isfile(candidate):
+            return candidate
+
+    # 4. Windows 常見安裝路徑
     if sys.platform == "win32":
         common_paths = [
             r"C:\ffmpeg\bin\ffmpeg.exe",
