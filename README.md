@@ -119,4 +119,22 @@ vocalsync-studio/
 
 ## 授權
 
-MIT License
+本專案原始碼以 **MIT License** 釋出。
+
+### 第三方元件授權
+
+本應用程式內建以下第三方元件，各自適用其原始授權條款：
+
+| 元件 | 授權 | 來源 |
+|------|------|------|
+| FFmpeg | GPL / LGPL | [ffmpeg.org](https://ffmpeg.org/) |
+| jf open 粉圓 2.1 | OFL 1.1 | [justfont](https://justfont.com/huninn/) |
+| OpenCV | Apache 2.0 | [opencv.org](https://opencv.org/) |
+| customtkinter | MIT | [PyPI](https://pypi.org/project/customtkinter/) |
+| yt-dlp | Unlicense | [GitHub](https://github.com/yt-dlp/yt-dlp) |
+| sounddevice | MIT | [PyPI](https://pypi.org/project/sounddevice/) |
+| soundfile | BSD | [PyPI](https://pypi.org/project/soundfile/) |
+| Pillow | HPND | [PyPI](https://pypi.org/project/Pillow/) |
+| NumPy | BSD | [PyPI](https://pypi.org/project/numpy/) |
+
+FFmpeg 以獨立執行檔形式呼叫，不與本專案原始碼連結。FFmpeg 原始碼可從 [ffmpeg.org/download.html](https://ffmpeg.org/download.html) 取得。
