@@ -30,7 +30,7 @@ class RecorderApp(ctk.CTk):
             "weight": "normal",
         }
 
-        self.title("VocalSync 錄音器")
+        self.title("VocalSync Studio")
         self.geometry("820x720")
         self.minsize(680, 580)
         self.resizable(True, True)
