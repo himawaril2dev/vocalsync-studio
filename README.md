@@ -9,12 +9,25 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Python-3.10%2B-blue">
   <img src="https://img.shields.io/badge/Platform-Windows-lightgrey">
   <img src="https://img.shields.io/badge/License-MIT-green">
+  <a href="https://github.com/himawaril2dev/vocalsync-studio/releases/latest">
+    <img src="https://img.shields.io/github/v/release/himawaril2dev/vocalsync-studio?label=%E4%B8%8B%E8%BC%89">
+  </a>
 </p>
 
 ---
+
+## 下載
+
+**不需要安裝任何環境，解壓縮後即可使用。**
+
+1. 前往 [Releases](https://github.com/himawaril2dev/vocalsync-studio/releases/latest) 頁面
+2. 下載 `VocalSync-Studio-v1.0-win64.zip`
+3. 解壓縮到任意資料夾
+4. 執行 `VocalSync Studio.exe`
+
+已內建 FFmpeg 與粉圓字體，不需額外安裝。
 
 ## 功能
 
@@ -33,14 +46,16 @@
 
 > *（待補充）*
 
-## 安裝
+## 從原始碼執行
+
+如果你想自行修改或開發，可以從原始碼執行：
 
 ### 前置需求
 
 - Python 3.10 以上
 - [FFmpeg](https://ffmpeg.org/download.html)（需加入系統 PATH）
 
-### 安裝步驟
+### 步驟
 
 ```bash
 git clone https://github.com/himawaril2dev/vocalsync-studio.git
@@ -49,33 +64,39 @@ pip install -r requirements.txt
 python main.py
 ```
 
-## 打包為 EXE
+### 自行打包為 EXE
 
 ```bash
 pip install pyinstaller
-pyinstaller --name "VocalSync Studio" --windowed --icon=assets/icon.ico --add-data "assets;assets" --collect-all cv2 --collect-all sounddevice --collect-all soundfile main.py
+pyinstaller "VocalSync Studio.spec"
 ```
+
+產出位於 `dist/VocalSync Studio/`。
+
+> 注意：自行打包前需先將 FFmpeg 執行檔放入 `assets/ffmpeg/` 目錄。
 
 ## 專案結構
 
 ```
 vocalsync-studio/
-├── main.py                 # 應用程式入口
+├── main.py                     # 應用程式入口
 ├── requirements.txt
-├── make_icon.py            # 圖示產生器
+├── VocalSync Studio.spec       # PyInstaller 打包設定
+├── make_icon.py                # 圖示產生器
 ├── assets/
-│   ├── icon.png
-│   └── icon.ico
+│   ├── icon.png / icon.ico     # 向日葵圖示
+│   ├── jf-openhuninn-2.1.ttf   # 粉圓字體（免安裝載入）
+│   └── ffmpeg/                 # FFmpeg 執行檔（不納入 git）
 ├── core/
-│   ├── audio_recorder.py   # 錄音核心（播放 / 錄音 / 匯出）
-│   ├── video_player.py     # OpenCV 影片播放器
-│   ├── downloader.py       # yt-dlp 封裝（伴奏下載）
-│   ├── ffmpeg_check.py     # FFmpeg 偵測
-│   └── format_helper.py    # 格式選項定義
+│   ├── audio_recorder.py       # 錄音核心（播放 / 錄音 / 匯出）
+│   ├── video_player.py         # OpenCV 影片播放器
+│   ├── downloader.py           # yt-dlp 封裝（伴奏下載）
+│   ├── ffmpeg_check.py         # FFmpeg 路徑偵測
+│   └── format_helper.py        # 格式選項定義
 └── ui/
-    ├── theme.py            # 設計系統（色碼 / 字體 / 間距）
-    ├── recording_page.py   # 錄音頁面
-    └── vu_meter.py         # VU 表元件
+    ├── theme.py                # 設計系統（色碼 / 字體 / 間距）
+    ├── recording_page.py       # 錄音頁面
+    └── vu_meter.py             # VU 表元件
 ```
 
 ## 技術棧
@@ -87,7 +108,8 @@ vocalsync-studio/
 | 影片播放 | OpenCV |
 | 影像渲染 | Pillow + NumPy |
 | 伴奏下載 | yt-dlp |
-| 音訊處理 | FFmpeg |
+| 音訊處理 | FFmpeg（內建） |
+| 字體 | jf open 粉圓 2.1（內建） |
 
 ## 相關專案
 
