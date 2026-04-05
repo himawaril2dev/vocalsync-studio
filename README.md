@@ -23,8 +23,8 @@
 **不需要安裝任何環境，解壓縮後即可使用。**
 
 1. 前往 [Releases](https://github.com/himawaril2dev/vocalsync-studio/releases/latest) 頁面
-2. 下載 `VocalSync-Studio-v1.0-win64.zip`
-3. 解壓縮到任意資料夾
+2. 下載 `VocalSync-Studio-v1.0-win64.7z`
+3. 使用 [7-Zip](https://www.7-zip.org/) 解壓縮到任意資料夾
 4. 執行 `VocalSync Studio.exe`
 
 已內建 FFmpeg 與粉圓字體，不需額外安裝。
