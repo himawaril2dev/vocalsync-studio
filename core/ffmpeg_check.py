@@ -1,7 +1,16 @@
+"""
+FFmpeg 路徑偵測與驗證模組。
+自動搜尋系統 PATH、應用程式目錄、常見安裝路徑，
+提供版本查詢與可用性檢查。
+"""
+
+import logging
 import os
 import shutil
 import subprocess
 import sys
+
+_logger = logging.getLogger(__name__)
 
 
 def find_ffmpeg() -> str | None:
@@ -74,7 +83,11 @@ def get_ffmpeg_version() -> str | None:
         )
         first_line = result.stdout.splitlines()[0] if result.stdout else ""
         return first_line
-    except Exception:
+    except subprocess.TimeoutExpired:
+        _logger.warning("FFmpeg 版本查詢逾時（5s）")
+        return None
+    except OSError as exc:
+        _logger.warning("執行 FFmpeg 時發生錯誤: %s", exc)
         return None
 
 

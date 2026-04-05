@@ -5,8 +5,9 @@
 """
 
 import time
+import tkinter as tk
 import threading
-from typing import Callable
+from typing import Any, Callable
 
 import numpy as np
 from PIL import Image, ImageTk
@@ -19,7 +20,12 @@ class VideoPlayer:
     音訊同步：透過外部傳入的「已播放秒數」getter 來對齊幀位置。
     """
 
-    def __init__(self, root, display_widget, display_size: tuple[int, int] = (640, 360)):
+    def __init__(
+        self,
+        root: tk.Misc,
+        display_widget: Any,
+        display_size: tuple[int, int] = (640, 360),
+    ) -> None:
         """
         root:           主視窗（用於 after() 排程）
         display_widget: 任何支援 configure(image=...) 的 tkinter widget
@@ -76,7 +82,7 @@ class VideoPlayer:
     #  播放控制                                                            #
     # ------------------------------------------------------------------ #
 
-    def start(self, get_elapsed: Callable[[], float] | None = None):
+    def start(self, get_elapsed: Callable[[], float] | None = None) -> None:
         """
         開始播放影片幀。
         get_elapsed: 可選的 callable，回傳目前音訊已播放秒數（用於音訊同步）。
@@ -91,22 +97,22 @@ class VideoPlayer:
         self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         self._schedule_next_frame()
 
-    def stop(self):
+    def stop(self) -> None:
         """停止播放。"""
         self._playing = False
 
-    def release(self):
+    def release(self) -> None:
         """釋放資源。"""
         self._playing = False
         if self._cap:
             self._cap.release()
             self._cap = None
 
-    def set_display_size(self, width: int, height: int):
+    def set_display_size(self, width: int, height: int) -> None:
         """動態調整顯示尺寸（視窗縮放時使用）。"""
         self._display_size = (width, height)
 
-    def seek(self, seconds: float):
+    def seek(self, seconds: float) -> None:
         """跳轉到指定秒數並顯示靜止幀。"""
         if self._cap is None or self._cv2 is None:
             return
@@ -122,7 +128,7 @@ class VideoPlayer:
     #  內部                                                                #
     # ------------------------------------------------------------------ #
 
-    def _schedule_next_frame(self):
+    def _schedule_next_frame(self) -> None:
         if not self._playing or self._cap is None:
             return
 
@@ -152,7 +158,7 @@ class VideoPlayer:
         interval_ms = max(1, int(1000 / self._fps))
         self._root.after(interval_ms, self._schedule_next_frame)
 
-    def _show_frame(self, frame: np.ndarray):
+    def _show_frame(self, frame: np.ndarray) -> None:
         """將 OpenCV BGR 幀轉換並顯示在 widget 上（保持原始比例，黑邊填充）。"""
         cv2 = self._cv2
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)

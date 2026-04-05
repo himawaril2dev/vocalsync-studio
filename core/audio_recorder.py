@@ -12,6 +12,9 @@ import numpy as np
 import sounddevice as sd
 import soundfile as sf
 
+from core.pitch_data import PitchSample, PitchTrack
+from core.pitch_detector import PitchDetector
+
 
 class AudioRecorder:
     """
@@ -46,6 +49,14 @@ class AudioRecorder:
         self._backing_rms: float = 0.0     # 伴奏輸出 RMS（供 VU 表）
         self._playback_frame_pos: int = 0  # 目前播放幀位置（供暫停/繼續）
         self._playback_gen: int = 0        # 播放世代計數器（防止舊回呼干擾）
+        self._lock = threading.Lock()      # 保護跨執行緒共享狀態
+
+        # 音高偵測
+        self._pitch_detector = PitchDetector(samplerate=self.SAMPLERATE)
+        self._current_pitch: PitchSample | None = None
+        self._pitch_track = PitchTrack()
+        self._pitch_buf = np.zeros(2048, dtype=np.float64)
+        self._pitch_buf_pos: int = 0
 
     # ------------------------------------------------------------------ #
     #  載入伴奏                                                            #
@@ -60,15 +71,20 @@ class AudioRecorder:
         if data.shape[1] == 1:
             data = np.column_stack([data, data])   # mono → stereo
         if sr != self.SAMPLERATE:
-            # 簡易重採樣（使用 numpy 插值）
+            # FFT-based 重採樣（品質優於線性插值）
+            from numpy.fft import rfft, irfft
             orig_len = len(data)
             target_len = int(orig_len * self.SAMPLERATE / sr)
-            x_orig = np.linspace(0, 1, orig_len)
-            x_new = np.linspace(0, 1, target_len)
-            data = np.column_stack([
-                np.interp(x_new, x_orig, data[:, 0]),
-                np.interp(x_new, x_orig, data[:, 1]),
-            ])
+            resampled_channels = []
+            for ch in range(data.shape[1]):
+                spectrum = rfft(data[:, ch])
+                new_spectrum = np.zeros(target_len // 2 + 1, dtype=spectrum.dtype)
+                copy_len = min(len(spectrum), len(new_spectrum))
+                new_spectrum[:copy_len] = spectrum[:copy_len]
+                resampled = irfft(new_spectrum, n=target_len)
+                resampled *= target_len / orig_len  # 補償能量
+                resampled_channels.append(resampled.astype(np.float32))
+            data = np.column_stack(resampled_channels)
         self._backing_data = data
         self._samplerate = self.SAMPLERATE
         self._duration = len(data) / self.SAMPLERATE
@@ -103,6 +119,9 @@ class AudioRecorder:
         self._elapsed = 0.0
         self._mic_rms = 0.0
         self._backing_rms = 0.0
+        self._current_pitch = None
+        self._pitch_track.clear()
+        self._pitch_buf_pos = 0
         self._is_recording = True
 
         def callback(indata: np.ndarray, outdata: np.ndarray, frames: int, ts, status):
@@ -121,6 +140,10 @@ class AudioRecorder:
             # RMS 追蹤
             self._mic_rms = float(np.sqrt(np.mean(indata ** 2)))
             self._backing_rms = float(np.sqrt(np.mean(out_chunk ** 2)))
+
+            # 音高偵測（累積到 2048 samples 後執行一次）
+            mono = indata[:, 0] if indata.ndim > 1 else indata
+            self._feed_pitch(mono, self._elapsed)
 
             # 錄製麥克風
             self._vocal_chunks.append(indata.copy())
@@ -173,16 +196,16 @@ class AudioRecorder:
         if on_finished:
             on_finished()
 
-    def _finalize_vocal(self):
-        # 防止重複呼叫（stop() 和 finished_callback 可能同時觸發）
-        if self._vocal_data is not None:
-            return
-        if self._vocal_chunks:
-            raw = np.concatenate(self._vocal_chunks, axis=0)
-            # 確保與伴奏等長
-            target = len(self._backing_data) if self._backing_data is not None else len(raw)
-            n = min(len(raw), target)
-            self._vocal_data = raw[:n]
+    def _finalize_vocal(self) -> None:
+        """合併錄音 chunks 為完整資料。以 Lock 保護防止競態條件。"""
+        with self._lock:
+            if self._vocal_data is not None:
+                return
+            if self._vocal_chunks:
+                raw = np.concatenate(self._vocal_chunks, axis=0)
+                target = len(self._backing_data) if self._backing_data is not None else len(raw)
+                n = min(len(raw), target)
+                self._vocal_data = raw[:n]
 
     # ------------------------------------------------------------------ #
     #  回放                                                                #
@@ -205,8 +228,9 @@ class AudioRecorder:
             return
 
         self._is_playing_back = True
-        self._playback_gen += 1
-        gen = self._playback_gen
+        with self._lock:
+            self._playback_gen += 1
+            gen = self._playback_gen
         self._playback_frame_pos = start_frame
         self._elapsed = start_frame / self._samplerate
         self._backing_rms = 0.0
@@ -315,6 +339,9 @@ class AudioRecorder:
 
         回傳各檔案的完整路徑 dict。
         """
+        import re as _re
+        prefix = _re.sub(r'[^\w\-.]', '_', prefix)
+
         if self._backing_data is None:
             raise ValueError("尚未載入伴奏")
         if self._vocal_data is None:
@@ -398,6 +425,34 @@ class AudioRecorder:
     def backing_rms(self) -> float:
         """即時伴奏輸出 RMS（0.0–1.0），供 VU 表使用。"""
         return self._backing_rms
+
+    @property
+    def current_pitch(self) -> PitchSample | None:
+        """即時音高偵測結果，供 UI 顯示。"""
+        return self._current_pitch
+
+    @property
+    def pitch_track(self) -> PitchTrack:
+        """完整的音高軌跡（錄音期間累積）。"""
+        return self._pitch_track
+
+    def _feed_pitch(self, mono: np.ndarray, timestamp: float) -> None:
+        """將單聲道音訊餵入音高偵測緩衝區。"""
+        samples = mono.astype(np.float64).ravel()
+        pos = 0
+        while pos < len(samples):
+            space = 2048 - self._pitch_buf_pos
+            chunk = samples[pos:pos + space]
+            self._pitch_buf[self._pitch_buf_pos:self._pitch_buf_pos + len(chunk)] = chunk
+            self._pitch_buf_pos += len(chunk)
+            pos += len(chunk)
+
+            if self._pitch_buf_pos >= 2048:
+                result = self._pitch_detector.detect(self._pitch_buf, timestamp)
+                self._current_pitch = result
+                if result is not None:
+                    self._pitch_track.append(result)
+                self._pitch_buf_pos = 0
 
     def seek(self, seconds: float) -> None:
         """跳轉到指定秒數（僅在非錄音狀態下有效）。"""

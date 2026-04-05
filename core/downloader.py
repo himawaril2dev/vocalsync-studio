@@ -4,6 +4,7 @@ yt-dlp 下載封裝模組。
 所有下載函式均為同步執行，呼叫端應在獨立執行緒中呼叫。
 """
 
+import os
 import re
 import threading
 from collections.abc import Callable
@@ -57,9 +58,9 @@ def detect_url_type(url: str) -> str:
 
 def _base_opts(output_dir: str, progress_hook: ProgressCallback) -> dict:
     opts = {
-        "outtmpl": f"{output_dir}/%(title)s.%(ext)s",
+        "outtmpl": os.path.join(output_dir, "%(title)s.%(ext)s"),
         "restrictfilenames": False,
-        "ignoreerrors": True,
+        "ignoreerrors": False,
         "progress_hooks": [progress_hook],
         "quiet": True,
         "no_warnings": False,
@@ -82,8 +83,8 @@ def build_video_opts(
     opts["merge_output_format"] = "mp4"
 
     if is_channel:
-        opts["outtmpl"] = f"{output_dir}/%(uploader)s/%(title)s.%(ext)s"
-        opts["download_archive"] = f"{output_dir}/downloaded_archive.txt"
+        opts["outtmpl"] = os.path.join(output_dir, "%(uploader)s", "%(title)s.%(ext)s")
+        opts["download_archive"] = os.path.join(output_dir, "downloaded_archive.txt")
 
     if subtitle_lang_label:
         langs = get_subtitle_langs(subtitle_lang_label)

@@ -3,8 +3,12 @@
 功能：YouTube 下載 / 本機匯入伴奏、嵌入影片、音量調整、裝置選擇、VU 表、可拖動進度條、導出三檔案。
 """
 
+import logging
 import os
+import re as _re
 import subprocess
+import tempfile
+import threading
 import tkinter as tk
 from datetime import datetime
 from tkinter import filedialog, messagebox
@@ -17,11 +21,17 @@ from core.downloader import start_download_thread
 from core.ffmpeg_check import find_ffmpeg, is_ffmpeg_available
 from core.video_player import VideoPlayer
 from ui import theme as T
+from ui.pitch_curve_panel import PitchCurvePanel
+from ui.pitch_indicator import PitchIndicator
 from ui.vu_meter import VUMeter
 
 _VIDEO_W, _VIDEO_H = 640, 360
 _AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac"}
 _VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".webm"}
+_YOUTUBE_URL = _re.compile(
+    r'^https?://(www\.)?(youtube\.com|youtu\.be|music\.youtube\.com)/', _re.IGNORECASE)
+
+_logger = logging.getLogger(__name__)
 
 
 def _fmt_time(sec: float) -> str:
@@ -49,7 +59,7 @@ def _get_output_devices() -> list[tuple[int, str]]:
 
 class RecordingPage(ctk.CTkFrame):
 
-    def __init__(self, parent, settings: dict):
+    def __init__(self, parent: ctk.CTkBaseClass, settings: dict) -> None:
         super().__init__(parent, fg_color="transparent")
         self._settings = settings
         self._recorder = AudioRecorder()
@@ -60,6 +70,8 @@ class RecordingPage(ctk.CTkFrame):
         self._seek_dragging = False   # 使用者正在拖動進度條
         self._preview_state: str = "idle"   # "idle" | "playing" | "paused"
         self._preview_paused_frame: int = 0
+        self._playback_state: str = "idle"   # "idle" | "playing" | "paused"
+        self._playback_paused_frame: int = 0
         self._resize_after_id: str | None = None
         self._export_folder = settings.get(
             "download_folder", os.path.expanduser("~/Downloads/YouTube"))
@@ -78,21 +90,35 @@ class RecordingPage(ctk.CTkFrame):
     #  UI 建構                                                             #
     # ------------------------------------------------------------------ #
 
-    def _build_ui(self):
+    def _build_ui(self) -> None:
         p = T.PAD_PAGE_REC
         cy = T.PAD_CARD_Y_REC
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(2, weight=1)  # 影片區可拉伸
 
-        compact = dict(
+        self._build_source_card(p, cy)
+        self._build_device_card(p, cy)
+        self._build_video_area(p, cy)
+        self._build_vu_card(p)
+        self._build_pitch_curve(p, cy)
+        self._build_control_card(p, cy)
+        self._build_bottom_bar(p)
+
+    def _compact_btn_style(self) -> dict:
+        """共用的小型按鈕樣式。"""
+        return dict(
             fg_color=T.SECONDARY, hover_color=T.SECONDARY_HOVER,
             text_color=T.TEXT_PRIMARY, corner_radius=6, height=32,
             font=ctk.CTkFont(family=T.FONT_DISPLAY, size=12),
         )
 
-        # ── 頂部：伴奏來源 ───────────────────────────────────────────
+    # ── 伴奏來源卡片 ────────────────────────────────────────────────
+
+    def _build_source_card(self, padx: int, pady_bottom: int) -> None:
+        compact = self._compact_btn_style()
+
         src_card = ctk.CTkFrame(self, corner_radius=T.CARD_RADIUS, fg_color=T.SURFACE)
-        src_card.grid(row=0, column=0, padx=p, pady=(12, cy), sticky="ew")
+        src_card.grid(row=0, column=0, padx=padx, pady=(12, pady_bottom), sticky="ew")
         src_card.grid_columnconfigure(0, weight=1)
 
         title_row = ctk.CTkFrame(src_card, fg_color="transparent")
@@ -148,9 +174,11 @@ class RecordingPage(ctk.CTkFrame):
             text_color=T.TEXT_SECONDARY)
         self._src_label.grid(row=3, column=0, padx=14, pady=(0, 10), sticky="w")
 
-        # ── 裝置選擇列 ───────────────────────────────────────────────
+    # ── 裝置選擇卡片 ────────────────────────────────────────────────
+
+    def _build_device_card(self, padx: int, pady_bottom: int) -> None:
         dev_card = ctk.CTkFrame(self, corner_radius=T.CARD_RADIUS, fg_color=T.SURFACE)
-        dev_card.grid(row=1, column=0, padx=p, pady=(0, cy), sticky="ew")
+        dev_card.grid(row=1, column=0, padx=padx, pady=(0, pady_bottom), sticky="ew")
         dev_card.grid_columnconfigure((1, 3), weight=1)
 
         ctk.CTkLabel(dev_card, text="裝置",
@@ -181,10 +209,12 @@ class RecordingPage(ctk.CTkFrame):
             font=ctk.CTkFont(*T.CAPTION), dropdown_font=ctk.CTkFont(*T.CAPTION))
         self._output_menu.grid(row=1, column=3, padx=(0, 14), pady=(0, 10), sticky="ew")
 
-        # ── 影片顯示區 ───────────────────────────────────────────────
+    # ── 影片顯示區 ──────────────────────────────────────────────────
+
+    def _build_video_area(self, padx: int, pady_bottom: int) -> None:
         self._video_frame = ctk.CTkFrame(
             self, fg_color=T.VIDEO_BG, corner_radius=8)
-        self._video_frame.grid(row=2, column=0, padx=p, pady=(0, cy), sticky="nsew")
+        self._video_frame.grid(row=2, column=0, padx=padx, pady=(0, pady_bottom), sticky="nsew")
         self._video_frame.grid_rowconfigure(0, weight=1)
         self._video_frame.grid_columnconfigure(0, weight=1)
 
@@ -195,9 +225,11 @@ class RecordingPage(ctk.CTkFrame):
             width=_VIDEO_W, height=_VIDEO_H, image=None)
         self._video_label.grid(row=0, column=0)
 
-        # ── VU 表區 ──────────────────────────────────────────────────
+    # ── VU 表 + 音高指示器 ──────────────────────────────────────────
+
+    def _build_vu_card(self, padx: int) -> None:
         vu_card = ctk.CTkFrame(self, corner_radius=T.CARD_RADIUS, fg_color=T.SURFACE)
-        vu_card.grid(row=3, column=0, padx=p, pady=(0, 4), sticky="ew")
+        vu_card.grid(row=3, column=0, padx=padx, pady=(0, 4), sticky="ew")
         vu_card.grid_columnconfigure(1, weight=1)
         vu_card.grid_columnconfigure(3, weight=1)
 
@@ -211,11 +243,25 @@ class RecordingPage(ctk.CTkFrame):
                      font=ctk.CTkFont(*T.CAPTION), text_color=T.TEXT_SECONDARY,
                      width=46).grid(row=0, column=2, padx=(0, 6), pady=8)
         self._vu_mic = VUMeter(vu_card, boost=4.0, height=16)
-        self._vu_mic.grid(row=0, column=3, padx=(0, 12), pady=8, sticky="ew")
+        self._vu_mic.grid(row=0, column=3, padx=(0, 8), pady=8, sticky="ew")
 
-        # ── 音量 + 錄音控制 ──────────────────────────────────────────
+        # 音高指示器（VU 表右側）
+        sep = ctk.CTkFrame(vu_card, width=1, height=36, fg_color=T.BORDER)
+        sep.grid(row=0, column=4, padx=4)
+        self._pitch_indicator = PitchIndicator(vu_card)
+        self._pitch_indicator.grid(row=0, column=5, padx=(4, 12), pady=4)
+
+    # ── 音高曲線面板 ────────────────────────────────────────────────
+
+    def _build_pitch_curve(self, padx: int, pady_bottom: int) -> None:
+        self._pitch_curve = PitchCurvePanel(self, height=90)
+        self._pitch_curve.grid(row=4, column=0, padx=padx, pady=(0, pady_bottom), sticky="ew")
+
+    # ── 音量 + 錄音控制卡片 ─────────────────────────────────────────
+
+    def _build_control_card(self, padx: int, pady_bottom: int) -> None:
         ctrl_card = ctk.CTkFrame(self, corner_radius=T.CARD_RADIUS, fg_color=T.SURFACE)
-        ctrl_card.grid(row=4, column=0, padx=p, pady=(0, cy), sticky="ew")
+        ctrl_card.grid(row=5, column=0, padx=padx, pady=(0, pady_bottom), sticky="ew")
         ctrl_card.grid_columnconfigure(4, weight=1)
 
         # 音量滑桿
@@ -274,9 +320,11 @@ class RecordingPage(ctk.CTkFrame):
             state="disabled", command=self._on_export)
         self._export_btn.grid(row=0, column=8, padx=(4, 12), pady=8)
 
-        # ── 進度條（可拖動）+ 導出路徑 ──────────────────────────────
+    # ── 進度條 + 導出路徑 ───────────────────────────────────────────
+
+    def _build_bottom_bar(self, padx: int) -> None:
         bottom = ctk.CTkFrame(self, fg_color="transparent")
-        bottom.grid(row=5, column=0, padx=p, pady=(0, 10), sticky="ew")
+        bottom.grid(row=6, column=0, padx=padx, pady=(0, 10), sticky="ew")
         bottom.grid_columnconfigure(0, weight=1)
 
         prog_row = ctk.CTkFrame(bottom, fg_color="transparent")
@@ -317,7 +365,7 @@ class RecordingPage(ctk.CTkFrame):
     #  視窗縮放                                                            #
     # ------------------------------------------------------------------ #
 
-    def _on_resize(self, event):
+    def _on_resize(self, event: tk.Event) -> None:
         if not self._video_player:
             return
         # debounce：150ms 內若再觸發就取消重排程，避免拖動時大量重繪
@@ -325,7 +373,7 @@ class RecordingPage(ctk.CTkFrame):
             self.after_cancel(self._resize_after_id)
         self._resize_after_id = self.after(150, self._do_resize)
 
-    def _do_resize(self):
+    def _do_resize(self) -> None:
         self._resize_after_id = None
         if not self._video_player:
             return
@@ -361,12 +409,16 @@ class RecordingPage(ctk.CTkFrame):
     #  YouTube 下載                                                        #
     # ------------------------------------------------------------------ #
 
-    def _on_download(self):
+    def _on_download(self) -> None:
         if self._is_downloading:
             return
         url = self._url_entry.get().strip()
         if not url:
-            messagebox.showwarning("提示", "請先輸入 YouTube 網址")
+            messagebox.showwarning("提���", "請先輸入 YouTube 網址")
+            return
+        if not _YOUTUBE_URL.match(url):
+            messagebox.showerror("網址錯誤",
+                                 "請輸入有效的 YouTube 網址\n（https://youtube.com/... 或 https://youtu.be/...）")
             return
         if not is_ffmpeg_available():
             messagebox.showerror("缺少 FFmpeg", "需要 FFmpeg，請先在設定頁面確認。")
@@ -380,23 +432,41 @@ class RecordingPage(ctk.CTkFrame):
         save_dir = os.path.join(self._export_folder, "backing_tracks")
         os.makedirs(save_dir, exist_ok=True)
 
+        # 追蹤 yt-dlp 實際輸出的檔案路徑
+        downloaded_path: list[str] = []
+
+        def _progress_hook(d: dict) -> None:
+            if d.get("status") == "finished" and "filename" in d:
+                downloaded_path.append(d["filename"])
+
         ydl_opts = {
             "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
             "outtmpl": os.path.join(save_dir, "%(title)s.%(ext)s"),
             "merge_output_format": "mp4",
             "quiet": True,
-            "ignoreerrors": True,
-            "progress_hooks": [],
+            "ignoreerrors": False,
+            "progress_hooks": [_progress_hook],
         }
 
         def on_complete():
+            # 優先使用 yt-dlp 回報的檔案路徑
+            if downloaded_path:
+                # 合併後的 mp4 路徑（yt-dlp 會回報中間檔，取最後一個）
+                result = downloaded_path[-1]
+                # 合併後副檔名可能變成 .mp4
+                mp4_result = os.path.splitext(result)[0] + ".mp4"
+                if os.path.isfile(mp4_result):
+                    result = mp4_result
+                if os.path.isfile(result):
+                    self.after(0, lambda: self._load_video_file(result))
+                    return
+            # 備援：掃描目錄
             mp4s = [os.path.join(save_dir, f)
                     for f in os.listdir(save_dir)
                     if f.lower().endswith(".mp4")]
             if not mp4s:
                 self.after(0, lambda: self._src_fail("找不到下載的影片"))
                 return
-            # 取最新檔案
             latest = max(mp4s, key=os.path.getmtime)
             self.after(0, lambda: self._load_video_file(latest))
 
@@ -409,7 +479,7 @@ class RecordingPage(ctk.CTkFrame):
     #  本機匯入                                                            #
     # ------------------------------------------------------------------ #
 
-    def _on_browse_local(self):
+    def _on_browse_local(self) -> None:
         exts = " ".join(f"*{e}" for e in sorted(_AUDIO_EXTS | _VIDEO_EXTS))
         path = filedialog.askopenfilename(
             title="選擇伴奏檔案",
@@ -424,7 +494,7 @@ class RecordingPage(ctk.CTkFrame):
         self._src_label.configure(text="載入中...", text_color="gray")
         self.after(50, lambda: self._load_local_file(path))
 
-    def _load_local_file(self, path: str):
+    def _load_local_file(self, path: str) -> None:
         ext = os.path.splitext(path)[1].lower()
         if ext in _VIDEO_EXTS:
             self._load_video_file(path)
@@ -433,22 +503,25 @@ class RecordingPage(ctk.CTkFrame):
         else:
             self._src_fail(f"不支援的格式：{ext}")
 
-    def _load_audio_file(self, path: str):
+    def _load_audio_file(self, path: str) -> None:
         """直接載入音訊檔（無影片）。"""
+        tmp_wav: str | None = None
         # 若非 WAV，先用 ffmpeg 轉換
         if not path.lower().endswith(".wav"):
-            wav_path = path + "_converted.wav"
             ffmpeg = find_ffmpeg()
             if ffmpeg:
+                tmp = tempfile.NamedTemporaryFile(suffix="_converted.wav", delete=False)
+                tmp.close()
+                tmp_wav = tmp.name
                 try:
                     subprocess.run(
                         [ffmpeg, "-y", "-i", path,
                          "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
-                         wav_path],
+                         tmp_wav],
                         check=True, capture_output=True)
-                    path = wav_path
-                except subprocess.CalledProcessError:
-                    pass  # 嘗試直接載入
+                    path = tmp_wav
+                except subprocess.CalledProcessError as exc:
+                    _logger.warning("FFmpeg 轉換失敗，嘗試直接載入原始檔: %s", exc)
         try:
             duration = self._recorder.load_backing(path)
             self._video_path = None
@@ -470,8 +543,15 @@ class RecordingPage(ctk.CTkFrame):
                 text="")
         except Exception as e:
             self._src_fail(str(e))
+        finally:
+            # 清除暫存 WAV
+            if tmp_wav and os.path.isfile(tmp_wav):
+                try:
+                    os.unlink(tmp_wav)
+                except OSError:
+                    pass
 
-    def _load_video_file(self, video_path: str):
+    def _load_video_file(self, video_path: str) -> None:
         """從影片提取音訊並載入（背景執行緒），同時初始化影片播放器。"""
         ffmpeg = find_ffmpeg()
         if not ffmpeg:
@@ -480,31 +560,41 @@ class RecordingPage(ctk.CTkFrame):
 
         self._src_label.configure(text="⏳  提取音訊中，請稍候…", text_color="gray")
 
-        import threading
-
         def extract_and_load():
-            wav_path = video_path + "_audio.wav"
+            tmp = tempfile.NamedTemporaryFile(suffix="_audio.wav", delete=False)
+            tmp.close()
+            wav_path = tmp.name
             try:
                 subprocess.run(
                     [ffmpeg, "-y", "-i", video_path,
                      "-vn", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
                      wav_path],
                     check=True, capture_output=True)
-            except subprocess.CalledProcessError:
+            except subprocess.CalledProcessError as exc:
+                _logger.warning("影片音訊提取失敗: %s", exc)
                 self.after(0, lambda: self._src_fail("音訊提取失敗，請確認 FFmpeg 是否正常安裝"))
                 return
+            finally:
+                pass  # wav_path 在 load_backing 後才能刪
 
             try:
                 duration = self._recorder.load_backing(wav_path)
             except Exception as e:
                 self.after(0, lambda: self._src_fail(str(e)))
                 return
+            finally:
+                # 載入完成後清除暫存
+                if os.path.isfile(wav_path):
+                    try:
+                        os.unlink(wav_path)
+                    except OSError:
+                        pass
 
             self.after(0, lambda: self._finish_video_load(video_path, duration))
 
         threading.Thread(target=extract_and_load, daemon=True).start()
 
-    def _finish_video_load(self, video_path: str, duration: float):
+    def _finish_video_load(self, video_path: str, duration: float) -> None:
         """在主執行緒完成影片載入後的 UI 更新。"""
         name = os.path.basename(video_path)
         self._src_label.configure(
@@ -534,7 +624,7 @@ class RecordingPage(ctk.CTkFrame):
                 text=f"⚠  影片載入失敗（{e}），僅音訊模式",
                 text_color="#e0a800")
 
-    def _src_fail(self, msg: str):
+    def _src_fail(self, msg: str) -> None:
         self._is_downloading = False
         self._dl_btn.configure(state="normal")
         self._src_label.configure(
@@ -544,7 +634,7 @@ class RecordingPage(ctk.CTkFrame):
     #  音量                                                                #
     # ------------------------------------------------------------------ #
 
-    def _on_volume_change(self, value: float):
+    def _on_volume_change(self, value: float) -> None:
         pct = int(value)
         self._recorder.volume = pct / 100.0
         self._vol_label.configure(text=f"{pct}%")
@@ -553,10 +643,10 @@ class RecordingPage(ctk.CTkFrame):
     #  進度條拖動                                                          #
     # ------------------------------------------------------------------ #
 
-    def _on_seek_press(self, event):
+    def _on_seek_press(self, event: tk.Event) -> None:
         self._seek_dragging = True
 
-    def _on_seek_release(self, event):
+    def _on_seek_release(self, event: tk.Event) -> None:
         self._seek_dragging = False
         if not self._recorder.is_recording:
             target = self._seek_slider.get()
@@ -564,8 +654,7 @@ class RecordingPage(ctk.CTkFrame):
             # 同步暫停幀位置，讓「繼續」從新位置開始
             new_frame = int(target * self._recorder.samplerate)
             self._preview_paused_frame = new_frame
-            if hasattr(self, "_playback_paused_frame"):
-                self._playback_paused_frame = new_frame
+            self._playback_paused_frame = new_frame
             # 同步影片
             if self._video_player and self._video_player.is_loaded:
                 self._video_player.seek(target)
@@ -574,21 +663,33 @@ class RecordingPage(ctk.CTkFrame):
     #  VU 表 + 進度條 50ms 輪詢                                           #
     # ------------------------------------------------------------------ #
 
-    def _start_level_poll(self):
+    def _start_level_poll(self) -> None:
         """每 50ms 更新一次 VU 表和進度條。"""
         self._poll_levels()
 
-    def _poll_levels(self):
+    def _poll_levels(self) -> None:
         # VU 表更新（錄音或回放中）
         if self._recorder.is_recording or self._recorder.is_playing_back:
             self._vu_backing.set_level(self._recorder.backing_rms)
             self._vu_mic.set_level(self._recorder.mic_rms)
+            # 音高指示器更新（僅錄音時有即時偵測）
+            if self._recorder.is_recording:
+                pitch = self._recorder.current_pitch
+                self._pitch_indicator.update_pitch(pitch)
+                # 即時追加曲線資料
+                if pitch is not None:
+                    self._pitch_curve.append_sample(pitch)
+            else:
+                self._pitch_indicator.update_pitch(None)
+                # 回放時更新游標
+                self._pitch_curve.set_cursor(self._recorder.elapsed)
         else:
             # 不在播放：將 level 歸零並讓 peak 緩慢衰減
             self._vu_backing.set_level(0.0)
             self._vu_mic.set_level(0.0)
             self._vu_backing.decay_peak()
             self._vu_mic.decay_peak()
+            self._pitch_indicator.update_pitch(None)
 
         # 進度條同步（非拖動狀態下）
         if not self._seek_dragging:
@@ -606,7 +707,7 @@ class RecordingPage(ctk.CTkFrame):
     #  試聽（純伴奏，不錄音）— 三態：idle / playing / paused              #
     # ------------------------------------------------------------------ #
 
-    def _on_preview(self):
+    def _on_preview(self) -> None:
         if self._preview_state == "idle":
             # 從目前 seek 位置開始
             start_sec = self._seek_slider.get()
@@ -617,7 +718,7 @@ class RecordingPage(ctk.CTkFrame):
         elif self._preview_state == "paused":
             self._resume_preview()
 
-    def _start_preview(self, start_frame: int = 0):
+    def _start_preview(self, start_frame: int = 0) -> None:
         self._preview_state = "playing"
         self._preview_btn.configure(text="⏸ 暫停")
         self._rec_btn.configure(state="disabled")
@@ -644,17 +745,17 @@ class RecordingPage(ctk.CTkFrame):
             start_frame=start_frame,
         )
 
-    def _pause_preview(self):
+    def _pause_preview(self) -> None:
         self._preview_paused_frame = self._recorder.pause_playback()
         if self._video_player:
             self._video_player.stop()
         self._preview_state = "paused"
         self._preview_btn.configure(text="▶ 繼續")
 
-    def _resume_preview(self):
+    def _resume_preview(self) -> None:
         self._start_preview(start_frame=self._preview_paused_frame)
 
-    def _on_preview_done(self):
+    def _on_preview_done(self) -> None:
         # 若是暫停觸發的 on_finished，不重置狀態
         if self._preview_state == "paused":
             return
@@ -670,7 +771,7 @@ class RecordingPage(ctk.CTkFrame):
     #  錄音                                                                #
     # ------------------------------------------------------------------ #
 
-    def _on_start_record(self):
+    def _on_start_record(self) -> None:
         self._rec_btn.configure(state="disabled")
         self._stop_btn.configure(state="normal")
         self._play_btn.configure(state="disabled")
@@ -680,6 +781,9 @@ class RecordingPage(ctk.CTkFrame):
         self._seek_slider.configure(state="disabled")
         self._vu_backing.reset()
         self._vu_mic.reset()
+        self._pitch_indicator.reset()
+        self._pitch_curve.clear()
+        self._pitch_curve.set_duration(self._recorder.duration)
 
         if self._video_player and self._video_player.is_loaded:
             self._video_player.start(
@@ -699,19 +803,18 @@ class RecordingPage(ctk.CTkFrame):
             output_device=self._selected_output_idx,
         )
 
-    def _on_stop(self):
+    def _on_stop(self) -> None:
         self._recorder.stop()
         self._recorder.stop_playback()
         self._preview_state = "idle"
         self._preview_paused_frame = 0
-        if hasattr(self, "_playback_state"):
-            self._playback_state = "idle"
-            self._playback_paused_frame = 0
+        self._playback_state = "idle"
+        self._playback_paused_frame = 0
         if self._video_player:
             self._video_player.stop()
         self._on_record_done()
 
-    def _on_record_done(self):
+    def _on_record_done(self) -> None:
         self._stop_btn.configure(state="disabled")
         self._rec_btn.configure(state="normal")
         self._seek_slider.configure(state="normal")
@@ -722,7 +825,7 @@ class RecordingPage(ctk.CTkFrame):
             self._play_btn.configure(text="▶ 回放", state="normal")
             self._export_btn.configure(state="normal")
 
-    def _reset_ctrl(self):
+    def _reset_ctrl(self) -> None:
         self._rec_btn.configure(state="normal")
         self._stop_btn.configure(state="disabled")
         if self._recorder.has_backing:
@@ -732,12 +835,8 @@ class RecordingPage(ctk.CTkFrame):
     #  回放                                                                #
     # ------------------------------------------------------------------ #
 
-    def _on_playback(self):
-        """回放（含人聲混合）— 也支援暫停/繼續。"""
-        if not hasattr(self, "_playback_state"):
-            self._playback_state = "idle"
-            self._playback_paused_frame = 0
-
+    def _on_playback(self) -> None:
+        """回放（含人聲混���）— 也支援暫��/繼續。"""
         if self._playback_state == "idle":
             start_sec = self._seek_slider.get()
             start_frame = int(start_sec * self._recorder.samplerate)
@@ -747,12 +846,16 @@ class RecordingPage(ctk.CTkFrame):
         elif self._playback_state == "paused":
             self._start_playback(start_frame=self._playback_paused_frame)
 
-    def _start_playback(self, start_frame: int = 0):
+    def _start_playback(self, start_frame: int = 0) -> None:
         self._playback_state = "playing"
         self._play_btn.configure(text="⏸ 暫停")
         self._stop_btn.configure(state="normal")
         self._vu_backing.reset()
         self._vu_mic.reset()
+
+        # 載入完整音高曲線供回放顯示
+        self._pitch_curve.set_duration(self._recorder.duration)
+        self._pitch_curve.set_data(self._recorder.pitch_track)
 
         if self._video_player and self._video_player.is_loaded:
             if start_frame > 0:
@@ -773,16 +876,16 @@ class RecordingPage(ctk.CTkFrame):
             start_frame=start_frame,
         )
 
-    def _pause_playback(self):
+    def _pause_playback(self) -> None:
         self._playback_paused_frame = self._recorder.pause_playback()
         if self._video_player:
             self._video_player.stop()
         self._playback_state = "paused"
         self._play_btn.configure(text="▶ 繼續")
 
-    def _on_playback_done(self):
+    def _on_playback_done(self) -> None:
         # 若是暫停觸發的 on_finished，不重置狀態
-        if hasattr(self, "_playback_state") and self._playback_state == "paused":
+        if self._playback_state == "paused":
             return
         self._playback_state = "idle"
         self._playback_paused_frame = 0
@@ -795,7 +898,7 @@ class RecordingPage(ctk.CTkFrame):
     #  導出                                                                #
     # ------------------------------------------------------------------ #
 
-    def _on_export(self):
+    def _on_export(self) -> None:
         try:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             prefix = f"session_{ts}"
@@ -809,7 +912,7 @@ class RecordingPage(ctk.CTkFrame):
         except Exception as e:
             messagebox.showerror("導出失敗", str(e))
 
-    def _choose_folder(self):
+    def _choose_folder(self) -> None:
         folder = filedialog.askdirectory(
             initialdir=self._export_folder, title="選擇導出資料夾")
         if folder:
@@ -820,7 +923,7 @@ class RecordingPage(ctk.CTkFrame):
     #  工具                                                                #
     # ------------------------------------------------------------------ #
 
-    def _paste_url(self):
+    def _paste_url(self) -> None:
         try:
             text = self.clipboard_get()
             self._url_entry.delete(0, tk.END)
@@ -828,7 +931,7 @@ class RecordingPage(ctk.CTkFrame):
         except tk.TclError:
             pass
 
-    def _show_ctx_menu(self, event):
+    def _show_ctx_menu(self, event: tk.Event) -> None:
         menu = tk.Menu(self, tearoff=0)
         menu.add_command(label="貼上", command=self._paste_url)
         menu.add_command(label="全選",
