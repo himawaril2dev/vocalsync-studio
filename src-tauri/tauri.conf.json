@@ -1,0 +1,55 @@
+{
+  "productName": "VocalSync Studio",
+  "version": "0.1.0",
+  "identifier": "com.vocalsync.studio",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "icon": [
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "resources": [],
+    "copyright": "Copyright (c) 2026 himawari168",
+    "shortDescription": "練唱輔助工具",
+    "longDescription": "VocalSync Studio — 讓每一次練習都聽得見進步。支援伴奏播放、即時錄音、AI 音高偵測、歌詞同步顯示。",
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "",
+      "nsis": {
+        "displayLanguageSelector": true,
+        "installerIcon": "icons/icon.ico",
+        "languages": ["English", "TradChinese", "Japanese", "Korean"]
+      }
+    }
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "VocalSync Studio",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "decorations": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: https://asset.localhost; media-src 'self' asset: https://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: https://ipc.localhost https://api.github.com",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$DOWNLOAD/*", "$HOME/*", "$AUDIO/*", "$VIDEO/*", "$DESKTOP/*"]
+      }
+    }
+  },
+  "plugins": {}
+}

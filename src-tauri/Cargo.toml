@@ -1,0 +1,53 @@
+[package]
+name = "vocalsync-studio"
+version = "0.1.0"
+description = "VocalSync Studio — Karaoke Practice Tool"
+authors = ["himawari168"]
+edition = "2021"
+
+[lib]
+name = "vocalsync_studio_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+cpal = "0.15"
+hound = "3.5"
+ringbuf = "0.4"
+symphonia = { version = "0.5", features = ["mp3", "isomp4", "aac", "flac", "vorbis", "wav"] }
+biquad = "0.6"
+thiserror = "2"
+log = "0.4"
+env_logger = "0.11"
+dirs-next = "2.0"
+# HTTP 下載（yt-dlp / FFmpeg 自動安裝）
+ureq = { version = "2.10", features = ["tls"] }
+# Phase 3-new-a：FFT-based cross-correlation 音訊對齊
+rustfft = "6.2"
+midly = "0.5.3"
+# CREPE AI 音高偵測
+ort = { version = "2.0.0-rc.9", default-features = false, features = ["std", "download-binaries", "copy-dylibs", "tls-native"] }
+# yt-dlp CLI 包裝：跨平台可執行檔搜尋
+which = "7.0"
+# FFmpeg 自動下載：zip 解壓
+zip = "8.5"
+# 下載檔案 SHA-256 驗證
+sha2 = "0.10"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+
+# dev build 也啟用基本優化，避免 PYIN 整段分析在 unoptimized 模式下慢到不可用。
+# 自家 crate 用 opt-level=1（編譯快、debug 仍可用），dependencies 用 opt-level=3（一次性編譯，後續 cache）
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
