@@ -157,30 +157,52 @@ pub fn get_app_bin_dir() -> Option<PathBuf> {
     dirs_next::data_dir().map(|d| d.join("com.vocalsync.studio").join("bin"))
 }
 
+fn find_tool_in_dir(dir: &std::path::Path, exe_name: &str) -> Option<PathBuf> {
+    let candidate = dir.join(exe_name);
+    if candidate.exists() {
+        Some(candidate)
+    } else {
+        None
+    }
+}
+
+fn find_tool_next_to_current_exe(exe_name: &str) -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    find_tool_in_dir(dir, exe_name)
+}
+
 /// 搜尋 yt-dlp 可執行檔。
 ///
 /// 搜尋順序：
 /// 1. app 資料夾（自動下載的版本）
 /// 2. 系統 PATH
+/// 3. 應用程式目錄（portable / 打包模式）
 pub fn find_ytdlp() -> Option<PathBuf> {
     // 1. app bin 資料夾
     if let Some(bin_dir) = get_app_bin_dir() {
-        let candidate = bin_dir.join(YTDLP_EXE_NAME);
-        if candidate.exists() {
+        if let Some(candidate) = find_tool_in_dir(&bin_dir, YTDLP_EXE_NAME) {
             return Some(candidate);
         }
     }
 
     // 2. 系統 PATH
-    which::which("yt-dlp").ok()
+    if let Ok(path) = which::which("yt-dlp") {
+        return Some(path);
+    }
+
+    // 3. 應用程式目錄（portable / 打包模式）
+    find_tool_next_to_current_exe(YTDLP_EXE_NAME)
 }
 
 /// 搜尋系統上的 FFmpeg 可執行檔。
 pub fn find_ffmpeg() -> Option<PathBuf> {
     // 1. app bin 資料夾
     if let Some(bin_dir) = get_app_bin_dir() {
-        let candidate = bin_dir.join(if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" });
-        if candidate.exists() {
+        if let Some(candidate) = find_tool_in_dir(
+            &bin_dir,
+            if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" },
+        ) {
             return Some(candidate);
         }
     }
@@ -191,13 +213,10 @@ pub fn find_ffmpeg() -> Option<PathBuf> {
     }
 
     // 3. 應用程式目錄（打包模式）
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let candidate = dir.join(if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" });
-            if candidate.exists() {
-                return Some(candidate);
-            }
-        }
+    if let Some(candidate) = find_tool_next_to_current_exe(
+        if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" },
+    ) {
+        return Some(candidate);
     }
 
     // 4. Windows 常見路徑
@@ -1099,5 +1118,32 @@ mod tests {
         }
         assert!(path.exists());
         let _ = std::fs::remove_file(&path); // cleanup
+    }
+
+    #[test]
+    fn find_tool_in_dir_returns_existing_path() {
+        let dir = std::env::temp_dir().join("vocalsync-find-tool-existing");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join(YTDLP_EXE_NAME);
+        std::fs::write(&exe, b"dummy").unwrap();
+
+        let found = find_tool_in_dir(&dir, YTDLP_EXE_NAME);
+        assert_eq!(found, Some(exe.clone()));
+
+        let _ = std::fs::remove_file(exe);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn find_tool_in_dir_returns_none_when_missing() {
+        let dir = std::env::temp_dir().join("vocalsync-find-tool-missing");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let found = find_tool_in_dir(&dir, YTDLP_EXE_NAME);
+        assert!(found.is_none());
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
