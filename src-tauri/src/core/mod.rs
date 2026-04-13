@@ -15,6 +15,5 @@ pub mod pyin_engine;
 pub mod resampler;
 pub mod settings;
 pub mod subtitle_extractor;
-pub mod ultrastar_parser;
 pub mod wsola;
 pub mod ytdlp_engine;

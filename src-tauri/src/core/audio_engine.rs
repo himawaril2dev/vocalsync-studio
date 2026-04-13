@@ -60,7 +60,7 @@ pub struct LoadResult {
     pub sample_rate: u32,
     pub is_video: bool,
     pub video_path: Option<String>,
-    /// 自動偵測到的目標旋律來源標籤，例如 "ultrastar" / "midi" / "uvr_cache"，
+    /// 自動偵測到的目標旋律來源標籤，例如 "midi" / "uvr_cache"，
     /// 沒偵測到就是 None。這是給前端顯示狀態的提示字串，實際載入由
     /// `auto_load_melody_for_backing` command 處理。
     pub melody_source: Option<String>,

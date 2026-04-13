@@ -1,9 +1,4 @@
-/**
- * 目標旋律 store — 統一 UltraStar / MIDI / 人聲分離三種來源的前端狀態。
- *
- * Phase 1：只實作 UltraStar 路徑。
- * Phase 2 / 3 擴充 source 變體時不需要改 store interface。
- */
+/** 目標旋律 store — 統一 MIDI / 人聲分離來源的前端狀態。 */
 import { writable } from "svelte/store";
 import type { PitchTrack, PitchTrackSample } from "./pitch";
 
@@ -26,14 +21,7 @@ export interface MelodyNote {
  * 所以每個變體都有 `type` discriminator。
  */
 export type MelodySource =
-  | {
-      type: "ultra_star";
-      txt_path: string;
-      title: string | null;
-      artist: string | null;
-      bpm: number;
-    }
-  | {
+  {
       type: "midi";
       mid_path: string;
       track_index: number;
@@ -67,7 +55,7 @@ export const currentMelody = writable<MelodyTrack | null>(null);
 
 /**
  * 自動偵測到的來源標籤，從 `LoadResult.melody_source` 填入。
- * 可能值：`"ultrastar"` / `"midi"` / `"uvr_cache"` / `null`
+ * 可能值：`"midi"` / `"uvr_cache"` / `null`
  */
 export const detectedMelodySourceKind = writable<string | null>(null);
 
@@ -109,7 +97,7 @@ export const alignmentResult = writable<AlignmentResult | null>(null);
 /** 使用者手動微調的 offset (毫秒)，加到自動對齊結果之上 */
 export const alignmentFineTuneMs = writable<number>(0);
 
-/** 目前 melody 來源的檔案路徑（給對齊用，不是 UltraStar 情況也可能是 null） */
+/** 目前 melody 來源的檔案路徑（給對齊用，某些情況可能是 null） */
 export const melodySourcePath = writable<string | null>(null);
 
 /**

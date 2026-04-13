@@ -1,11 +1,10 @@
 //! 目標旋律 Commands
 //!
 //! 提供前端：
-//! - `auto_detect_melody_source`：給一個伴奏路徑，掃描同資料夾找 `.txt`，
-//!   回傳偵測結果（標籤 + 路徑）。
-//! - `load_melody_from_path`：讓使用者手動選檔載入 UltraStar `.txt` / MIDI `.mid`。
-//! - `auto_load_melody_for_backing`：複合操作 — 先偵測再載入，給 `load_backing`
-//!   成功後的自動掛載流程用（僅 UltraStar 自動載入）。
+//! - `auto_detect_melody_source`：給一個伴奏路徑，回傳自動偵測結果。
+//! - `load_melody_from_path`：讓使用者手動選檔載入 MIDI `.mid`。
+//! - `auto_load_melody_for_backing`：保留給 `load_backing` 成功後的自動掛載流程用，
+//!   目前固定回傳 `None`。
 
 use crate::core::audio_aligner::{self, AlignmentResult};
 use crate::core::center_channel_cancel;
@@ -16,7 +15,6 @@ use crate::core::melody_source_detector::{detect_melody_source, DetectedSource};
 use crate::core::melody_track::MelodyTrack;
 use crate::core::midi_parser;
 use crate::core::pitch_data::PitchTrack;
-use crate::core::ultrastar_parser;
 use crate::error::AppError;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -57,22 +55,18 @@ fn get_model_dir() -> Option<PathBuf> {
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DetectedSourceDto {
-    UltraStar { path: String },
     None,
 }
 
 impl From<DetectedSource> for DetectedSourceDto {
     fn from(value: DetectedSource) -> Self {
         match value {
-            DetectedSource::UltraStar(p) => DetectedSourceDto::UltraStar {
-                path: p.to_string_lossy().to_string(),
-            },
             DetectedSource::None => DetectedSourceDto::None,
         }
     }
 }
 
-/// 自動偵測同資料夾的目標旋律來源檔（僅 UltraStar .txt）。
+/// 自動偵測同資料夾的目標旋律來源檔。
 #[tauri::command]
 pub fn auto_detect_melody_source(backing_path: String) -> Result<DetectedSourceDto, AppError> {
     let path = PathBuf::from(&backing_path);
@@ -83,15 +77,12 @@ pub fn auto_detect_melody_source(backing_path: String) -> Result<DetectedSourceD
 /// 從指定路徑載入目標旋律（使用者手動選檔）。
 ///
 /// 支援格式：
-/// - `.txt` — UltraStar 歌詞標註
 /// - `.mid` / `.midi` — MIDI 檔案
 /// - `.wav` / `.mp3` / `.flac` 等音訊 — 視為乾淨人聲軌，跑 CREPE/PYIN 提取旋律
 #[tauri::command]
 pub fn load_melody_from_path(path: String) -> Result<MelodyTrack, AppError> {
     let lowered = path.to_lowercase();
-    if lowered.ends_with(".txt") {
-        ultrastar_parser::load_ultrastar(&path)
-    } else if is_audio_extension(&lowered) {
+    if is_audio_extension(&lowered) {
         melody_extractor::extract_melody_from_vocals(&path, get_model_dir().as_ref())
     } else if lowered.ends_with(".mid") || lowered.ends_with(".midi") {
         midi_parser::load_midi(&path)
@@ -116,22 +107,17 @@ fn is_audio_extension(lowered_path: &str) -> bool {
     AUDIO_EXTS.iter().any(|ext| lowered_path.ends_with(ext))
 }
 
-/// 複合操作：對一個伴奏路徑自動偵測 + 載入（僅 UltraStar .txt）。
+/// 複合操作：對一個伴奏路徑自動偵測 + 載入。
 ///
 /// 回傳：
-/// - `Ok(Some(track))` — 偵測到 UltraStar .txt 且成功載入
 /// - `Ok(None)` — 沒找到任何來源
-/// - `Err(_)` — 找到了但載入失敗（例如 `.txt` 格式錯誤）
+/// - `Err(_)` — 找到了但載入失敗
 #[tauri::command]
 pub fn auto_load_melody_for_backing(
     backing_path: String,
 ) -> Result<Option<MelodyTrack>, AppError> {
     let path = PathBuf::from(&backing_path);
     match detect_melody_source(&path) {
-        DetectedSource::UltraStar(txt_path) => {
-            let track = ultrastar_parser::load_ultrastar(&txt_path.to_string_lossy())?;
-            Ok(Some(track))
-        }
         DetectedSource::None => Ok(None),
     }
 }

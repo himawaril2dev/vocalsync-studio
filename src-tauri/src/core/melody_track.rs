@@ -1,12 +1,9 @@
 //! 目標旋律軌（Melody Track）
 //!
-//! 統一三種音符來源的共用資料模型：
-//! - UltraStar `.txt`（人工標注的卡拉 OK 歌曲包）
+//! 統一多種旋律來源的共用資料模型：
 //! - MIDI `.mid`（結構化音符事件）
-//! - 本地人聲分離（UVR5 模式，cache 為 `.vsmelody.json`）
-//!
-//! Phase 1 只實作 UltraStar 路徑；MIDI 與分離模式在 Phase 2 / 3 加入，
-//! 但共用的 [`MelodyTrack`] 結構在 Phase 1 就定稿，後續只加 source 變體。
+//! - 本地人聲分離（cache 為 `.vsmelody.json`）
+//! - 使用者匯入的人聲音軌
 
 use crate::core::pitch_data::{freq_to_note, midi_to_freq, PitchSample, PitchTrack};
 use serde::{Deserialize, Serialize};
@@ -14,8 +11,7 @@ use serde::{Deserialize, Serialize};
 /// 單一音符（discrete note）。
 ///
 /// 一個 MelodyNote 代表一個有明確起訖時間與音高的音符，
-/// 對應 UltraStar 裡的一行 `: start length pitch syllable`、
-/// MIDI 的一對 note-on / note-off，
+/// 對應 MIDI 的一對 note-on / note-off，
 /// 或人聲分離後群聚出的連續穩定音高段。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct MelodyNote {
@@ -27,11 +23,11 @@ pub struct MelodyNote {
     pub midi_pitch: u8,
     /// 預先算好的頻率（Hz），避免前端重複做 midi_to_freq
     pub freq_hz: f64,
-    /// 對應的歌詞音節（UltraStar 才有）
+    /// 對應的歌詞音節
     pub lyric: Option<String>,
-    /// 黃金音符（UltraStar `*` 開頭，得分加倍）
+    /// 加權音符標記
     pub is_golden: bool,
-    /// 自由音符（UltraStar `F` 開頭，任意音高都算對）
+    /// 自由音符，畫面上不顯示固定音高
     pub is_freestyle: bool,
 }
 
@@ -66,12 +62,6 @@ impl MelodyNote {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MelodySource {
-    UltraStar {
-        txt_path: String,
-        title: Option<String>,
-        artist: Option<String>,
-        bpm: f32,
-    },
     Midi {
         mid_path: String,
         track_index: usize,
@@ -97,7 +87,7 @@ pub enum MelodySource {
 
 /// 完整 melody 軌（給前端的最終單位）。
 ///
-/// 不論來源是 UltraStar / MIDI / 分離，前端都只看到這個結構。
+/// 不論來源是 MIDI / 分離，前端都只看到這個結構。
 /// Phase 1 透過 [`MelodyTrack::to_pitch_track`] 轉換成 PitchTrack，
 /// 讓既有的 PitchTimeline `drawSegmentedLine` 直接消費，不改 UI。
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -203,11 +193,10 @@ mod tests {
     fn to_pitch_track_produces_dense_samples() {
         // 單一音符 C4，持續 0.2 秒，hop 0.05 → 預期 4 個樣本
         let track = MelodyTrack {
-            source: MelodySource::UltraStar {
-                txt_path: "dummy.txt".to_string(),
-                title: None,
-                artist: None,
-                bpm: 120.0,
+            source: MelodySource::Midi {
+                mid_path: "dummy.mid".to_string(),
+                track_index: 0,
+                track_name: None,
             },
             notes: vec![make_note(0.0, 0.2, 60)],
             total_duration_secs: 0.2,
@@ -231,11 +220,10 @@ mod tests {
         let freestyle = MelodyNote::from_midi(0.0, 1.0, 60, None, false, true);
         let normal = MelodyNote::from_midi(1.0, 0.1, 62, None, false, false);
         let track = MelodyTrack {
-            source: MelodySource::UltraStar {
-                txt_path: "dummy.txt".to_string(),
-                title: None,
-                artist: None,
-                bpm: 120.0,
+            source: MelodySource::Midi {
+                mid_path: "dummy.mid".to_string(),
+                track_index: 0,
+                track_name: None,
             },
             notes: vec![freestyle, normal],
             total_duration_secs: 1.1,
@@ -251,11 +239,10 @@ mod tests {
     fn to_pitch_track_emits_at_least_one_sample_for_short_notes() {
         // 持續時間 0.01 秒 < hop 0.05，應該至少有一個樣本
         let track = MelodyTrack {
-            source: MelodySource::UltraStar {
-                txt_path: "dummy.txt".to_string(),
-                title: None,
-                artist: None,
-                bpm: 120.0,
+            source: MelodySource::Midi {
+                mid_path: "dummy.mid".to_string(),
+                track_index: 0,
+                track_name: None,
             },
             notes: vec![make_note(0.5, 0.01, 60)],
             total_duration_secs: 0.51,

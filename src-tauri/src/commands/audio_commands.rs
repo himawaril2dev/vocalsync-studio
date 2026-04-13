@@ -1,10 +1,8 @@
 //! 音訊操作 Commands
 
 use crate::core::audio_engine::{AudioEngine, ExportPaths, LoadResult};
-use crate::core::melody_source_detector::{detect_melody_source, DetectedSource};
 use crate::core::pitch_data::PitchTrack;
 use crate::error::AppError;
-use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{AppHandle, State};
 
@@ -18,14 +16,7 @@ pub fn load_backing(
         .lock()
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let mut result = engine.load_backing(&path)?;
-
-    // 掃描同資料夾找目標旋律來源檔（僅 UltraStar .txt）。
-    // 實際載入由前端呼叫 `auto_load_melody_for_backing` 進行。
-    let detected = detect_melody_source(&PathBuf::from(&path));
-    result.melody_source = match detected {
-        DetectedSource::UltraStar(_) => Some("ultrastar".to_string()),
-        DetectedSource::None => None,
-    };
+    result.melody_source = None;
 
     Ok(result)
 }

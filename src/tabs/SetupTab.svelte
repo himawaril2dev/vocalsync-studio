@@ -59,7 +59,7 @@
     sample_rate: number;
     is_video: boolean;
     video_path: string | null;
-    /** 自動偵測結果：`"ultrastar"` / `"midi"` / `"uvr_cache"` / `null` */
+    /** 自動偵測結果：`"midi"` / `"uvr_cache"` / `null` */
     melody_source: string | null;
   }
 
@@ -216,7 +216,7 @@
         }
       }
 
-      // 自動載入目標旋律（僅 UltraStar 會在 Phase 1 真的回傳 MelodyTrack）
+      // 自動載入目標旋律
       await autoLoadMelodyForPath(path);
     } catch (err) {
       statusText = `載入失敗：${err}`;
@@ -229,9 +229,8 @@
    *       （讓既有的 PitchTimeline 自動畫出灰藍線，不用改 UI）
    * 失敗：只更新 melodyStatus，不 throw（因為沒有 melody 不是致命錯誤）
    *
-   * 若 melody 來源是 UltraStar 同名 `.txt`，不觸發對齊（兩個檔本來就對得上）。
-   * 若來源檔與 backing 檔不同（例如後續使用者匯入了原曲分離的 vocals.wav），
-   * 則由 `loadMelodySourceFromPath` 觸發對齊。
+   * 若來源檔與 backing 檔不同（例如使用者匯入原曲分離的 vocals.wav），
+   * 則由 `loadMelodyFile` / `loadVocalsTrack` 觸發對齊。
    */
   async function autoLoadMelodyForPath(backingPath: string): Promise<void> {
     try {
@@ -240,7 +239,6 @@
         { backingPath },
       );
       if (track) {
-        // UltraStar 同資料夾偵測：source path 就是伴奏同資料夾的 .txt，不需要對齊
         await commitMelodyTrack(track, null);
         const sourceLabel = describeMelodySource(track);
         melodyStatus.set(
@@ -346,7 +344,7 @@
    * 載入 melody 的共同後處理：寫入 store + 套用當前對齊 offset + 更新 backingPitchTrack。
    *
    * `sourcePath` 是 melody 來源檔的路徑（給對齊用）；若為 null 代表「無實體檔」
-   * （例如 UltraStar 只有 .txt）或「與練唱伴奏同源」，不需要對齊。
+   * 或「與練唱伴奏同源」，不需要對齊。
    */
   async function commitMelodyTrack(
     track: MelodyTrack,
@@ -432,11 +430,6 @@
 
   function describeMelodySource(track: MelodyTrack): string {
     const src = track.source;
-    if (src.type === "ultra_star") {
-      const title = src.title ?? "未命名";
-      const artist = src.artist ? ` / ${src.artist}` : "";
-      return `UltraStar：${title}${artist}`;
-    }
     if (src.type === "midi") {
       return `MIDI：Track ${src.track_index + 1}`;
     }
@@ -597,8 +590,7 @@
 
     {#if $currentMelody === null}
       <p class="sub-hint">
-        載入練唱伴奏後會自動掃描同資料夾的 <code>.mid</code>。
-        若沒有檔案，可改用<strong>預先分離好的人聲軌</strong>或<strong>手動載入 MIDI</strong>。
+        請匯入<strong>預先分離好的人聲軌</strong>或<strong>手動載入 MIDI</strong>作為參考旋律。
       </p>
     {/if}
 
@@ -657,8 +649,7 @@
 
         {#if $melodySourcePath === null}
           <p class="alignment-hint">
-            目前 melody 來源與練唱伴奏視為同源（UltraStar / 自動偵測 .txt），
-            若時間對不上可用下方的 fine-tune 微調。
+            目前 melody 來源與練唱伴奏視為同源，若時間對不上可用下方的 fine-tune 微調。
           </p>
         {:else if $alignmentResult}
           <p class="alignment-hint">
@@ -854,14 +845,6 @@
     font-size: 12px;
     color: #a0958a;
     line-height: 1.5;
-  }
-
-  .sub-hint code {
-    background: #f0ece4;
-    padding: 1px 5px;
-    border-radius: 3px;
-    font-family: Consolas, monospace;
-    font-size: 11px;
   }
 
   .actions {
