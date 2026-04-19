@@ -57,6 +57,13 @@
   // 已遷移至全域 toast 系統
   let videoEl = $state<HTMLVideoElement | null>(null);
 
+  // ── 進度條拖動狀態 ──
+  // 播放中後端 ~20Hz 推送 elapsed，若 slider 直接綁 $elapsed 會在拖動過程中被覆蓋回去，
+  // 造成「拖不動」的感覺。用 seekDraftValue 做拖動中的本地緩衝，鬆手時才套用。
+  let isSeekDragging = $state(false);
+  let seekDraftValue = $state(0);
+  const sliderValue = $derived(isSeekDragging ? seekDraftValue : $elapsed);
+
   /** 右上面板顯示：歌詞 or 同步編輯器 */
   let panelView = $state<PanelView>("lyrics");
 
@@ -104,8 +111,16 @@
   $effect(() => {
     const targetTime = $elapsed;
     if (!videoEl || !$loadedMedia?.is_video) return;
-    if ($transportState === "idle") {
-      videoEl.pause();
+
+    // idle 或 paused：影片停下但保持當前畫格（位置對齊 elapsed），
+    // 不觸發 play()，避免 paused 下 effect 重跑把影片喚醒。
+    if ($transportState === "idle" || $transportState === "paused") {
+      if (!videoEl.paused) videoEl.pause();
+      // paused 時使用者可能拖動進度條，讓影片同步跳到新位置
+      if ($transportState === "paused") {
+        const diff = targetTime - videoEl.currentTime;
+        if (Math.abs(diff) > 0.1) videoEl.currentTime = targetTime;
+      }
       return;
     }
 
@@ -132,7 +147,13 @@
     invoke("set_volume", { backing: $backingVolume, mic: $micGain }).catch(() => {});
   });
 
-  function onSeekChange(e: Event) {
+  function onSeekInput(e: Event) {
+    const val = parseFloat((e.target as HTMLInputElement).value);
+    seekDraftValue = val;
+    if (!isSeekDragging) isSeekDragging = true;
+  }
+
+  function onSeekCommit(e: Event) {
     const val = parseFloat((e.target as HTMLInputElement).value);
     // paused 狀態下後端不會 emit progress，前端要自行同步 elapsed
     // 以便「暫停後拖進度條到 N 秒 → 按繼續」能正確從 N 秒啟動。
@@ -141,6 +162,12 @@
     invoke("seek", { seconds: val }).catch((err) =>
       console.error("[seek] failed:", err),
     );
+    isSeekDragging = false;
+  }
+
+  function onSeekPointerDown() {
+    isSeekDragging = true;
+    seekDraftValue = get(elapsed);
   }
 
   function fmtTime(sec: number): string {
@@ -555,16 +582,16 @@
   <div class="transport-row">
     <div class="transport-left">
       <div class="transport-buttons">
-        <!-- 試聽：idle 可按；running / paused 時 disabled（paused 下由 Pause 鈕繼續）-->
+        <!-- 試聽：idle 可按；paused 時按下會從暫停位置繼續原模式 -->
         <button
           class="t-btn play"
-          onclick={startPreview}
-          disabled={!$loadedMedia || $isTransportRunning || $isTransportPaused}
-          title="試聽 (Space)"
-          aria-label="試聽"
+          onclick={$isTransportPaused ? resumeFromPause : startPreview}
+          disabled={!$loadedMedia || $isTransportRunning}
+          title={$isTransportPaused ? "繼續播放 (Space)" : "試聽 (Space)"}
+          aria-label={$isTransportPaused ? "繼續播放" : "試聽"}
         ><Icon name="play" size={14} /></button>
 
-        <!-- 錄音：非 running 時可按。idle→新錄/續錄，paused(recording)→續錄，paused(其他)→從當前位置開錄 -->
+        <!-- 錄音：idle → 新錄/續錄，paused(recording) → 續錄，paused(其他) → 從當前位置開錄 -->
         <button
           class="t-btn rec"
           onclick={startRecording}
@@ -573,23 +600,14 @@
           aria-label="錄音"
         ><Icon name="record" size={14} /></button>
 
-        <!-- 暫停/繼續 toggle：running→暫停，paused→繼續 -->
-        {#if $isTransportPaused}
-          <button
-            class="t-btn pause"
-            onclick={resumeFromPause}
-            title="繼續 (Space)"
-            aria-label="繼續"
-          ><Icon name="play" size={14} /></button>
-        {:else}
-          <button
-            class="t-btn pause"
-            onclick={pauseCurrent}
-            disabled={!$isTransportRunning}
-            title="暫停 (Space)"
-            aria-label="暫停"
-          ><Icon name="pause" size={14} /></button>
-        {/if}
+        <!-- 暫停：running 時可按暫停；paused 時保持 II 圖示且 disabled（由試聽/錄音鍵繼續）-->
+        <button
+          class="t-btn pause"
+          onclick={pauseCurrent}
+          disabled={!$isTransportRunning}
+          title="暫停 (Space)"
+          aria-label="暫停"
+        ><Icon name="pause" size={14} /></button>
 
         <!-- 停止：回到最開頭。running 或 paused 時可按 -->
         <button
@@ -629,7 +647,17 @@
           style="left: {($loopA / $duration) * 100}%; width: {(($loopB - $loopA) / $duration) * 100}%;"
         ></div>
       {/if}
-      <input type="range" class="progress-slider" min="0" max={$duration || 1} step="0.1" value={$elapsed} onchange={onSeekChange} />
+      <input
+        type="range"
+        class="progress-slider"
+        min="0"
+        max={$duration || 1}
+        step="0.1"
+        value={sliderValue}
+        onpointerdown={onSeekPointerDown}
+        oninput={onSeekInput}
+        onchange={onSeekCommit}
+      />
     </div>
 
     <div class="time-display time-end">{fmtTime($duration)}</div>
