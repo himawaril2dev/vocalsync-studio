@@ -29,8 +29,7 @@ pub struct LoadedMedia {
 pub fn load_media(path: &str) -> Result<LoadedMedia, AppError> {
     let path_obj = Path::new(path);
 
-    let file = File::open(path_obj)
-        .map_err(|e| AppError::Audio(format!("無法開啟檔案：{}", e)))?;
+    let file = File::open(path_obj).map_err(|e| AppError::Audio(format!("無法開啟檔案：{}", e)))?;
 
     // Hint：讓 symphonia 用副檔名加速 probe
     let mut hint = Hint::new();

@@ -25,12 +25,14 @@ use crate::events::{
     CalibrationStartedPayload,
 };
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use ringbuf::{traits::*, HeapCons, HeapProd, HeapRb};
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use tauri::AppHandle;
+use timestretch::{EdmPreset, EnvelopePreset, StreamProcessor, StretchParams};
 
 const PITCH_BUF_SIZE: usize = 2048;
 
@@ -179,9 +181,7 @@ pub struct AudioEngine {
 ///
 /// 回傳新的 `Vec<f32>`，不改動輸入切片。
 fn apply_highpass_80hz(mono: &[f32], sample_rate: u32) -> Vec<f32> {
-    use biquad::{
-        Biquad, Coefficients, DirectForm1, ToHertz, Type, Q_BUTTERWORTH_F32,
-    };
+    use biquad::{Biquad, Coefficients, DirectForm1, ToHertz, Type, Q_BUTTERWORTH_F32};
 
     let fs = (sample_rate as f32).hz();
     let f0 = 80.0_f32.hz();
@@ -194,9 +194,7 @@ fn apply_highpass_80hz(mono: &[f32], sample_rate: u32) -> Vec<f32> {
     let mut stage1 = DirectForm1::<f32>::new(coeffs);
     let mut stage2 = DirectForm1::<f32>::new(coeffs);
 
-    mono.iter()
-        .map(|&s| stage2.run(stage1.run(s)))
-        .collect()
+    mono.iter().map(|&s| stage2.run(stage1.run(s))).collect()
 }
 
 impl AudioEngine {
@@ -226,10 +224,7 @@ impl AudioEngine {
 
     /// 取得伴奏旋律音高軌跡（None 代表尚未分析完成）
     pub fn get_backing_pitch_track(&self) -> Option<PitchTrack> {
-        self.backing_pitch_track
-            .lock()
-            .ok()
-            .and_then(|t| t.clone())
+        self.backing_pitch_track.lock().ok().and_then(|t| t.clone())
     }
 
     // ── 載入 ───────────────────────────────────────────────────────
@@ -238,6 +233,12 @@ impl AudioEngine {
     pub fn load_backing(&mut self, path: &str) -> Result<LoadResult, AppError> {
         // 載入前先停止任何進行中的播放/錄音
         self.stop();
+
+        // 🔴 Codex 安全審查 P2 #7：換曲時清掉舊的人聲錄音。
+        // 避免載入新歌後還殘留上一首的 vocal_buffer / pitch_track，
+        // 使用者按「回放」或「匯出」時會拿到跨曲錯亂資料，
+        // 也算一層隱私防線（不讓前一位使用者的錄音殘留到下一人）。
+        self.clear_recording();
 
         // 統一走 symphonia 解碼，輸出固定為交錯立體聲 f32
         let media = crate::core::media_loader::load_media(path)?;
@@ -273,7 +274,11 @@ impl AudioEngine {
             duration: self.duration,
             sample_rate: self.sample_rate,
             is_video,
-            video_path: if is_video { Some(path.to_string()) } else { None },
+            video_path: if is_video {
+                Some(path.to_string())
+            } else {
+                None
+            },
             // melody_source 由 command 層填入（audio_engine 不負責檔案系統掃描）
             melody_source: None,
         })
@@ -333,14 +338,8 @@ impl AudioEngine {
             // harmonic_threshold 0.20：寬鬆閾值對混音歌曲友善
             const BACKING_BUF_SIZE: usize = 4096;
             const BACKING_HOP: usize = 2048;
-            let mut detector = PitchDetector::new(
-                sample_rate,
-                BACKING_BUF_SIZE,
-                60.0,
-                1200.0,
-                0.20,
-                0.01,
-            );
+            let mut detector =
+                PitchDetector::new(sample_rate, BACKING_BUF_SIZE, 60.0, 1200.0, 0.20, 0.01);
 
             let mut track = PitchTrack::new();
             let mut total_frame_count = 0_usize;
@@ -450,14 +449,30 @@ impl AudioEngine {
         self.shared
             .backing_volume
             .store(backing.to_bits(), Ordering::Relaxed);
-        self.shared
-            .mic_gain
-            .store(mic.to_bits(), Ordering::Relaxed);
+        self.shared.mic_gain.store(mic.to_bits(), Ordering::Relaxed);
     }
 
     pub fn seek(&mut self, seconds: f64) {
         let frame = (seconds.max(0.0) * self.sample_rate as f64) as u64;
         self.shared.playback_pos.store(frame, Ordering::Relaxed);
+    }
+
+    /// 清除目前錄音資料並回到起點，供前端「清除錄音」按鈕使用。
+    ///
+    /// 清空 `vocal_buffer`（已錄人聲波形）、`pitch_track`（人聲音高軌跡）、
+    /// `current_pitch`（即時顯示值），並把 `playback_pos` 歸零。
+    /// 僅在 `Idle` 狀態呼叫（前端按鈕會 disable），不處理執行中的 worker。
+    pub fn clear_recording(&self) {
+        if let Ok(mut v) = self.vocal_buffer.lock() {
+            v.clear();
+        }
+        if let Ok(mut t) = self.pitch_track.lock() {
+            t.clear();
+        }
+        if let Ok(mut p) = self.shared.current_pitch.lock() {
+            *p = None;
+        }
+        self.shared.playback_pos.store(0, Ordering::Relaxed);
     }
 
     /// 設定 A-B 循環區間（秒）。A 必須小於 B，B 不可超過歌曲長度。
@@ -562,7 +577,13 @@ impl AudioEngine {
 
     // ── 回放（伴奏 + 人聲混音）────────────────────────────────────
 
-    pub fn start_playback(&mut self, app: AppHandle, start_frame: Option<u64>, output_device: Option<usize>, latency_ms: f64) -> Result<(), AppError> {
+    pub fn start_playback(
+        &mut self,
+        app: AppHandle,
+        start_frame: Option<u64>,
+        output_device: Option<usize>,
+        latency_ms: f64,
+    ) -> Result<(), AppError> {
         if self.state != EngineState::Idle {
             return Err(AppError::Audio("引擎正忙，請先停止".to_string()));
         }
@@ -571,7 +592,16 @@ impl AudioEngine {
             .clone()
             .ok_or_else(|| AppError::Audio("尚未載入伴奏".to_string()))?;
 
-        self.spawn_playback_worker(app, backing, start_frame, true, output_device, latency_ms, None, "auto");
+        self.spawn_playback_worker(
+            app,
+            backing,
+            start_frame,
+            true,
+            output_device,
+            latency_ms,
+            None,
+            "auto",
+        );
         self.state = EngineState::PlayingBack;
         Ok(())
     }
@@ -625,7 +655,14 @@ impl AudioEngine {
 
     // ── 錄音 ───────────────────────────────────────────────────────
 
-    pub fn start_recording(&mut self, app: AppHandle, input_device: Option<usize>, output_device: Option<usize>, pitch_engine_pref: &str) -> Result<(), AppError> {
+    pub fn start_recording(
+        &mut self,
+        app: AppHandle,
+        start_frame: Option<u64>,
+        input_device: Option<usize>,
+        output_device: Option<usize>,
+        pitch_engine_pref: &str,
+    ) -> Result<(), AppError> {
         if self.state != EngineState::Idle {
             return Err(AppError::Audio("引擎正忙，請先停止".to_string()));
         }
@@ -650,18 +687,57 @@ impl AudioEngine {
             .loop_range
             .store(LOOP_PACKED_DISABLED, Ordering::Relaxed);
 
-        // 清空舊錄音資料 + 音高軌跡
-        if let Ok(mut v) = vocal_buffer.lock() {
-            v.clear();
+        // 續錄判斷：start_frame = Some(>0) 時保留已錄的 vocal_buffer / pitch_track，
+        // 讓「錄到 N 秒 → 暫停/停止 → 再按錄音」能從目標位置繼續錄。
+        //
+        // 時間軸對齊（三種情境）：
+        //   vocal_buffer 是 mono，1 frame = 1 sample，index 對應 backing 時間軸。
+        //   1. target == v.len()：正常接續，不動 buffer
+        //   2. target > v.len()（向後 seek）：用 0 填到 target，新樣本從正確位置 append
+        //   3. target < v.len()（向前 seek）：truncate 到 target，捨棄後段
+        //      ⚠️ 捨棄後段是破壞性操作，前端 RecordingTab.startRecording()
+        //         會先用 dialog 確認使用者意圖，避免誤觸毀掉錄音。
+        //      同時 pitch_track 也要同步截斷，避免後段 pitch 殘留。
+        let resume_frame = start_frame.filter(|&f| f > 0);
+        let fresh_start = resume_frame.is_none();
+
+        if fresh_start {
+            if let Ok(mut v) = vocal_buffer.lock() {
+                v.clear();
+            }
+            if let Ok(mut t) = pitch_track.lock() {
+                t.clear();
+            }
+        } else if let Some(target) = resume_frame {
+            let target_len = target as usize;
+            let target_secs = target as f64 / source_sr as f64;
+            if let Ok(mut v) = vocal_buffer.lock() {
+                match v.len().cmp(&target_len) {
+                    std::cmp::Ordering::Less => v.resize(target_len, 0.0),
+                    std::cmp::Ordering::Greater => {
+                        log::info!(
+                            "[record] 向前 seek 續錄：truncate vocal_buffer {} → {} samples",
+                            v.len(),
+                            target_len
+                        );
+                        v.truncate(target_len);
+                    }
+                    std::cmp::Ordering::Equal => {}
+                }
+            }
+            // 同步截斷 pitch_track（只保留時戳 < target_secs 的樣本）
+            if let Ok(mut t) = pitch_track.lock() {
+                t.truncate_after(target_secs);
+            }
         }
-        if let Ok(mut t) = pitch_track.lock() {
-            t.clear();
-        }
+        // current_pitch 是即時顯示值，無論如何都清掉（避免 idle 殘留值閃一下）
         if let Ok(mut p) = shared.current_pitch.lock() {
             *p = None;
         }
 
-        shared.playback_pos.store(0, Ordering::Relaxed);
+        shared
+            .playback_pos
+            .store(resume_frame.unwrap_or(0), Ordering::Relaxed);
         shared.running.store(true, Ordering::Relaxed);
         shared.backing_rms.store(0, Ordering::Relaxed);
         shared.mic_rms.store(0, Ordering::Relaxed);
@@ -752,7 +828,13 @@ impl AudioEngine {
 
     // ── 導出 ───────────────────────────────────────────────────────
 
-    pub fn export(&self, dir: &str, prefix: &str, auto_balance: bool, latency_ms: f64) -> Result<ExportPaths, AppError> {
+    pub fn export(
+        &self,
+        dir: &str,
+        prefix: &str,
+        auto_balance: bool,
+        latency_ms: f64,
+    ) -> Result<ExportPaths, AppError> {
         let vocal = self
             .vocal_buffer
             .lock()
@@ -824,10 +906,20 @@ impl AudioEngine {
             }
             let b_rms = (sum_b_sq / n as f32).sqrt();
             let v_rms = (sum_v_sq / n as f32).sqrt();
-            
-            // 目標：人聲約等於伴奏的 0.9 倍 (Lead vocal slightly below backing total energy dynamically)
+
+            // 目標：人聲 RMS ≈ 原始 backing RMS × 1.5。
+            //
+            // 重要：下方實際混音時伴奏會被 `self.export_volume`（= 0.5）衰減，
+            // 所以人聲對「實際混音伴奏」的比例 = 1.5 / 0.5 = 3.0 倍 ≈ +9.5 dB，
+            // 卡拉 OK 場景下人聲清楚主導。
+            //
+            // 只設下限、不設上限：
+            //   舊設計有 clamp 上限 4.0 會把小聲錄音的 gain 卡死，
+            //   人聲放不夠大反而讓伴奏聽起來蓋過人聲（使用者實測回報）。
+            //   下限 0.5 防止超大音量錄音被過度衰減失去動態。
+            //   normalize 階段的 peak limiter 會處理整體 clip 風險。
             if v_rms > 0.001 {
-                vocal_gain = (b_rms * 0.9) / v_rms;
+                vocal_gain = ((b_rms * 1.5) / v_rms).max(0.5);
             }
         }
 
@@ -839,12 +931,16 @@ impl AudioEngine {
             let bl = backing[bidx] * self.export_volume;
             let br = backing[bidx + (1.min(backing_channels - 1))] * self.export_volume;
             let v = shifted_vocal[i] * vocal_gain;
-            
+
             let l = bl + v;
             let r = br + v;
-            if l.abs() > max_peak { max_peak = l.abs(); }
-            if r.abs() > max_peak { max_peak = r.abs(); }
-            
+            if l.abs() > max_peak {
+                max_peak = l.abs();
+            }
+            if r.abs() > max_peak {
+                max_peak = r.abs();
+            }
+
             mix_buffer.push(l);
             mix_buffer.push(r);
         }
@@ -1083,8 +1179,11 @@ impl AudioEngine {
             );
         }
 
-        let accepted_offsets: Vec<f64> =
-            beat_results.iter().filter(|r| r.accepted).map(|r| r.offset_ms).collect();
+        let accepted_offsets: Vec<f64> = beat_results
+            .iter()
+            .filter(|r| r.accepted)
+            .map(|r| r.offset_ms)
+            .collect();
 
         if accepted_offsets.len() < 3 {
             let reason = format!(
@@ -1101,8 +1200,7 @@ impl AudioEngine {
             return Err(AppError::Audio(reason));
         }
 
-        let mean_ms: f64 =
-            accepted_offsets.iter().sum::<f64>() / accepted_offsets.len() as f64;
+        let mean_ms: f64 = accepted_offsets.iter().sum::<f64>() / accepted_offsets.len() as f64;
 
         let variance: f64 = accepted_offsets
             .iter()
@@ -1313,6 +1411,187 @@ fn fill_backing_output(
     (new_pos, rms)
 }
 
+#[inline]
+fn sample_cubic_interleaved(frames: &[f32], channels: usize, frame_pos: f64, src_ch: usize) -> f32 {
+    let frame_count = frames.len() / channels;
+    if frame_count == 0 {
+        return 0.0;
+    }
+
+    let ch = src_ch.min(channels.saturating_sub(1));
+    let x1 = frame_pos
+        .floor()
+        .clamp(0.0, (frame_count.saturating_sub(1)) as f64) as isize;
+    let t = (frame_pos - x1 as f64) as f32;
+    let x0 = (x1 - 1).clamp(0, frame_count as isize - 1) as usize;
+    let x1 = x1.clamp(0, frame_count as isize - 1) as usize;
+    let x2 = (x1 as isize + 1).clamp(0, frame_count as isize - 1) as usize;
+    let x3 = (x1 as isize + 2).clamp(0, frame_count as isize - 1) as usize;
+
+    let p0 = frames[x0 * channels + ch];
+    let p1 = frames[x1 * channels + ch];
+    let p2 = frames[x2 * channels + ch];
+    let p3 = frames[x3 * channels + ch];
+    let t2 = t * t;
+    let t3 = t2 * t;
+
+    0.5 * ((2.0 * p1)
+        + (-p0 + p2) * t
+        + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+        + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3)
+}
+
+#[inline]
+fn sample_linear_mono(samples: &[f32], pos: f64) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+
+    let lo = pos
+        .floor()
+        .clamp(0.0, (samples.len().saturating_sub(1)) as f64) as usize;
+    let hi = (lo + 1).min(samples.len().saturating_sub(1));
+    let frac = (pos - lo as f64) as f32;
+    let s_lo = samples[lo];
+    let s_hi = samples[hi];
+    s_lo + (s_hi - s_lo) * frac
+}
+
+/// Lanczos-3 sinc kernel（a=3，頻譜洩漏極低，sidelobe < -26dB）。
+///
+/// `L(x) = sinc(x) * sinc(x/a)` for `|x| < a`；超出取 0。
+///
+/// NOTE：目前 production 不用——實測 WSOLA hop 邊界 / HouseLoop phase artifact 的
+/// 微相位跳變會被 6-tap 支撐擴散成 ringing，反而比 cubic 差。保留函式供未來若換
+/// 其他 stretch crate（phase-continuous streaming）或純 offline 路徑時重用。
+#[allow(dead_code)]
+#[inline]
+fn lanczos3_kernel(x: f64) -> f64 {
+    const A: f64 = 3.0;
+    let abs_x = x.abs();
+    if abs_x < 1e-9 {
+        return 1.0;
+    }
+    if abs_x >= A {
+        return 0.0;
+    }
+    let px = std::f64::consts::PI * x;
+    let px_a = px / A;
+    (px.sin() / px) * (px_a.sin() / px_a)
+}
+
+/// 6-tap Lanczos-3 sinc 插值（for interleaved frames）。
+///
+/// 相較於 Catmull-Rom cubic：
+/// - sidelobe < -26dB（cubic ~-14dB）→ 理論上高頻 aliasing/imaging 顯著減少
+/// - 計算量約為 cubic 的 2 倍（6 乘加 vs 4 乘加）
+///
+/// 邊界策略：超出 `frames` 的 tap 以端點 clamp 填補（零餘假設會產生低頻誤差，
+/// 對短尾端幀影響較大；端點保持能量比較保守）。
+///
+/// NOTE：目前 production 不用；見 `lanczos3_kernel` 註解。
+#[allow(dead_code)]
+#[inline]
+fn sample_lanczos3_interleaved(
+    frames: &[f32],
+    channels: usize,
+    frame_pos: f64,
+    src_ch: usize,
+) -> f32 {
+    let ch_count = channels.max(1);
+    let frame_count = frames.len() / ch_count;
+    if frame_count == 0 {
+        return 0.0;
+    }
+
+    let ch = src_ch.min(ch_count.saturating_sub(1));
+    let i0 = frame_pos.floor() as isize;
+    let t = frame_pos - i0 as f64;
+
+    // 取 6 tap：i0-2, i0-1, i0, i0+1, i0+2, i0+3
+    let mut sum = 0.0_f64;
+    let mut weight_sum = 0.0_f64;
+    let last = frame_count as isize - 1;
+    for k in -2_isize..=3 {
+        let idx = (i0 + k).clamp(0, last) as usize;
+        let sample = frames[idx * ch_count + ch] as f64;
+        let x = k as f64 - t;
+        let w = lanczos3_kernel(x);
+        sum += sample * w;
+        weight_sum += w;
+    }
+
+    // 權重歸一化：sinc 在無限長 kernel 上 Σw = 1，6-tap 有限截斷會略偏；
+    // 歸一化避免增益微幅起伏（對 RMS 穩定性有幫助）。
+    if weight_sum.abs() > 1e-9 {
+        (sum / weight_sum) as f32
+    } else {
+        sum as f32
+    }
+}
+
+#[inline]
+#[allow(dead_code)]
+fn compact_interleaved_front(queue: &mut Vec<f32>, head_frames: &mut usize, channels: usize) {
+    if *head_frames == 0 {
+        return;
+    }
+
+    let drop_samples = (*head_frames).saturating_mul(channels);
+    if drop_samples == 0 || drop_samples >= queue.len() {
+        queue.clear();
+        *head_frames = 0;
+        return;
+    }
+
+    queue.copy_within(drop_samples.., 0);
+    queue.truncate(queue.len() - drop_samples);
+    *head_frames = 0;
+}
+
+fn build_output_resample_filters(
+    channels: usize,
+    from_sr: u32,
+    to_sr: u32,
+) -> Vec<[Option<biquad::DirectForm1<f32>>; 2]> {
+    use biquad::{Coefficients, DirectForm1, ToHertz, Type, Q_BUTTERWORTH_F32};
+
+    let mut filters = (0..channels).map(|_| [None, None]).collect::<Vec<_>>();
+    if from_sr <= to_sr {
+        return filters;
+    }
+
+    let fs = (from_sr as f32).hz();
+    let cutoff = ((to_sr as f32) * 0.45).hz();
+    if let Ok(coeffs) =
+        Coefficients::<f32>::from_params(Type::LowPass, fs, cutoff, Q_BUTTERWORTH_F32)
+    {
+        for channel_filters in &mut filters {
+            channel_filters[0] = Some(DirectForm1::<f32>::new(coeffs));
+            channel_filters[1] = Some(DirectForm1::<f32>::new(coeffs));
+        }
+    }
+
+    filters
+}
+
+/// 重置 pitch anti-aliasing cascade 的內部 state（保留 coefficients，不 rebuild）。
+///
+/// 使用時機：transport discontinuity（seek、loop、path switch、pitch change），
+/// 避免舊片段的 IIR 能量滲透到新片段造成 smear / click。
+///
+/// 設計筆記：這裡用 `reset_state()` 而非重新 `new(coeffs)`，因為 coefficients 本身
+/// 沒變（還是同一個 cur_pitch_st 對應的 f_cut），只需清零 memory。
+#[inline]
+fn reset_pitch_aa_state(filters: &mut [[Option<biquad::DirectForm1<f32>>; 5]]) {
+    use biquad::Biquad;
+    for ch_filters in filters.iter_mut() {
+        for stage in ch_filters.iter_mut().flatten() {
+            stage.reset_state();
+        }
+    }
+}
+
 // ── Worker thread 函式 ────────────────────────────────────────────
 
 /// 純播放 worker（試聽 / 回放共用）
@@ -1337,9 +1616,13 @@ fn run_playback(
 ) {
     let host = cpal::default_host();
     let device = output_device_idx
-        .and_then(|idx| host.output_devices().ok().and_then(|mut devs| devs.nth(idx)))
+        .and_then(|idx| {
+            host.output_devices()
+                .ok()
+                .and_then(|mut devs| devs.nth(idx))
+        })
         .or_else(|| host.default_output_device());
-        
+
     let device = match device {
         Some(d) => d,
         None => {
@@ -1364,10 +1647,7 @@ fn run_playback(
 
     // Snapshot 人聲資料（如果要混音）
     let vocal_snapshot: Option<Arc<Vec<f32>>> = if mix_vocal {
-        vocal_buffer
-            .lock()
-            .ok()
-            .map(|v| Arc::new(v.clone()))
+        vocal_buffer.lock().ok().map(|v| Arc::new(v.clone()))
     } else {
         None
     };
@@ -1384,15 +1664,114 @@ fn run_playback(
     let vocal_cb = vocal_snapshot.clone();
     let running_cb = running.clone();
 
+    // ── Stretch producer/consumer 架構（lock-free ring buffer） ──
+    //
+    // 根因：processor.process_into() 是計算密集的 DSP 操作，
+    // 在 CPAL output callback（即時線程）中執行會造成偶發 glitch。
+    //
+    // 解法：背景 producer 線程持續預先生成 stretched 音訊並寫入 ring buffer，
+    // CPAL callback 只從 ring buffer 讀取——零 DSP 運算、zero-lock（SPSC）。
+    let can_use_stream_processor = backing_channels <= 2;
+
+    // 🔴 Codex 審查 P2 #8：F POC 把 producer 路徑關掉（consumer 全走 WSOLA），
+    // 但如果 still spawn producer，它在 pitch != 0 時會跑 `process_into()` 白工，
+    // ring 永遠沒人消費、還浪費 DSP（弱機器上會造成 glitch）。
+    // 這個常數同時控制 (a) 是否 spawn producer (b) consumer 是否讀 ring。
+    // 將來要 revert F POC 只需改這裡成 true 或傳外部旗標即可。
+    const USE_PRODUCER_PATH: bool = false;
+
+    // Ring buffer 容量：~0.5 秒的 stretched 音訊（source_sr 幀 × channels）
+    let ring_capacity_frames: usize = (source_sr as usize / 2).max(16_384);
+    let ring_capacity_samples = ring_capacity_frames * backing_channels;
+
+    // Producer → Consumer 的 lock-free SPSC ring buffer（interleaved f32 samples）
+    // HeapProd 會 move 進 producer 線程；HeapCons 會 move 進 CPAL callback closure
+    let ring = HeapRb::<f32>::new(ring_capacity_samples);
+    let (ring_producer, ring_consumer) = ring.split();
+
+    // Producer 控制信號
+    let producer_running = Arc::new(AtomicBool::new(true));
+    // Seek 通知：callback 發現跳躍時設為目標幀位置 + 1（0 = 無 seek）
+    let producer_seek_to = Arc::new(AtomicU64::new(0));
+    // 參數同步（producer 自行從 shared 的原子讀取 speed/pitch）
+    let producer_speed = shared.speed.clone();
+    let producer_pitch = shared.pitch_semitones.clone();
+
+    // Consumer 端的狀態追蹤（closure 捕獲為 mut）
+    let mut stretch_play_pos = shared.playback_pos.load(Ordering::Relaxed) as f64;
+    // stretch_active_prev：上一次 callback 是否走 timestretch producer 路徑（純移調用）
+    let mut stretch_active_prev = false;
+    // wsola_active_prev：上一次 callback 是否走 WSOLA 路徑（變速/變速+移調用）
+    let mut wsola_active_prev = false;
+    // 追蹤 consumer 從 ring buffer 中已消費的小數幀位移
+    let mut ring_consume_frac: f64 = 0.0;
+    // 跨 callback 保留的尾端 frames（cubic interpolation 需要 preview 後續幀）
+    // 這樣 pop_slice 可以精確控制消耗量 = consumed_whole，避免 ring buffer 被過度消耗
+    let mut carry_buf: Vec<f32> = Vec::with_capacity(32 * backing_channels);
+    // 本地重用暫存（避免每個 callback 重複配置）
+    let mut local_buf: Vec<f32> = Vec::with_capacity(8192 * backing_channels);
+
+    // 啟動 producer 線程（需同時滿足：channels ≤ 2 且 F POC 有開啟 producer 路徑）
+    let producer_handle = if can_use_stream_processor && USE_PRODUCER_PATH {
+        let backing_for_producer = backing.clone();
+        let producer_running_clone = producer_running.clone();
+        let producer_seek_clone = producer_seek_to.clone();
+        let loop_range_prod = shared.loop_range.clone();
+        let running_main = shared.running.clone();
+
+        Some(thread::spawn(move || {
+            stretch_producer_worker(
+                backing_for_producer,
+                backing_channels,
+                source_sr,
+                out_sr,
+                total_frames,
+                ring_producer,
+                producer_running_clone,
+                producer_seek_clone,
+                producer_speed,
+                producer_pitch,
+                loop_range_prod,
+                running_main,
+            );
+        }))
+    } else {
+        // 不用 stretch producer 時：ring_producer 在這裡 drop，省掉 DSP 白工
+        drop(ring_producer);
+        None
+    };
+
+    // Consumer 端：move 擁有權進 callback closure
+    let mut ring_cons: HeapCons<f32> = ring_consumer;
+
     // WSOLA 處理器（由 closure 擁有，跨 callback 持續存活）
     let mut wsola = crate::core::wsola::WsolaProcessor::new(backing_channels);
     let mut wsola_buf: Vec<f32> = Vec::new();
 
     // Pitch-shift anti-aliasing LPF state（升調時需要）
-    // 每聲道 3 級 biquad cascade = 6 階 Butterworth（抑制力約 -36 dB/oct）
-    let mut pitch_aa_filters: Vec<[Option<biquad::DirectForm1<f32>>; 3]> =
-        (0..backing_channels).map(|_| [None, None, None]).collect();
+    // (2026-04-15, 選項 1 — 5 階 cascade): 從 3 級（6 階 Butterworth）升到 5 級（10 階），
+    //   抑制力約 -60 dB/oct；+5 semi 邊界衰減 ~-22 dB → ~-37 dB（+15 dB 改善），
+    //   針對 hi-hat/cymbal/sibilance 觸發的低頻 aliasing 殘音。CPU 小幅增加、零額外延遲。
+    //   若過悶可回退成 3 級（改 array 長度 + init/clear/apply loop）。
+    let mut pitch_aa_filters: Vec<[Option<biquad::DirectForm1<f32>>; 5]> =
+        (0..backing_channels).map(|_| [None, None, None, None, None]).collect();
     let mut pitch_aa_last_st: i32 = 0; // 追蹤上次的 pitch_st 以避免重複建 filter
+
+    // P0: 追蹤 callback 端看到的 pitch 值，變動時需視為 seek 級 discontinuity
+    // （ring 裡 buffered 的資料是用舊 pitch_ratio 拉伸的，consumer 如果直接用新
+    //  combined_resample 去讀會 pitch/timing 錯位，造成 128-314ms transient glitch）
+    let mut last_pitch_st: i32 = 0;
+    // P1-b: underflow 追蹤（ring 完全空 → 輸出靜音的幀數）
+    // 用來在推進 stretch_play_pos 時扣除，避免 vocal mix 時間軸飄掉
+    let mut underflow_total: u64 = 0;
+    let mut underflow_log_gate: u64 = 0;
+    // E (2026-04-15, Codex round-2 instrumentation): partial-hold fallback 計數器
+    //   當 ring 短缺（但非完全空）時 consumer 會 hold 最後有效幀（audio_engine.rs:1864-1874），
+    //   這種情況不會輸出靜音、既有 log 也抓不到，但每次發生都是一次低頻 artifact
+    //   （callback ~86Hz → 對應「波波波」的感知頻率）+ stretch_play_pos 照常推進（1918-1935）
+    //   → 「變快」的直接成因。這個計數器量化 baseline 的 partial-hold 頻率，
+    //   F POC 驗證後可用此數據對照 before/after。
+    let mut hold_total: u64 = 0;
 
     let err_fn = move |err| log::error!("Output stream error: {}", err);
 
@@ -1401,13 +1780,75 @@ fn run_playback(
         move |data: &mut [f32], _info| {
             let cur_pos = pos.load(Ordering::Relaxed);
             let vol = f32::from_bits(volume.load(Ordering::Relaxed));
-            let cur_speed = f32::from_bits(speed_atomic.load(Ordering::Relaxed)) as f64;
+            let cur_speed = (f32::from_bits(speed_atomic.load(Ordering::Relaxed)) as f64).max(0.1);
             let cur_pitch_st = pitch_atomic.load(Ordering::Relaxed) as i32;
             let pitch_ratio = 2.0_f64.powf(cur_pitch_st as f64 / 12.0);
 
-            let needs_wsola = (cur_speed - 1.0).abs() > 0.01 || cur_pitch_st != 0;
+            // P0: pitch 變動 = transport discontinuity
+            //   ring 裡 buffered 的是用舊 pitch_ratio 拉伸的音訊，consumer 改用新的
+            //   combined_resample 去讀會輸出錯誤的 pitch/timing（~128-314ms glitch）。
+            //   處理方式與 seek 同級：flush ring + carry + reset AA state，並通知
+            //   producer seek 到 cur_pos 用新 pitch_ratio 重新 process。
+            if cur_pitch_st != last_pitch_st {
+                if stretch_active_prev {
+                    producer_seek_to.store(cur_pos + 1, Ordering::Release);
+                    let discard = ring_cons.occupied_len();
+                    ring_cons.skip(discard);
+                    carry_buf.clear();
+                    ring_consume_frac = 0.0;
+                    stretch_play_pos = cur_pos as f64;
+                    reset_pitch_aa_state(&mut pitch_aa_filters);
+                }
+                if wsola_active_prev {
+                    // WSOLA 不經過 ring，但 AA filter state 要清，避免舊 pitch 能量滲入
+                    wsola.set_input_pos(cur_pos as f64);
+                    reset_pitch_aa_state(&mut pitch_aa_filters);
+                }
+                last_pitch_st = cur_pitch_st;
+            }
 
-            if !needs_wsola {
+            let needs_stretch = (cur_speed - 1.0).abs() > 0.01 || cur_pitch_st != 0;
+            // 路徑選擇：
+            //   bypass              → speed=1.0 且 pitch=0
+            //   timestretch producer → speed=1.0 且 |pitch| <= 12（純移調，走純 stretch + cubic resample）
+            //   WSOLA               → 其他（變速 / 變速+移調）方向已有單元測試覆蓋
+            //
+            // Producer path 採「純時間拉伸 + consumer resample」策略：
+            //   不使用 timestretch 的 pitch_scale（有 streaming 累積誤差 bug），
+            //   而是讓 timestretch 做純 stretch（pitch_ratio 倍），
+            //   consumer 以 combined_resample = pitch_ratio × rate_ratio 做 cubic resample。
+            //   這樣 ±2、±3…±12 都能用 HouseLoop phase vocoder 的高品質，
+            //   同時繞過 pitch_scale 的時間漂移問題。
+            // F POC (2026-04-15): 強制 pure pitch shift 改走 WSOLA 分支
+            //   根因假說（Codex round-2）：baseline「波波波 + 變快」共同根因是 consumer
+            //   partial-hold fallback（audio_engine.rs:1864-1874）+ stretch_play_pos 照常推進
+            //   （1918-1935）。WSOLA 不經過 ring buffer，沒有 partial-hold 問題。
+            //   驗證症狀是否一併消失；E 的 hold_total 可供 before/after 量化對照。
+            //   producer 線程仍會啟動（~1634），ring 會被寫滿但 consumer 不讀→不影響聲音，
+            //   只有 CPU/memory 小浪費，POC 驗證通過後會一併清理。
+            //
+            // 原條件（保留供 revert 參考）：
+            //   let speed_is_one = (cur_speed - 1.0).abs() < 0.01;
+            //   let use_producer_path = needs_stretch && speed_is_one
+            //       && can_use_stream_processor && cur_pitch_st.abs() <= 12;
+            let use_producer_path = USE_PRODUCER_PATH;
+
+            if !needs_stretch {
+                if stretch_active_prev {
+                    // 從 producer 路徑切回 bypass：清空 ring buffer 與 carry，重置狀態
+                    let discard = ring_cons.occupied_len();
+                    ring_cons.skip(discard);
+                    carry_buf.clear();
+                    stretch_play_pos = cur_pos as f64;
+                    ring_consume_frac = 0.0;
+                    stretch_active_prev = false;
+                }
+                if wsola_active_prev {
+                    // 從 WSOLA 路徑切回 bypass：WSOLA 下次進 set_input_pos 會自動同步，
+                    // 這裡只標記狀態即可
+                    wsola_active_prev = false;
+                }
+
                 // ── Bypass：原始直接讀取路徑（零 WSOLA 開銷）──
                 let vocal_ref = vocal_cb.as_ref().map(|v| v.as_slice());
                 let (mut new_pos, rms) = fill_backing_output(
@@ -1436,8 +1877,222 @@ fn run_playback(
                 if new_pos >= total_frames {
                     running_cb.store(false, Ordering::Relaxed);
                 }
+            } else if use_producer_path {
+                // ── Ring buffer consumer 路徑（lock-free SPSC，處理純移調 ±12 半音）──
+                //
+                // 所有 DSP（timestretch pure stretch + AA LPF）已在 producer 線程完成，
+                // 這裡只做：pop → cubic interpolation（with resample）→ 音量 → vocal mix → 輸出
+                //
+                // Ring 內容：timestretch 把時間拉長 pitch_ratio 倍的「原音高」音訊
+                // Consumer 以 combined_resample = pitch_ratio × rate_ratio 為步長讀
+                //   → 時間縮短 pitch_ratio 倍（抵銷拉長，回到原速）
+                //   → 頻率 × pitch_ratio（達到移調）
+                //   → 同時吃掉 rate_ratio（SR 轉換）
+                //
+                // 關鍵設計：
+                // - local_buf = carry_buf（上次 callback 剩餘）+ 本次 pop 的新 sample
+                // - cubic 需要 x0..x3 四幀 preview；但邏輯上只「消費」consumed_whole 幀
+                // - 剩下的尾端幀（= preview 部分）存進 carry_buf，下次 callback 繼續用
+                if wsola_active_prev {
+                    // 從 WSOLA 切回 producer 路徑：WSOLA 狀態標記為 inactive，
+                    // 下次若再進 WSOLA 會重新 set_input_pos；這裡不用主動 reset
+                    wsola_active_prev = false;
+                }
+                let frame_count = data.len() / out_channels;
+                let loop_snapshot = unpack_loop(loop_range.load(Ordering::Relaxed));
+
+                if !stretch_active_prev || (cur_pos as f64 - stretch_play_pos).abs() > 4.0 {
+                    // 通知 producer 跳到新位置（+1 偏移避免 0 值歧義）
+                    producer_seek_to.store(cur_pos + 1, Ordering::Release);
+                    // 清空 ring buffer 與 carry 中的舊資料
+                    let discard = ring_cons.occupied_len();
+                    ring_cons.skip(discard);
+                    carry_buf.clear();
+                    stretch_play_pos = cur_pos as f64;
+                    ring_consume_frac = 0.0;
+                }
+                stretch_active_prev = true;
+
+                // Consumer 讀 ring 的步長 = 時間壓縮率 × SR 轉換
+                let combined_resample = pitch_ratio * rate_ratio;
+
+                // cubic interpolation 需要 4 幀 preview（x0, x1, x2, x3）
+                let preview_frames: usize = 4;
+                // 本次 callback 需要的總幀數 = 最大 local_pos 對應的整數幀 + preview
+                let needed_frames: usize =
+                    (ring_consume_frac + frame_count as f64 * combined_resample).ceil() as usize
+                        + preview_frames;
+                let needed_samples = needed_frames * backing_channels;
+
+                // local_buf = carry_buf + 新 pop 的資料
+                local_buf.clear();
+                local_buf.extend_from_slice(&carry_buf);
+                if local_buf.len() < needed_samples {
+                    let deficit = needed_samples - local_buf.len();
+                    let available = ring_cons.occupied_len();
+                    let to_read = deficit.min(available);
+                    if to_read > 0 {
+                        let old_len = local_buf.len();
+                        local_buf.resize(old_len + to_read, 0.0);
+                        let got = ring_cons.pop_slice(&mut local_buf[old_len..old_len + to_read]);
+                        // pop_slice 回傳實際拷貝量，理論上等於 to_read（因為已經 min available）
+                        if got < to_read {
+                            local_buf.truncate(old_len + got);
+                        }
+                    }
+                }
+
+                let available_frames = local_buf.len() / backing_channels.max(1);
+                let vocal_ref = vocal_cb.as_ref().map(|v| v.as_slice());
+                let latency_frames = latency_ms / 1000.0 * source_sr as f64;
+
+                let mut sum_sq = 0.0_f32;
+                let mut sample_count = 0_usize;
+                // P1-b: 追蹤 ring 完全無資料（輸出靜音）的幀數
+                //   這種 underflow 下 stretch_play_pos 不該推進——否則 vocal mix 會漸漸
+                //   對不齊。hold 最後一幀的輕微 underflow 則仍推進（避免無限卡住）。
+                let mut silent_frames: usize = 0;
+                // E: partial-hold（hold 最後有效幀）發生次數——baseline「波波波」的候選根因
+                let mut hold_frames: usize = 0;
+
+                for frame in 0..frame_count {
+                    // local_pos：在 pitch-stretched ring 中的讀位置（combined_resample 步長）
+                    let mut local_pos = ring_consume_frac + frame as f64 * combined_resample;
+                    // timeline_pos：原 source frame 軸（給 vocal mix 對齊用）
+                    // 注意：producer path 只在 cur_speed=1.0 運行，所以 source 推進 = frame × rate_ratio
+                    let timeline_pos = stretch_play_pos + frame as f64 * rate_ratio * cur_speed;
+
+                    if local_pos + 1.0 >= available_frames as f64 {
+                        // Ring buffer 暫時不足——平滑 hold 最後一個有效幀
+                        if available_frames >= 2 {
+                            local_pos = (available_frames - 2) as f64;
+                            hold_frames += 1;
+                        } else {
+                            for ch in 0..out_channels {
+                                data[frame * out_channels + ch] = 0.0;
+                            }
+                            silent_frames += 1;
+                            continue;
+                        }
+                    }
+
+                    for ch in 0..out_channels {
+                        let src_ch = ch.min(backing_channels - 1);
+                        // 與 HouseLoop 搭配實測：cubic 的 -14dB stopband 反而比 Lanczos-3
+                        // 更穩（HouseLoop 的 HPSS+elastic_timing 有微相位跳變，Lanczos-3
+                        // 的 6-tap 支撐會把它擴散成 ringing）。
+                        let mut s = sample_cubic_interleaved(
+                            &local_buf,
+                            backing_channels,
+                            local_pos,
+                            src_ch,
+                        ) * vol;
+
+                        if let Some(vocal) = vocal_ref {
+                            let vocal_pos = timeline_pos + latency_frames;
+                            if vocal_pos >= 0.0 && vocal_pos + 1.0 < vocal.len() as f64 {
+                                s += sample_linear_mono(vocal, vocal_pos);
+                            }
+                        }
+
+                        let s = s.clamp(-1.0, 1.0);
+                        data[frame * out_channels + ch] = s;
+                        sum_sq += s * s;
+                        sample_count += 1;
+                    }
+                }
+
+                // P1-b + E: underflow / partial-hold 統計 + log 節流
+                //   silent_frames：ring 完全空 → 輸出 0.0（既有 P1-b 追蹤）
+                //   hold_frames：ring 只剩 <2 幀 → hold 最後有效幀（E 新增追蹤）
+                //   partial-hold 時 stretch_play_pos 仍照常推進（1918-1935），是「變快」的
+                //   直接成因；callback ~86Hz 下連續 hold 即為「波波波」的候選根因。
+                if silent_frames > 0 || hold_frames > 0 {
+                    underflow_total = underflow_total.saturating_add(silent_frames as u64);
+                    hold_total = hold_total.saturating_add(hold_frames as u64);
+                    underflow_log_gate = underflow_log_gate.wrapping_add(1);
+                    if underflow_log_gate.is_power_of_two() {
+                        log::warn!(
+                            "producer-path underflow: silent={}/{} (total {}), partial-hold={}/{} (total {})",
+                            silent_frames,
+                            frame_count,
+                            underflow_total,
+                            hold_frames,
+                            frame_count,
+                            hold_total
+                        );
+                    }
+                }
+
+                // P1-b: 實際產出的幀數 = frame_count - silent_frames
+                //   underflow 靜音的那幾幀不該消費 ring、不該推進時間軸
+                let effective_frames = frame_count.saturating_sub(silent_frames);
+
+                // 計算邏輯消耗幀數（ring buffer 真實被消費的 frame 數）
+                let consumed_f = ring_consume_frac + effective_frames as f64 * combined_resample;
+                let consumed_whole = consumed_f.floor() as usize;
+                ring_consume_frac = consumed_f - consumed_whole as f64;
+
+                // 把 consumed_whole 之後的尾端幀存進 carry_buf 下次重用
+                // 這樣確保 ring buffer 實際被消費的量 = consumed_whole，不會過度消耗
+                carry_buf.clear();
+                let consumed_samples = (consumed_whole * backing_channels).min(local_buf.len());
+                if local_buf.len() > consumed_samples {
+                    carry_buf.extend_from_slice(&local_buf[consumed_samples..]);
+                }
+
+                // P1-b: 推進播放位置時扣除 underflow 靜音幀，避免 vocal mix 對齊飄掉
+                let source_advance = effective_frames as f64 * rate_ratio * cur_speed;
+                stretch_play_pos = (stretch_play_pos + source_advance).min(total_frames as f64);
+                let mut new_pos = stretch_play_pos.round() as u64;
+
+                if let Some((la, lb)) = loop_snapshot {
+                    if new_pos >= lb {
+                        new_pos = la;
+                        stretch_play_pos = la as f64;
+                        // 通知 producer seek 到循環起點
+                        producer_seek_to.store(la + 1, Ordering::Release);
+                        let discard = ring_cons.occupied_len();
+                        ring_cons.skip(discard);
+                        carry_buf.clear();
+                        ring_consume_frac = 0.0;
+                    }
+                }
+
+                pos.store(new_pos, Ordering::Relaxed);
+
+                let rms = if sample_count > 0 {
+                    (sum_sq / sample_count as f32).sqrt()
+                } else {
+                    0.0
+                };
+                backing_rms.store(rms.to_bits(), Ordering::Relaxed);
+
+                if new_pos >= total_frames {
+                    running_cb.store(false, Ordering::Relaxed);
+                }
             } else {
-                // ── WSOLA 路徑：變速不變調 / 移調 ──
+                // ── WSOLA 路徑：變速（含變速+移調）──
+                //
+                // WSOLA 的 stretch 方向由單元測試覆蓋（stretch=2.0 → 慢速），
+                // 避開 timestretch 0.4.0 在大 stretch_ratio 下的不穩定與方向錯誤。
+                if stretch_active_prev {
+                    // 從 producer 切到 WSOLA：清空 ring buffer / carry，避免殘留
+                    let discard = ring_cons.occupied_len();
+                    ring_cons.skip(discard);
+                    carry_buf.clear();
+                    stretch_play_pos = cur_pos as f64;
+                    ring_consume_frac = 0.0;
+                    stretch_active_prev = false;
+                }
+                if !wsola_active_prev {
+                    // 第一次進 WSOLA：強制把 WSOLA 的 input_pos 對齊到 cur_pos，
+                    // 大跳躍會觸發 WsolaProcessor::reset_state() 清空 accum_buf
+                    wsola.set_input_pos(cur_pos as f64);
+                    // P1-a: 路徑切換也是 discontinuity，AA filter state 要清零
+                    reset_pitch_aa_state(&mut pitch_aa_filters);
+                    wsola_active_prev = true;
+                }
                 let frame_count = data.len() / out_channels;
                 let stretch = pitch_ratio / cur_speed;
 
@@ -1445,15 +2100,21 @@ fn run_playback(
                 let combined_resample = pitch_ratio * rate_ratio;
 
                 // WSOLA 需要產生的幀數（resample 前）
-                // +8 為 Lanczos-4 插值核的額外邊距（需要前後各 4 幀）
+                // +2 保留 cubic 插值的下一幀邊距。
+                //
+                // 設計筆記：曾試過 Lanczos-3（6-tap sinc）取代 cubic，但 WSOLA 輸出本身
+                // 帶有微小的相位不連續（hop 邊界），Lanczos-3 的長支撐會把這些不連續
+                // 擴散成更明顯的 ringing，反而讓變速雜音變多。cubic 的短支撐反而穩定。
                 let wsola_frames_needed =
-                    (frame_count as f64 * combined_resample).ceil() as usize + 8;
+                    (frame_count as f64 * combined_resample).ceil() as usize + 2;
 
                 // 同步 WSOLA 位置（僅在外部跳躍時——seek / loop）
                 // 正常播放時不覆寫，保留 wsola 內部的 f64 小數精度
                 let wsola_pos_int = wsola.input_pos() as u64;
                 if cur_pos != wsola_pos_int {
                     wsola.set_input_pos(cur_pos as f64);
+                    // P1-a: 外部 seek 也要 reset AA state，避免舊片段能量滲入
+                    reset_pitch_aa_state(&mut pitch_aa_filters);
                 }
 
                 // 產生 WSOLA 輸出
@@ -1465,22 +2126,32 @@ fn run_playback(
                 // 升調 = decimation，需要先濾掉 Nyquist/total_decimation 以上的頻率
                 // total_decimation = pitch_ratio × rate_ratio（含 SR 轉換）
                 if cur_pitch_st > 0 && cur_pitch_st != pitch_aa_last_st {
-                    use biquad::{
-                        Coefficients, DirectForm1, ToHertz, Type, Q_BUTTERWORTH_F32,
-                    };
+                    use biquad::{Coefficients, DirectForm1, ToHertz, Type, Q_BUTTERWORTH_F32};
                     let fs = (source_sr as f32).hz();
-                    // 截止頻率 = Nyquist / (pitch_ratio × rate_ratio) × 0.80
-                    // 比之前更保守的 margin（0.80 vs 0.85），搭配 6 階 LPF
-                    let total_decimation = pitch_ratio as f32 * rate_ratio as f32;
-                    let f_cut =
-                        ((source_sr as f32) * 0.5 / total_decimation * 0.80).hz();
+                    // G' (2026-04-15): 截止頻率 margin 0.78 → 0.55 → 0.65（折衷）
+                    //   F POC 確認 baseline 波波波+變快根因後，留下「升調某段有低頻雜雜雜」的
+                    //   新 issue（訊號相關，hi-hat/cymbal/sibilance 觸發 aliasing）。
+                    //   - 0.78（原值）：aliasing 邊界衰減 ~13 dB，雜音明顯
+                    //   - 0.55（過緊）：衰減 ~31 dB 但音色悶悶的
+                    //   - 0.65（折衷）：衰減 ~22 dB，+5 semi 下 cutoff ≈ 11.7 kHz，保留足夠高頻亮度
+                    //
+                    // 分母 pitch_ratio × max(rate_ratio, 1.0)：
+                    //   - rate_ratio ≥ 1（source_sr ≥ out_sr）→ consumer 要多一層 decimation
+                    //   - rate_ratio < 1（upsample）→ 不需額外 AA，分母 clamp 到 1.0
+                    let total_decimation = pitch_ratio as f32 * (rate_ratio as f32).max(1.0);
+                    let f_cut = ((source_sr as f32) * 0.5 / total_decimation * 0.65).hz();
                     if let Ok(coeffs) = Coefficients::<f32>::from_params(
-                        Type::LowPass, fs, f_cut, Q_BUTTERWORTH_F32,
+                        Type::LowPass,
+                        fs,
+                        f_cut,
+                        Q_BUTTERWORTH_F32,
                     ) {
                         for ch_filters in pitch_aa_filters.iter_mut() {
                             ch_filters[0] = Some(DirectForm1::<f32>::new(coeffs));
                             ch_filters[1] = Some(DirectForm1::<f32>::new(coeffs));
                             ch_filters[2] = Some(DirectForm1::<f32>::new(coeffs));
+                            ch_filters[3] = Some(DirectForm1::<f32>::new(coeffs));
+                            ch_filters[4] = Some(DirectForm1::<f32>::new(coeffs));
                         }
                     }
                     pitch_aa_last_st = cur_pitch_st;
@@ -1490,11 +2161,16 @@ fn run_playback(
                         ch_filters[0] = None;
                         ch_filters[1] = None;
                         ch_filters[2] = None;
+                        ch_filters[3] = None;
+                        ch_filters[4] = None;
                     }
                     pitch_aa_last_st = cur_pitch_st;
                 }
 
-                // 對 WSOLA 輸出施加 anti-aliasing LPF（in-place，6 階 cascade）
+                // 對 WSOLA 輸出施加 anti-aliasing LPF（in-place，10 階 cascade）
+                // [測試 A 結論 — 2026-04-15]: bypass 實測雜音僅「減少一點點」，而降調也有
+                //   同樣雜音（但降調根本不走此 AA LPF 分支）→ 確認雜音根因不是 aliasing。
+                //   保留 AA LPF（升調時仍有 +15 dB 衰減保險，不害事），繼續找 WSOLA 根因。
                 if cur_pitch_st > 0 {
                     use biquad::Biquad;
                     let wsola_frame_count = wsola_buf.len() / backing_channels;
@@ -1502,7 +2178,7 @@ fn run_playback(
                         for src_ch in 0..backing_channels {
                             let idx = f * backing_channels + src_ch;
                             let mut s = wsola_buf[idx];
-                            for stage in 0..3 {
+                            for stage in 0..5 {
                                 if let Some(ref mut filt) = pitch_aa_filters[src_ch][stage] {
                                     s = filt.run(s);
                                 }
@@ -1513,18 +2189,13 @@ fn run_playback(
                 }
 
                 // Resample + 寫入 output（含音量、channel mapping）
-                // 使用 Catmull-Rom cubic 插值（4-tap），
-                // 比線性插值品質好很多，且沒有 sinc overshoot 和 sin() 效能問題
                 let mut sum_sq = 0.0_f32;
                 let mut sample_count = 0_usize;
 
                 for frame in 0..frame_count {
                     let src_f = frame as f64 * combined_resample;
-                    let src_lo = src_f.floor() as usize;
-                    let t = (src_f - src_lo as f64) as f32;
 
-                    // 邊界檢查：Catmull-Rom 需要 src_lo-1 到 src_lo+2
-                    if src_lo + 2 >= wsola_frames_needed {
+                    if src_f + 1.0 >= wsola_frames_needed as f64 {
                         for ch in 0..out_channels {
                             data[frame * out_channels + ch] = 0.0;
                         }
@@ -1533,26 +2204,11 @@ fn run_playback(
 
                     for ch in 0..out_channels {
                         let src_ch = ch.min(backing_channels - 1);
-
-                        // 4 個取樣點：p0(前一個)、p1(當前)、p2(下一個)、p3(再下一個)
-                        let i1 = src_lo * backing_channels + src_ch;
-                        let p0 = if src_lo > 0 {
-                            wsola_buf[i1 - backing_channels]
-                        } else {
-                            wsola_buf[i1] // 邊界 clamp
-                        };
-                        let p1 = wsola_buf[i1];
-                        let p2 = wsola_buf[i1 + backing_channels];
-                        let p3 = wsola_buf[i1 + 2 * backing_channels];
-
-                        // Catmull-Rom spline（只用乘法和加法，零 sin() 呼叫）
-                        let t2 = t * t;
-                        let t3 = t2 * t;
-                        let s = 0.5
-                            * ((2.0 * p1)
-                                + (-p0 + p2) * t
-                                + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
-                                + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3);
+                        // 仍用 cubic（Catmull-Rom）：短支撐避免把 WSOLA hop 邊界的
+                        // 微小相位跳變擴散成長 ringing。雜音來源是 WSOLA 本身，
+                        // 要靠變速+移調以外的路徑（producer path）繞過才有效。
+                        let s =
+                            sample_cubic_interleaved(&wsola_buf, backing_channels, src_f, src_ch);
 
                         let s = (s * vol).clamp(-1.0, 1.0);
                         data[frame * out_channels + ch] = s;
@@ -1568,6 +2224,8 @@ fn run_playback(
                     if new_pos >= lb {
                         new_pos = la;
                         wsola.set_input_pos(new_pos as f64);
+                        // P1-a: loop 邊界跳躍也是 discontinuity，AA filter state 要清零
+                        reset_pitch_aa_state(&mut pitch_aa_filters);
                     }
                 }
 
@@ -1603,13 +2261,7 @@ fn run_playback(
     // 若 input_device_idx 有值，開啟麥克風做即時音高偵測。
     // 與錄音模式不同：不寫入 vocal_buffer，只更新 current_pitch。
     let _input_stream = if let Some(in_idx) = input_device_idx {
-        build_preview_pitch_stream(
-            &host,
-            in_idx,
-            source_sr,
-            &shared,
-            pitch_engine_pref,
-        )
+        build_preview_pitch_stream(&host, in_idx, source_sr, &shared, pitch_engine_pref)
     } else {
         None
     };
@@ -1629,7 +2281,11 @@ fn run_playback(
     }
 
     let has_pitch_input = _input_stream.is_some();
-    let state_name = if mix_vocal { "playing_back" } else { "previewing" };
+    let state_name = if mix_vocal {
+        "playing_back"
+    } else {
+        "previewing"
+    };
     events::emit_state(&app, state_name);
 
     // Loop：emit 進度、RMS、音高
@@ -1678,10 +2334,270 @@ fn run_playback(
         thread::sleep(Duration::from_millis(50));
     }
 
+    // 停止 stretch producer 線程
+    producer_running.store(false, Ordering::Release);
+    if let Some(handle) = producer_handle {
+        let _ = handle.join();
+    }
+
     drop(_input_stream);
     drop(output_stream);
     events::emit_state(&app, "idle");
     events::emit_finished(&app);
+}
+
+/// Stretch producer 背景線程：持續預先生成 stretched 音訊並寫入 ring buffer。
+///
+/// 所有計算密集的 DSP（timestretch + resample LPF）都在這裡完成，
+/// 讓 CPAL output callback 成為純 consumer，零 DSP 運算。
+///
+/// 採用 lock-free SPSC：`ring_prod` 直接以擁有權傳入（無 Mutex），
+/// 因為只有這個 producer 線程寫入，callback 是唯一 consumer。
+#[allow(clippy::too_many_arguments)]
+fn stretch_producer_worker(
+    backing: Arc<Vec<f32>>,
+    backing_channels: usize,
+    source_sr: u32,
+    out_sr: u32,
+    total_frames: u64,
+    mut ring_prod: HeapProd<f32>,
+    producer_running: Arc<AtomicBool>,
+    seek_to: Arc<AtomicU64>,
+    speed_atomic: Arc<AtomicU32>,
+    pitch_atomic: Arc<AtomicU32>,
+    loop_range: Arc<AtomicU64>,
+    main_running: Arc<AtomicBool>,
+) {
+    // Producer 僅在「純移調」時工作（speed=1.0，|pitch| <= 12）。
+    //
+    // 關鍵設計：採用「純時間拉伸」策略，避開 pitch_scale 的 streaming resampler bug。
+    //   Producer: set_stretch_ratio(pitch_ratio), set_pitch_scale(1.0)
+    //     → 輸出「音高不變、時間被拉長 pitch_ratio 倍」的音訊
+    //   Consumer: cubic resample by combined_resample (= pitch_ratio × rate_ratio)
+    //     → 同時壓縮時間軸（加快回原速）+ 升/降音高
+    //
+    // 為何不用 set_pitch_scale(pitch_ratio)：
+    //   timestretch 0.4.0 的 pitch_scale 內部用線性串流 resampler，|pitch| >= 2
+    //   時會累積時間誤差，聽起來音訊會逐漸變快。純 stretch 沒這個問題。
+    //
+    // Preset 選擇：HouseLoop + EnvelopePreset::Vocal
+    //   實測 VocalChop 雖然雜音較少，但 consumer 用 combined_resample = pitch_ratio ×
+    //   rate_ratio 的假設在 VocalChop 下會造成音訊「變快」，意味著該 preset 的實際
+    //   輸出比例 K ≠ pitch_ratio（可能 crate 行為、或 elastic_timing 缺席造成）。
+    //   HouseLoop 的 elastic_timing=true + anchor=0.1 配合 HPSS 在此架構下時間軸剛好
+    //   匹配 consumer 的假設，是目前 proved-working 的穩定基線。
+    //
+    // 階段 1 實驗結論（2026-04-15）：
+    //   曾嘗試 EnvelopePreset::Balanced + WindowType::BlackmanHarris 想消除「波波波」
+    //   雜音，結果雜音無變化且正向移調變快。證實 preset 切換（envelope / window）
+    //   會影響 stream mode 下的實際輸出時間軸（Codex 說只影響 DSP 的診斷不完整）。
+    //   HouseLoop + Vocal 仍是目前唯一既穩定又時間軸正確的組合。
+    //
+    // 為何 ±7 半音安全：pitch_ratio 範圍 0.5–2.0 在 HouseLoop 都是 well-tested 工作
+    // 區；超過 ±7 musical noise 明顯（前端 / 後端都做 clamp）。
+    let params = StretchParams::new(1.0)
+        .with_sample_rate(source_sr)
+        .with_channels(backing_channels as u32)
+        .with_preset(EdmPreset::HouseLoop)
+        .with_envelope_preset(EnvelopePreset::Vocal);
+    let mut processor = StreamProcessor::new(params);
+    let mut output_resample_filters =
+        build_output_resample_filters(backing_channels, source_sr, out_sr);
+    // Pitch anti-aliasing LPF：升調時限制 chunk_buf 頻譜，避免 consumer 的 resample
+    // 把 Nyquist 附近能量折射成 aliasing。每 channel 5 階 cascade（= 10 階 Butterworth）
+    // (2026-04-15, 選項 1): 與 WSOLA 路徑同步升到 5 級；F POC 下此路徑雖未被 consumer
+    //   取用（use_producer_path=false），但保持一致避免將來 revert F POC 時再追改。
+    let mut pitch_aa_filters: Vec<[Option<biquad::DirectForm1<f32>>; 5]> =
+        (0..backing_channels).map(|_| [None, None, None, None, None]).collect();
+    let mut pitch_aa_last_st: i32 = 0;
+    let mut source_pos: u64 = 0;
+    let mut chunk_buf: Vec<f32> = Vec::with_capacity(262_144);
+
+    // 等 consumer 發出第一次 seek 信號確定起始位置
+    while producer_running.load(Ordering::Relaxed) && main_running.load(Ordering::Relaxed) {
+        let seek_val = seek_to.swap(0, Ordering::AcqRel);
+        if seek_val > 0 {
+            source_pos = seek_val - 1;
+            processor.reset();
+            output_resample_filters =
+                build_output_resample_filters(backing_channels, source_sr, out_sr);
+            // P1-a: seek 級 discontinuity，AA filter state 也要清零
+            reset_pitch_aa_state(&mut pitch_aa_filters);
+            break;
+        }
+        thread::sleep(Duration::from_micros(500));
+    }
+
+    while producer_running.load(Ordering::Relaxed) && main_running.load(Ordering::Relaxed) {
+        // 檢查 seek 請求
+        let seek_val = seek_to.swap(0, Ordering::AcqRel);
+        if seek_val > 0 {
+            source_pos = seek_val - 1;
+            processor.reset();
+            output_resample_filters =
+                build_output_resample_filters(backing_channels, source_sr, out_sr);
+            // P1-a: seek 級 discontinuity，AA filter state 也要清零
+            reset_pitch_aa_state(&mut pitch_aa_filters);
+        }
+
+        // 讀取當前 speed/pitch 參數
+        let cur_speed = (f32::from_bits(speed_atomic.load(Ordering::Relaxed)) as f64).max(0.1);
+        let cur_pitch_st = pitch_atomic.load(Ordering::Relaxed) as i32;
+        let speed_is_one = (cur_speed - 1.0).abs() < 0.01;
+        // Producer 負責「純移調」情境（speed=1.0，|pitch| <= 12 半音）。
+        // 變速（或變速+移調）由 callback 走 WSOLA 路徑。
+        let should_produce = speed_is_one && cur_pitch_st != 0 && cur_pitch_st.abs() <= 12;
+
+        if !should_produce {
+            thread::sleep(Duration::from_millis(10));
+            continue;
+        }
+
+        // 設定 stretch 參數：純時間拉伸（pitch 不變），由 consumer 負責 resample
+        //   pitch_ratio = 2^(semitone / 12)，範圍 0.5–2.0（±12 半音）
+        //   stretch_ratio = pitch_ratio → 時間拉長 pitch_ratio 倍
+        //   Consumer 以 combined_resample = pitch_ratio × rate_ratio 讀
+        //     → 讀得更快 pitch_ratio 倍，時間縮回原速，同時頻率 × pitch_ratio ✓
+        let pitch_ratio = 2.0_f64.powf(cur_pitch_st as f64 / 12.0);
+        if processor
+            .set_stretch_ratio(pitch_ratio.clamp(0.5, 2.0))
+            .is_err()
+            || processor.set_pitch_scale(1.0).is_err()
+        {
+            thread::sleep(Duration::from_millis(5));
+            continue;
+        }
+
+        // Rebuild pitch anti-aliasing LPF 當 cur_pitch_st 變動時
+        // 升調 = consumer 會 decimation（combined_resample > 1）→ 需限制頻譜
+        // 降調 = consumer 會 interpolation（combined_resample < 1）→ 無需 AA
+        if cur_pitch_st > 0 && cur_pitch_st != pitch_aa_last_st {
+            use biquad::{Coefficients, DirectForm1, ToHertz, Type, Q_BUTTERWORTH_F32};
+            let fs = (source_sr as f32).hz();
+            // G' (2026-04-15): 截止頻率 margin 0.78 → 0.55 → 0.65（與 WSOLA path 一致）
+            //   F POC 下 producer 線程不再被 consumer 讀（use_producer_path=false），
+            //   但這裡同步改動以保持兩條路徑一致，將來 revert F POC 時不用再追改。
+            //   0.65 折衷：aliasing 邊界衰減 ~22 dB，保留升調高頻亮度，
+            //   實測 0.55 過悶、0.78 雜音明顯，0.65 為妥協值。
+            //
+            // 分母納入 max(rate_ratio, 1.0)：consumer 的 cubic resample 還會再做一次
+            // SR 轉換 decimation，若 source_sr > out_sr 要把這層也算進來。
+            let rate_ratio_f = (source_sr as f32 / out_sr as f32).max(1.0);
+            let total_decimation = pitch_ratio as f32 * rate_ratio_f;
+            let f_cut = ((source_sr as f32) * 0.5 / total_decimation * 0.65).hz();
+            if let Ok(coeffs) =
+                Coefficients::<f32>::from_params(Type::LowPass, fs, f_cut, Q_BUTTERWORTH_F32)
+            {
+                for ch_filters in pitch_aa_filters.iter_mut() {
+                    ch_filters[0] = Some(DirectForm1::<f32>::new(coeffs));
+                    ch_filters[1] = Some(DirectForm1::<f32>::new(coeffs));
+                    ch_filters[2] = Some(DirectForm1::<f32>::new(coeffs));
+                    ch_filters[3] = Some(DirectForm1::<f32>::new(coeffs));
+                    ch_filters[4] = Some(DirectForm1::<f32>::new(coeffs));
+                }
+            }
+            pitch_aa_last_st = cur_pitch_st;
+        } else if cur_pitch_st <= 0 && pitch_aa_last_st > 0 {
+            for ch_filters in pitch_aa_filters.iter_mut() {
+                ch_filters[0] = None;
+                ch_filters[1] = None;
+                ch_filters[2] = None;
+                ch_filters[3] = None;
+                ch_filters[4] = None;
+            }
+            pitch_aa_last_st = cur_pitch_st;
+        }
+
+        // 檢查 ring buffer 空間（lock-free 直接讀）
+        let free_samples = ring_prod.vacant_len();
+
+        // P2-b: producer 輸出量 ≈ chunk_in × pitch_ratio，最大 × 2.0
+        //   min_free = 8192 × channels：約 ~0.18s 的 worst-case 邊距（chunk_in 4096 × 2x）
+        //   降低延遲（從 16384 的 ~0.37s 減半），同時保留 chunk 不被截斷的空間
+        //   若壓力測試出 underflow（log::warn 會回報），再調回 12288 × channels
+        let min_free = 8192 * backing_channels;
+        if free_samples < min_free {
+            // Ring buffer 快滿了，等 consumer 消費
+            thread::sleep(Duration::from_micros(500));
+            continue;
+        }
+
+        // 計算本輪可以處理的範圍
+        let feed_limit = unpack_loop(loop_range.load(Ordering::Relaxed))
+            .map(|(_, lb)| lb)
+            .unwrap_or(total_frames);
+
+        if source_pos >= feed_limit || source_pos >= total_frames {
+            // 已到結尾或循環邊界，等待 seek 信號
+            thread::sleep(Duration::from_millis(5));
+            continue;
+        }
+
+        let chunk_end = (source_pos + 4096).min(feed_limit).min(total_frames);
+        if chunk_end <= source_pos {
+            thread::sleep(Duration::from_millis(5));
+            continue;
+        }
+
+        let src_start = source_pos as usize * backing_channels;
+        let src_end = chunk_end as usize * backing_channels;
+        chunk_buf.clear();
+        if processor
+            .process_into(&backing[src_start..src_end], &mut chunk_buf)
+            .is_err()
+        {
+            thread::sleep(Duration::from_millis(1));
+            continue;
+        }
+
+        // Anti-aliasing LPF（source_sr > out_sr 時）
+        if source_sr > out_sr && !chunk_buf.is_empty() {
+            use biquad::Biquad;
+            let chunk_frames = chunk_buf.len() / backing_channels;
+            for frame in 0..chunk_frames {
+                for src_ch in 0..backing_channels {
+                    let idx = frame * backing_channels + src_ch;
+                    let mut s = chunk_buf[idx];
+                    for stage in 0..2 {
+                        if let Some(ref mut filt) = output_resample_filters[src_ch][stage] {
+                            s = filt.run(s);
+                        }
+                    }
+                    chunk_buf[idx] = s;
+                }
+            }
+        }
+
+        // Pitch AA LPF（升調時）：進一步把 chunk_buf 頻譜限制在 Nyquist/pitch_ratio 以下
+        // 這樣 consumer 以 combined_resample 做 cubic resample 時不會 alias
+        // (2026-04-15, 選項 1): 5 級 cascade = 10 階 Butterworth
+        if cur_pitch_st > 0 && !chunk_buf.is_empty() {
+            use biquad::Biquad;
+            let chunk_frames = chunk_buf.len() / backing_channels;
+            for frame in 0..chunk_frames {
+                for src_ch in 0..backing_channels {
+                    let idx = frame * backing_channels + src_ch;
+                    let mut s = chunk_buf[idx];
+                    for stage in 0..5 {
+                        if let Some(ref mut filt) = pitch_aa_filters[src_ch][stage] {
+                            s = filt.run(s);
+                        }
+                    }
+                    chunk_buf[idx] = s;
+                }
+            }
+        }
+
+        // 寫入 ring buffer（lock-free push）
+        if !chunk_buf.is_empty() {
+            let writable = ring_prod.vacant_len().min(chunk_buf.len());
+            if writable > 0 {
+                ring_prod.push_slice(&chunk_buf[..writable]);
+            }
+        }
+
+        source_pos = chunk_end;
+    }
 }
 
 /// 為預覽模式建立可選的輸入串流（純音高偵測，不寫入 vocal_buffer）。
@@ -1723,7 +2639,11 @@ fn build_preview_pitch_stream(
 
     // YIN fallback state
     let pitch_buf_size: usize = if in_sr > 48000 {
-        if in_sr > 96000 { 16384 } else { 8192 }
+        if in_sr > 96000 {
+            16384
+        } else {
+            8192
+        }
     } else {
         PITCH_BUF_SIZE
     };
@@ -1747,9 +2667,7 @@ fn build_preview_pitch_stream(
             crepe_model_path.display()
         );
     } else {
-        log::info!(
-            "[preview_pitch] YIN fallback, in_sr={in_sr} Hz, buf_size={pitch_buf_size}"
-        );
+        log::info!("[preview_pitch] YIN fallback, in_sr={in_sr} Hz, buf_size={pitch_buf_size}");
     }
 
     let in_err_fn = move |err| log::error!("Preview input stream error: {}", err);
@@ -1876,9 +2794,13 @@ fn run_recording(
 
     // ── 輸出（伴奏播放）──
     let output_device = output_device_idx
-        .and_then(|idx| host.output_devices().ok().and_then(|mut devs| devs.nth(idx)))
+        .and_then(|idx| {
+            host.output_devices()
+                .ok()
+                .and_then(|mut devs| devs.nth(idx))
+        })
         .or_else(|| host.default_output_device());
-        
+
     let output_device = match output_device {
         Some(d) => d,
         None => {
@@ -1904,7 +2826,7 @@ fn run_recording(
     let input_device = input_device_idx
         .and_then(|idx| host.input_devices().ok().and_then(|mut devs| devs.nth(idx)))
         .or_else(|| host.default_input_device());
-        
+
     let input_device = match input_device {
         Some(d) => d,
         None => {
@@ -1978,11 +2900,31 @@ fn run_recording(
     let backing_cb = backing.clone();
     let running_out = running.clone();
 
+    // 🟢 Codex P1 #1：input / output callback 啟動時序對齊。
+    //
+    // CPAL 的 output stream 幾乎總是比 input stream 早幾個 buffer 週期開始
+    // 產生 callback，這會讓 playback_pos 被推進數毫秒之後才輪到 input
+    // 第一筆樣本塞進 vocal_buffer，造成「人聲比伴奏慢 X ms」的累積誤差。
+    // 在續錄情境下尤其明顯（舊 N 秒對齊、新樣本卻從 N+δ 秒開始）。
+    //
+    // 解法：加一個 audio_ready AtomicBool。input 第一次收到樣本時設為 true，
+    // output callback 在此之前輸出靜音且不推進 playback_pos。偏差收斂到
+    // 最多一個 output buffer 週期（通常 ≤ 20ms），比原本 20-50ms 好很多。
+    let audio_ready = Arc::new(AtomicBool::new(false));
+    let audio_ready_out = audio_ready.clone();
+    let audio_ready_in = audio_ready.clone();
+
     let out_err_fn = move |err| log::error!("Output stream error: {}", err);
 
     let output_stream = match output_device.build_output_stream(
         &output_config,
         move |data: &mut [f32], _info| {
+            // 等 input callback 先就緒，避免 output 先推進 playback_pos 造成偏移
+            if !audio_ready_out.load(Ordering::Acquire) {
+                data.fill(0.0);
+                return;
+            }
+
             let cur_pos = pos.load(Ordering::Relaxed);
             let vol = f32::from_bits(volume.load(Ordering::Relaxed));
 
@@ -2057,10 +2999,7 @@ fn run_recording(
     } else {
         format!("linear upsample {in_sr}→{source_sr}")
     };
-    log::info!(
-        "[run_recording] input resample mode: {}",
-        resample_mode_log
-    );
+    log::info!("[run_recording] input resample mode: {}", resample_mode_log);
 
     // 若需要 down-sample，建立 anti-aliasing low-pass 濾波器
     // （cascade 2 級 biquad = 4 階 Butterworth）
@@ -2068,17 +3007,10 @@ fn run_recording(
     let mut aa_stage1: Option<biquad::DirectForm1<f32>> = None;
     let mut aa_stage2: Option<biquad::DirectForm1<f32>> = None;
     if needs_resample && in_sr > source_sr {
-        use biquad::{
-            Coefficients, DirectForm1, ToHertz, Type, Q_BUTTERWORTH_F32,
-        };
+        use biquad::{Coefficients, DirectForm1, ToHertz, Type, Q_BUTTERWORTH_F32};
         let fs = (in_sr as f32).hz();
         let f_cut = ((source_sr as f32) * 0.5 * 0.9).hz();
-        match Coefficients::<f32>::from_params(
-            Type::LowPass,
-            fs,
-            f_cut,
-            Q_BUTTERWORTH_F32,
-        ) {
+        match Coefficients::<f32>::from_params(Type::LowPass, fs, f_cut, Q_BUTTERWORTH_F32) {
             Ok(coeffs) => {
                 aa_stage1 = Some(DirectForm1::<f32>::new(coeffs));
                 aa_stage2 = Some(DirectForm1::<f32>::new(coeffs));
@@ -2111,6 +3043,21 @@ fn run_recording(
         1.0
     };
 
+    // 🟢 Codex P2 #3：續錄邊界 fade-in。
+    //
+    // 續錄時 vocal_buffer 尾端的舊樣本與新收到的 mic 樣本在時域上可能不連續
+    // （前次錄音結束那一瞬的樣本 vs 這次第一個 mic 樣本之間可能差任意相位），
+    // 若振幅差大就會聽到 click/pop。對續錄前 ~5ms 套上 Hann 上半段 fade-in
+    // 平滑銜接。第一次錄音（playback_pos == 0）不啟用。
+    //
+    // 5ms @ source_sr → 220 samples @44.1kHz / 240 @48kHz。
+    let fade_total_samples: usize = if shared.playback_pos.load(Ordering::Relaxed) > 0 {
+        ((source_sr as f64) * 0.005).round() as usize
+    } else {
+        0
+    };
+    let mut fade_remaining: usize = fade_total_samples;
+
     // ── CREPE 即時音高偵測 ─────────────────────────────────────────
     //
     // 取代 YIN PitchDetector：用 CREPE tiny ONNX 做即時推論。
@@ -2134,20 +3081,17 @@ fn run_recording(
 
     // YIN fallback：當 CREPE 模型不存在時仍可用
     let pitch_buf_size: usize = if in_sr > 48000 {
-        if in_sr > 96000 { 16384 } else { 8192 }
+        if in_sr > 96000 {
+            16384
+        } else {
+            8192
+        }
     } else {
         PITCH_BUF_SIZE // 4096
     };
     let pitch_hop_size: usize = pitch_buf_size / 2;
     let mut pitch_buf: Vec<f32> = Vec::with_capacity(pitch_buf_size);
-    let mut pitch_detector = PitchDetector::new(
-        in_sr,
-        pitch_buf_size,
-        50.0,
-        1000.0,
-        0.15,
-        0.01,
-    );
+    let mut pitch_detector = PitchDetector::new(in_sr, pitch_buf_size, 50.0, 1000.0, 0.15, 0.01);
 
     // ── 即時音高平滑（指數移動平均）────────────────────────────────
     //
@@ -2176,6 +3120,10 @@ fn run_recording(
         &input_config,
         move |data: &[f32], _info| {
             use biquad::Biquad;
+
+            // 🟢 Codex P1 #1：首次拿到 mic 樣本時解鎖 output callback。
+            // Release ordering 確保在此之前的所有 state 對 output 可見。
+            audio_ready_in.store(true, Ordering::Release);
 
             let frame_count = data.len() / in_channels;
             let gain = f32::from_bits(mic_gain.load(Ordering::Relaxed));
@@ -2232,6 +3180,26 @@ fn run_recording(
                 pending_sample = filtered;
             }
 
+            // 🟢 Codex P2 #3：續錄邊界 Hann fade-in。
+            //
+            // fade_total_samples > 0 代表是續錄模式，對 vocal_buffer 新寫入的
+            // 前 5ms 套上 Hann 上半段（0 → 1）增益曲線，平滑與前次錄音尾端
+            // 的相位不連續，避免 click/pop。只作用於存進 vocal_buffer 的樣本，
+            // 不影響 pitch 分析（pitch 看的是 raw_mono_batch，不 fade）。
+            if fade_remaining > 0 && fade_total_samples > 0 {
+                let total = fade_total_samples as f32;
+                for s in to_write.iter_mut() {
+                    if fade_remaining == 0 {
+                        break;
+                    }
+                    let done = (fade_total_samples - fade_remaining) as f32;
+                    let t = (done / total) * std::f32::consts::PI;
+                    let gain = 0.5 * (1.0 - t.cos());
+                    *s *= gain;
+                    fade_remaining -= 1;
+                }
+            }
+
             // 寫入 vocal buffer
             if let Ok(mut v) = vocal_buf.lock() {
                 v.extend_from_slice(&to_write);
@@ -2257,8 +3225,8 @@ fn run_recording(
                         Ok(Some(sample)) => {
                             // 指數平滑：降低即時顯示的跳動
                             if smooth_active {
-                                smooth_freq = SMOOTH_ALPHA * sample.freq
-                                    + (1.0 - SMOOTH_ALPHA) * smooth_freq;
+                                smooth_freq =
+                                    SMOOTH_ALPHA * sample.freq + (1.0 - SMOOTH_ALPHA) * smooth_freq;
                             } else {
                                 smooth_freq = sample.freq;
                                 smooth_active = true;
@@ -2462,9 +3430,7 @@ fn build_output_config(
     }
 
     // Fallback：device 預設
-    let default = device
-        .default_output_config()
-        .map_err(|e| e.to_string())?;
+    let default = device.default_output_config().map_err(|e| e.to_string())?;
     if default.sample_format() != cpal::SampleFormat::F32 {
         log::warn!(
             "[audio] 輸出裝置預設格式為 {:?}，非 F32",
@@ -2519,9 +3485,7 @@ fn build_input_config(
         return Ok(cfg);
     }
 
-    let default = device
-        .default_input_config()
-        .map_err(|e| e.to_string())?;
+    let default = device.default_input_config().map_err(|e| e.to_string())?;
     if default.sample_format() != cpal::SampleFormat::F32 {
         log::warn!(
             "[audio] 輸入裝置預設格式為 {:?}，非 F32",
@@ -2546,6 +3510,74 @@ mod tests {
         (0..n)
             .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32).sin())
             .collect()
+    }
+
+    #[test]
+    fn sample_cubic_interleaved_hits_exact_sample_on_integer_position() {
+        let frames = vec![0.1_f32, 0.3, 0.5, 0.7, 0.9];
+        let out = sample_cubic_interleaved(&frames, 1, 3.0, 0);
+        assert!((out - 0.7).abs() < 1e-6, "got {out}");
+    }
+
+    #[test]
+    fn sample_linear_mono_blends_fractional_position() {
+        let frames = vec![0.0_f32, 1.0];
+        let out = sample_linear_mono(&frames, 0.25);
+        assert!((out - 0.25).abs() < 1e-6, "got {out}");
+    }
+
+    #[test]
+    fn lanczos3_kernel_is_one_at_origin_and_zero_at_integers() {
+        // sinc(0) = 1
+        assert!((lanczos3_kernel(0.0) - 1.0).abs() < 1e-9);
+        // sinc(k) = 0 for non-zero integer k within support
+        for k in [1.0_f64, -1.0, 2.0, -2.0] {
+            assert!(
+                lanczos3_kernel(k).abs() < 1e-9,
+                "L({k}) should be 0, got {}",
+                lanczos3_kernel(k)
+            );
+        }
+        // out of support → 0
+        assert!(lanczos3_kernel(3.0).abs() < 1e-9);
+        assert!(lanczos3_kernel(-3.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sample_lanczos3_interleaved_hits_exact_sample_on_integer_position() {
+        let frames = vec![0.1_f32, 0.3, 0.5, 0.7, 0.9];
+        let out = sample_lanczos3_interleaved(&frames, 1, 3.0, 0);
+        assert!(
+            (out - 0.7).abs() < 1e-5,
+            "整數位置應直接命中樣本 0.7，實際 {out}"
+        );
+    }
+
+    #[test]
+    fn sample_lanczos3_interleaved_preserves_linear_ramp() {
+        // 線性斜率訊號在 Lanczos-3 插值下應保留線性（DC + 低頻訊號無失真）
+        let frames: Vec<f32> = (0..16).map(|i| i as f32 * 0.1).collect();
+        let out = sample_lanczos3_interleaved(&frames, 1, 7.5, 0);
+        // 位置 7.5 對應 0.75 附近（f(i) = 0.1i）
+        assert!(
+            (out - 0.75).abs() < 0.01,
+            "線性斜坡 7.5 應約 0.75，實際 {out}"
+        );
+    }
+
+    #[test]
+    fn sample_lanczos3_interleaved_handles_stereo_channels() {
+        // 交錯 stereo：[L0, R0, L1, R1, ...]
+        let frames: Vec<f32> = (0..10)
+            .flat_map(|i| [i as f32 * 0.1, i as f32 * 0.2])
+            .collect();
+        let left = sample_lanczos3_interleaved(&frames, 2, 4.0, 0);
+        let right = sample_lanczos3_interleaved(&frames, 2, 4.0, 1);
+        assert!((left - 0.4).abs() < 1e-5, "stereo L@4 應 0.4，實際 {left}");
+        assert!(
+            (right - 0.8).abs() < 1e-5,
+            "stereo R@4 應 0.8，實際 {right}"
+        );
     }
 
     #[test]
@@ -2661,8 +3693,7 @@ mod tests {
             buf[click_pos + i] = *s;
         }
 
-        let detected = detect_onset_in_window(&buf, sr, 0.0005)
-            .expect("應該偵測到 click");
+        let detected = detect_onset_in_window(&buf, sr, 0.0005).expect("應該偵測到 click");
 
         // 容忍 ±10ms 的偏差（onset detection 不是 sample-accurate）
         let tolerance = (sr as f32 * 0.010) as i64;
@@ -2732,7 +3763,11 @@ mod tests {
             let expected_len = (sr as f32 * 0.040) as usize;
             assert_eq!(click.len(), expected_len, "sr={}", sr);
             // 不應有 NaN 或 Inf
-            assert!(click.iter().all(|s| s.is_finite()), "sr={} contains non-finite", sr);
+            assert!(
+                click.iter().all(|s| s.is_finite()),
+                "sr={} contains non-finite",
+                sr
+            );
         }
     }
 }

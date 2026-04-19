@@ -88,7 +88,10 @@ pub fn extract_melody_from_vocals(
 
     println!(
         "[melody_extractor] 載入完成: sr={} Hz, channels={}, duration={:.1}s, samples={}",
-        media.sample_rate, media.channels, media.duration, media.samples.len()
+        media.sample_rate,
+        media.channels,
+        media.duration,
+        media.samples.len()
     );
 
     // Down-mix 到 mono
@@ -192,10 +195,7 @@ fn fallback_pyin(mono: &[f32], sample_rate: u32) -> (Vec<PitchSample>, f64) {
 
     // ── 診斷輸出 ──
     println!("[melody_extractor] ═══ PYIN 診斷報告 ═══");
-    println!(
-        "[melody_extractor] 總 frame 數: {}",
-        quality.total_frames
-    );
+    println!("[melody_extractor] 總 frame 數: {}", quality.total_frames);
     println!(
         "[melody_extractor] Voiced frames: {} ({:.1}%)",
         quality.voiced_frames,
@@ -226,8 +226,8 @@ fn fallback_pyin(mono: &[f32], sample_rate: u32) -> (Vec<PitchSample>, f64) {
 
     println!("[melody_extractor] ── Voiced d' 分佈 ──");
     let d_labels = [
-        "0.0-0.1", "0.1-0.2", "0.2-0.3", "0.3-0.4", "0.4-0.5", "0.5-0.6",
-        "0.6-0.7", "0.7-0.8", "0.8-0.9", "0.9-1.0",
+        "0.0-0.1", "0.1-0.2", "0.2-0.3", "0.3-0.4", "0.4-0.5", "0.5-0.6", "0.6-0.7", "0.7-0.8",
+        "0.8-0.9", "0.9-1.0",
     ];
     for (i, label) in d_labels.iter().enumerate() {
         let count = quality.voiced_d_prime_hist[i];
@@ -240,15 +240,13 @@ fn fallback_pyin(mono: &[f32], sample_rate: u32) -> (Vec<PitchSample>, f64) {
     }
 
     if quality.viterbi_rejected_frames > 0 {
-        println!(
-            "[melody_extractor] ── Unvoiced (有 candidate 但被拒) 最佳 d' 分佈 ──"
-        );
+        println!("[melody_extractor] ── Unvoiced (有 candidate 但被拒) 最佳 d' 分佈 ──");
         for (i, label) in d_labels.iter().enumerate() {
             let count = quality.unvoiced_best_d_prime_hist[i];
             if count > 0 {
                 let bar = "░".repeat(
-                    (count as f64 / quality.viterbi_rejected_frames.max(1) as f64 * 40.0)
-                        .ceil() as usize,
+                    (count as f64 / quality.viterbi_rejected_frames.max(1) as f64 * 40.0).ceil()
+                        as usize,
                 );
                 println!("[melody_extractor]   {}: {:>5} {}", label, count, bar);
             }
@@ -275,15 +273,10 @@ pub fn pitch_samples_to_melody_track(
     source_label: &str,
 ) -> Result<MelodyTrack, AppError> {
     if samples.is_empty() {
-        return Err(AppError::Audio(
-            "音高分析未偵測到任何音高".to_string(),
-        ));
+        return Err(AppError::Audio("音高分析未偵測到任何音高".to_string()));
     }
 
-    let total_duration = samples
-        .last()
-        .map(|s| s.timestamp + 0.01)
-        .unwrap_or(0.0);
+    let total_duration = samples.last().map(|s| s.timestamp + 0.01).unwrap_or(0.0);
 
     let voiced_ratio = 1.0; // 已經過 CREPE 過濾，全都是 voiced
 
@@ -309,16 +302,12 @@ pub fn extract_melody_from_mono_samples(
     let (pitch_samples, _quality) = analyze_mono(mono, sample_rate);
 
     if pitch_samples.is_empty() {
-        return Err(AppError::Audio(
-            "PYIN 音高分析未偵測到任何音高".to_string(),
-        ));
+        return Err(AppError::Audio("PYIN 音高分析未偵測到任何音高".to_string()));
     }
 
     let notes = cluster_pitch_samples(&pitch_samples, sample_rate);
     if notes.is_empty() {
-        return Err(AppError::Audio(
-            "群聚後無有效音符".to_string(),
-        ));
+        return Err(AppError::Audio("群聚後無有效音符".to_string()));
     }
 
     let total_duration = mono.len() as f64 / sample_rate as f64;
@@ -443,10 +432,7 @@ fn push_note_if_long_enough(
     let midi_pitch = midi_float.round().clamp(0.0, 127.0) as u8;
 
     notes.push(MelodyNote::from_midi(
-        start,
-        duration,
-        midi_pitch,
-        None,  // lyric: 乾淨人聲軌沒有標注
+        start, duration, midi_pitch, None,  // lyric: 乾淨人聲軌沒有標注
         false, // is_golden
         false, // is_freestyle
     ));
@@ -538,8 +524,9 @@ mod tests {
     #[test]
     fn cluster_splits_on_large_time_gap() {
         // 兩段 440 Hz，中間 200 ms gap（超過 MAX_GAP_SECS 0.1）
-        let first: Vec<PitchSample> =
-            (0..5).map(|i| make_sample(i as f64 * 0.046, 440.0)).collect();
+        let first: Vec<PitchSample> = (0..5)
+            .map(|i| make_sample(i as f64 * 0.046, 440.0))
+            .collect();
         let second: Vec<PitchSample> = (0..5)
             .map(|i| make_sample(0.5 + i as f64 * 0.046, 440.0))
             .collect();
@@ -555,8 +542,9 @@ mod tests {
     #[test]
     fn cluster_splits_on_large_pitch_jump() {
         // 440 Hz 唱一段，然後立刻跳到 880 Hz（高八度 = 1200 cent，遠超 50 cent）
-        let first: Vec<PitchSample> =
-            (0..5).map(|i| make_sample(i as f64 * 0.046, 440.0)).collect();
+        let first: Vec<PitchSample> = (0..5)
+            .map(|i| make_sample(i as f64 * 0.046, 440.0))
+            .collect();
         let second: Vec<PitchSample> = (0..5)
             .map(|i| make_sample(0.23 + i as f64 * 0.046, 880.0))
             .collect();
@@ -572,8 +560,9 @@ mod tests {
     #[test]
     fn cluster_discards_too_short_notes() {
         // 只有 1 個 sample、duration 約 46.4 ms < MIN_NOTE_SECS (50 ms)
-        let samples: Vec<PitchSample> =
-            (0..1).map(|i| make_sample(i as f64 * 0.023, 440.0)).collect();
+        let samples: Vec<PitchSample> = (0..1)
+            .map(|i| make_sample(i as f64 * 0.023, 440.0))
+            .collect();
         let notes = cluster_pitch_samples(&samples, 44100);
         assert!(notes.is_empty(), "短於 MIN_NOTE_SECS 的音符應該被丟棄");
     }

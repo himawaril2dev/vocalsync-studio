@@ -110,10 +110,20 @@ pub struct StreamingResampler {
     /// 是否需要降頻（from > to 時啟用 LPF）
     needs_lpf: bool,
     /// 4 階 Butterworth LPF 狀態（2 個串聯 biquad）
-    lpf_x1_a: f64, lpf_x2_a: f64, lpf_y1_a: f64, lpf_y2_a: f64,
-    lpf_x1_b: f64, lpf_x2_b: f64, lpf_y1_b: f64, lpf_y2_b: f64,
+    lpf_x1_a: f64,
+    lpf_x2_a: f64,
+    lpf_y1_a: f64,
+    lpf_y2_a: f64,
+    lpf_x1_b: f64,
+    lpf_x2_b: f64,
+    lpf_y1_b: f64,
+    lpf_y2_b: f64,
     /// biquad 係數（已正規化）
-    b0: f64, b1: f64, b2: f64, a1: f64, a2: f64,
+    b0: f64,
+    b1: f64,
+    b2: f64,
+    a1: f64,
+    a2: f64,
 }
 
 impl StreamingResampler {
@@ -163,9 +173,19 @@ impl StreamingResampler {
             pending: 0.0,
             has_pending: false,
             needs_lpf,
-            lpf_x1_a: 0.0, lpf_x2_a: 0.0, lpf_y1_a: 0.0, lpf_y2_a: 0.0,
-            lpf_x1_b: 0.0, lpf_x2_b: 0.0, lpf_y1_b: 0.0, lpf_y2_b: 0.0,
-            b0, b1, b2, a1, a2,
+            lpf_x1_a: 0.0,
+            lpf_x2_a: 0.0,
+            lpf_y1_a: 0.0,
+            lpf_y2_a: 0.0,
+            lpf_x1_b: 0.0,
+            lpf_x2_b: 0.0,
+            lpf_y1_b: 0.0,
+            lpf_y2_b: 0.0,
+            b0,
+            b1,
+            b2,
+            a1,
+            a2,
         }
     }
 
@@ -177,17 +197,14 @@ impl StreamingResampler {
             return input.to_vec();
         }
 
-        let mut output = Vec::with_capacity(
-            (input.len() as f64 * self.step * 1.1) as usize + 2,
-        );
+        let mut output = Vec::with_capacity((input.len() as f64 * self.step * 1.1) as usize + 2);
 
         for &sample in input {
             // 1. LPF（4 階 = 串聯兩個 biquad）
             let filtered = if self.needs_lpf {
                 let x0 = sample as f64;
                 // Stage A
-                let y_a = self.b0 * x0 + self.b1 * self.lpf_x1_a
-                    + self.b2 * self.lpf_x2_a
+                let y_a = self.b0 * x0 + self.b1 * self.lpf_x1_a + self.b2 * self.lpf_x2_a
                     - self.a1 * self.lpf_y1_a
                     - self.a2 * self.lpf_y2_a;
                 self.lpf_x2_a = self.lpf_x1_a;
@@ -196,8 +213,7 @@ impl StreamingResampler {
                 self.lpf_y1_a = y_a;
 
                 // Stage B
-                let y_b = self.b0 * y_a + self.b1 * self.lpf_x1_b
-                    + self.b2 * self.lpf_x2_b
+                let y_b = self.b0 * y_a + self.b1 * self.lpf_x1_b + self.b2 * self.lpf_x2_b
                     - self.a1 * self.lpf_y1_b
                     - self.a2 * self.lpf_y2_b;
                 self.lpf_x2_b = self.lpf_x1_b;

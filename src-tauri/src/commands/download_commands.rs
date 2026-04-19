@@ -6,9 +6,7 @@
 //! - `start_download`：開始下載（背景執行，透過 event 推送進度）
 //! - `cancel_download`：取消下載
 
-use crate::core::ytdlp_engine::{
-    self, DownloadRequest, DownloadResult, ToolStatus, UrlType,
-};
+use crate::core::ytdlp_engine::{self, DownloadRequest, DownloadResult, ToolStatus, UrlType};
 use crate::error::AppError;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -75,11 +73,9 @@ pub fn get_default_download_dir() -> Option<String> {
 /// 透過 `ytdlp:install_progress` event 推送進度。
 #[tauri::command]
 pub async fn install_ytdlp(app: AppHandle) -> Result<String, AppError> {
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        ytdlp_engine::download_ytdlp(&app)
-    })
-    .await
-    .map_err(|e| AppError::Internal(format!("安裝任務失敗: {}", e)))?;
+    let result = tauri::async_runtime::spawn_blocking(move || ytdlp_engine::download_ytdlp(&app))
+        .await
+        .map_err(|e| AppError::Internal(format!("安裝任務失敗: {}", e)))?;
 
     result.map(|p| p.to_string_lossy().to_string())
 }
@@ -88,11 +84,9 @@ pub async fn install_ytdlp(app: AppHandle) -> Result<String, AppError> {
 /// 透過 `ffmpeg:install_progress` event 推送進度。
 #[tauri::command]
 pub async fn install_ffmpeg(app: AppHandle) -> Result<String, AppError> {
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        ytdlp_engine::download_ffmpeg(&app)
-    })
-    .await
-    .map_err(|e| AppError::Internal(format!("安裝任務失敗: {}", e)))?;
+    let result = tauri::async_runtime::spawn_blocking(move || ytdlp_engine::download_ffmpeg(&app))
+        .await
+        .map_err(|e| AppError::Internal(format!("安裝任務失敗: {}", e)))?;
 
     result.map(|p| p.to_string_lossy().to_string())
 }

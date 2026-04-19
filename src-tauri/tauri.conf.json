@@ -1,6 +1,6 @@
 {
   "productName": "VocalSync Studio",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.vocalsync.studio",
   "build": {
     "frontendDist": "../dist",
@@ -44,10 +44,19 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: https://asset.localhost; media-src 'self' asset: https://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: https://ipc.localhost https://api.github.com",
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost; media-src 'self' asset: http://asset.localhost blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
       "assetProtocol": {
         "enable": true,
-        "scope": ["$DOWNLOAD/*", "$HOME/*", "$AUDIO/*", "$VIDEO/*", "$DESKTOP/*"]
+        "scope": [
+          "$DOWNLOAD/**",
+          "$DESKTOP/**",
+          "$DOCUMENT/**",
+          "$VIDEO/**",
+          "$AUDIO/**",
+          "$APPDATA/**",
+          "$APPLOCALDATA/**",
+          "$TEMP/**"
+        ]
       }
     }
   },

@@ -1,9 +1,11 @@
 <script lang="ts">
   import { showToast } from "../stores/toast";
 
-  const VERSION = "0.1.0";
+  const VERSION = "0.2.0";
   const KOFI_URL = "https://ko-fi.com/himawari168";
   const GITHUB_URL = "https://github.com/himawaril2dev/vocalsync-studio";
+  const ISSUES_URL = "https://github.com/himawaril2dev/vocalsync-studio/issues";
+  const SUPPORT_EMAIL = "himawaril2dev@gmail.com";
   const RELEASES_API = "https://api.github.com/repos/himawaril2dev/vocalsync-studio/releases/latest";
 
   let checking = $state(false);
@@ -16,6 +18,15 @@
       if (diff !== 0) return diff;
     }
     return 0;
+  }
+
+  async function copyEmail() {
+    try {
+      await navigator.clipboard.writeText(SUPPORT_EMAIL);
+      showToast("已複製電子信箱到剪貼簿", "success");
+    } catch (e) {
+      showToast(`複製失敗：${e}`, "error");
+    }
   }
 
   async function checkForUpdates() {
@@ -137,6 +148,51 @@
       </svg>
       Support on Ko-fi
     </a>
+  </div>
+
+  <div class="card feedback-card">
+    <h2>問題回報</h2>
+    <p class="feedback-desc">
+      使用遇到問題、想回報 bug 或有功能建議都很歡迎，可以透過以下兩種方式聯絡我：
+    </p>
+    <div class="feedback-row">
+      <a
+        class="link-btn feedback-btn"
+        href={ISSUES_URL}
+        target="_blank"
+        rel="noopener"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <line x1="12" y1="8" x2="12" y2="12" />
+          <line x1="12" y1="16" x2="12.01" y2="16" />
+        </svg>
+        GitHub Issues
+      </a>
+      <a
+        class="link-btn feedback-btn"
+        href="mailto:{SUPPORT_EMAIL}?subject=[VocalSync%20Studio%20v{VERSION}]%20問題回報"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+          <polyline points="22,6 12,13 2,6" />
+        </svg>
+        寄信回報
+      </a>
+    </div>
+    <button
+      type="button"
+      class="email-chip"
+      onclick={copyEmail}
+      title="點一下複製"
+    >
+      <span class="email-label">信箱</span>
+      <span class="email-value">{SUPPORT_EMAIL}</span>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+      </svg>
+    </button>
   </div>
 
   <div class="card links-card">
@@ -367,6 +423,60 @@
 
   .donate-btn:hover {
     background: var(--color-accent-hover);
+  }
+
+  /* 問題回報 */
+  .feedback-card {
+    text-align: center;
+  }
+
+  .feedback-desc {
+    margin: 0 0 var(--space-lg);
+    font-size: 13px;
+    color: var(--color-text-secondary);
+    line-height: 1.6;
+  }
+
+  .feedback-row {
+    display: flex;
+    justify-content: center;
+    gap: var(--space-md);
+    flex-wrap: wrap;
+    margin-bottom: var(--space-md);
+  }
+
+  .feedback-btn {
+    color: var(--color-text);
+  }
+
+  .email-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-xs) var(--space-md);
+    background: var(--color-bg-hover);
+    border: 1px dashed var(--color-border);
+    border-radius: var(--radius-md);
+    font-size: 12px;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .email-chip:hover {
+    background: var(--color-bg-surface);
+    border-color: var(--color-brand);
+    color: var(--color-text);
+  }
+
+  .email-label {
+    font-weight: 600;
+    color: var(--color-text-muted);
+  }
+
+  .email-value {
+    font-family: var(--font-mono);
+    letter-spacing: 0.2px;
   }
 
   /* 連結與更新 */

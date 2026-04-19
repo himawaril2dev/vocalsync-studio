@@ -112,9 +112,7 @@ impl PitchDetector {
         while tau < self.tau_max {
             if self.diff_buf[tau] < self.harmonic_threshold {
                 // 跟著向下找直到不再下降，取局部最小
-                while tau + 1 < self.tau_max
-                    && self.diff_buf[tau + 1] < self.diff_buf[tau]
-                {
+                while tau + 1 < self.tau_max && self.diff_buf[tau + 1] < self.diff_buf[tau] {
                     tau += 1;
                 }
                 tau_estimate = tau;

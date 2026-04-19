@@ -1,6 +1,6 @@
 [package]
 name = "vocalsync-studio"
-version = "0.1.0"
+version = "0.2.0"
 description = "VocalSync Studio — Karaoke Practice Tool"
 authors = ["himawari168"]
 edition = "2021"
@@ -40,6 +40,7 @@ which = "7.0"
 zip = "8.5"
 # 下載檔案 SHA-256 驗證
 sha2 = "0.10"
+timestretch = "0.4.0"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

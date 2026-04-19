@@ -8,9 +8,9 @@ pub struct AppSettings {
     pub theme: String,
     pub download_folder: String,
     pub last_backing_path: String,
-    pub backing_volume: u16,     // 百分比 0~200
-    pub mic_gain: u16,           // 百分比 0~500
-    pub export_volume: u16,      // 百分比 0~200
+    pub backing_volume: u16, // 百分比 0~200
+    pub mic_gain: u16,       // 百分比 0~500
+    pub export_volume: u16,  // 百分比 0~200
     pub export_prefix: String,
     pub auto_balance: bool,
     pub playback_speed: f32,     // 0.5~2.0
@@ -72,12 +72,15 @@ impl AppSettings {
                         if let Err(be) = std::fs::copy(&path, &backup) {
                             log::error!(
                                 "[settings] 備份損壞設定檔失敗: {:?} → {:?}: {}",
-                                path, backup, be
+                                path,
+                                backup,
+                                be
                             );
                         } else {
                             log::warn!(
                                 "[settings] 設定檔解析失敗（{}），已備份至 {:?}，使用預設值",
-                                e, backup
+                                e,
+                                backup
                             );
                         }
                         Self::default()

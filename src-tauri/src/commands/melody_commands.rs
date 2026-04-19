@@ -27,8 +27,8 @@ fn get_model_dir() -> Option<PathBuf> {
 
     // 嘗試 dev 路徑（exe 在 target/debug/ 下）
     let dev_path = exe_dir
-        .parent()  // target/
-        .and_then(|p| p.parent())  // src-tauri/
+        .parent() // target/
+        .and_then(|p| p.parent()) // src-tauri/
         .map(|p| p.join("models"));
 
     if let Some(ref p) = dev_path {
@@ -87,9 +87,7 @@ pub fn load_melody_from_path(path: String) -> Result<MelodyTrack, AppError> {
     } else if lowered.ends_with(".mid") || lowered.ends_with(".midi") {
         midi_parser::load_midi(&path)
     } else {
-        Err(AppError::Audio(format!(
-            "不支援的旋律檔格式：{path}"
-        )))
+        Err(AppError::Audio(format!("不支援的旋律檔格式：{path}")))
     }
 }
 
@@ -101,9 +99,7 @@ pub fn load_vocals_and_extract_melody(vocals_path: String) -> Result<MelodyTrack
 }
 
 fn is_audio_extension(lowered_path: &str) -> bool {
-    const AUDIO_EXTS: &[&str] = &[
-        ".wav", ".mp3", ".flac", ".m4a", ".aac", ".ogg", ".opus",
-    ];
+    const AUDIO_EXTS: &[&str] = &[".wav", ".mp3", ".flac", ".m4a", ".aac", ".ogg", ".opus"];
     AUDIO_EXTS.iter().any(|ext| lowered_path.ends_with(ext))
 }
 
@@ -113,9 +109,7 @@ fn is_audio_extension(lowered_path: &str) -> bool {
 /// - `Ok(None)` — 沒找到任何來源
 /// - `Err(_)` — 找到了但載入失敗
 #[tauri::command]
-pub fn auto_load_melody_for_backing(
-    backing_path: String,
-) -> Result<Option<MelodyTrack>, AppError> {
+pub fn auto_load_melody_for_backing(backing_path: String) -> Result<Option<MelodyTrack>, AppError> {
     let path = PathBuf::from(&backing_path);
     match detect_melody_source(&path) {
         DetectedSource::None => Ok(None),
@@ -140,9 +134,7 @@ pub fn align_audio_files(
 
 /// 從已錄製的 PitchTrack 偵測調性。
 #[tauri::command]
-pub fn detect_key_from_pitch_track(
-    track: PitchTrack,
-) -> Result<Option<KeyResult>, AppError> {
+pub fn detect_key_from_pitch_track(track: PitchTrack) -> Result<Option<KeyResult>, AppError> {
     Ok(key_detector::detect_key(&track))
 }
 
@@ -154,13 +146,10 @@ pub fn detect_key_from_pitch_track(
 /// 適用於 center-panned 的流行歌；mono / Live / reverb 重的歌效果不佳。
 #[tauri::command]
 pub fn extract_melody_center_cancel(backing_path: String) -> Result<MelodyTrack, AppError> {
-    let (mono_samples, sample_rate) =
-        center_channel_cancel::load_and_cancel_center(&backing_path)?;
+    let (mono_samples, sample_rate) = center_channel_cancel::load_and_cancel_center(&backing_path)?;
 
     if mono_samples.is_empty() {
-        return Err(AppError::Audio(
-            "中央聲道消除後無有效音訊".to_string(),
-        ));
+        return Err(AppError::Audio("中央聲道消除後無有效音訊".to_string()));
     }
 
     // 用 CREPE（若有模型）或 PYIN 分析消除後的音訊
@@ -174,16 +163,10 @@ pub fn extract_melody_center_cancel(backing_path: String) -> Result<MelodyTrack,
             dir,
         )?;
 
-        melody_extractor::pitch_samples_to_melody_track(
-            &result.samples,
-            "center_cancel",
-        )
+        melody_extractor::pitch_samples_to_melody_track(&result.samples, "center_cancel")
     } else {
         // CREPE 模型不存在，fallback 到 PYIN
-        melody_extractor::extract_melody_from_mono_samples(
-            &mono_samples,
-            sample_rate,
-        )
+        melody_extractor::extract_melody_from_mono_samples(&mono_samples, sample_rate)
     }
 }
 

@@ -26,9 +26,9 @@
 //! - 同時變速 + 移調：`stretch_ratio = pitch_ratio / speed`
 //! - `speed=1.0` 且 `pitch=0` 時由呼叫方繞過（bypass），不經本模組
 
-/// 分析/合成視窗大小（sample 數），~93ms at 44.1kHz
-/// 較大的視窗能更好地保留低頻成分，減少 artifact
-const WINDOW_SIZE: usize = 4096;
+/// 分析/合成視窗大小（sample 數），~46ms at 44.1kHz。
+/// 伴奏是多音複合訊號，較短視窗能減少瞬態被抹開的毛躁感。
+const WINDOW_SIZE: usize = 2048;
 
 /// 重疊因子：4 = 75% overlap
 const OVERLAP_FACTOR: usize = 4;
@@ -36,9 +36,22 @@ const OVERLAP_FACTOR: usize = 4;
 /// 合成 hop（每步合成的新輸出幀��）
 const HOP_SYN: usize = WINDOW_SIZE / OVERLAP_FACTOR; // 1024
 
+/// 實際重疊區長度。
+/// 75% overlap 時，新視窗和既有尾巴重疊 3072 幀。
+const OVERLAP_LEN: usize = WINDOW_SIZE - HOP_SYN;
+
 /// 交叉相關搜尋範圍（±sample 數）
-/// 882 samples ≈ 20ms at 44.1kHz，足以覆蓋 50Hz 低音一個完整週期
-const SEARCH_RANGE: usize = 882;
+///
+/// [2026-04-15, Codex round-4 驗證步驟 1] 441 → 1024：
+///   舊值 441 samples ≈ 10ms @ 44.1kHz，小於 80Hz 一個週期（~551 samples），
+///   多音伴奏下 correlation 在不同局部峰值間抖動 → 每 HOP_SYN（512 samples，
+///   11.6ms，86 Hz）選到不同 offset → 低頻「雜雜雜」藝痕。
+///   新值 1024 samples ≈ 23ms，涵蓋 ≥ 40 Hz 一個完整週期，讓 correlation 更穩定。
+///
+///   邊界安全：find_best_offset L340 已保護 `pos + WINDOW_SIZE > total_frames`。
+///   CPU 影響：coarse_step=4 下掃描 221 → 513 次（~2.3x），絕對值仍在 ms 級。
+///   回退：改回 441 即可。若此值仍不足可續調到 1536（Codex 上限建議）。
+const SEARCH_RANGE: usize = 1024;
 
 /// 串流式 WSOLA 處理器。
 pub struct WsolaProcessor {
@@ -87,10 +100,18 @@ impl WsolaProcessor {
                 let sum: f32 = (0..OVERLAP_FACTOR)
                     .map(|k| {
                         let idx = i + k * HOP_SYN;
-                        if idx < WINDOW_SIZE { hann[idx] } else { 0.0 }
+                        if idx < WINDOW_SIZE {
+                            hann[idx]
+                        } else {
+                            0.0
+                        }
                     })
                     .sum();
-                if sum > 1e-6 { 1.0 / sum } else { 1.0 }
+                if sum > 1e-6 {
+                    1.0 / sum
+                } else {
+                    1.0
+                }
             })
             .collect();
 
@@ -137,12 +158,7 @@ impl WsolaProcessor {
     ///
     /// 核心不變式：accum_buf 只在完整輸出一個 HOP_SYN 後才做 shift。
     /// 這確保任何 callback 大小都不會丟失資料。
-    pub fn process(
-        &mut self,
-        source: &[f32],
-        output: &mut [f32],
-        stretch_ratio: f64,
-    ) -> f64 {
+    pub fn process(&mut self, source: &[f32], output: &mut [f32], stretch_ratio: f64) -> f64 {
         let ch = self.channels;
         let total_source_frames = source.len() / ch;
         let output_frames = output.len() / ch;
@@ -204,8 +220,7 @@ impl WsolaProcessor {
 
             // ① 搜尋最佳重疊位置
             let read_pos = if self.initialized {
-                let offset =
-                    self.find_best_offset(source, nom_pos as usize, total_source_frames);
+                let offset = self.find_best_offset(source, nom_pos as usize, total_source_frames);
                 let adjusted = (nom_pos + offset) as usize;
                 adjusted.min(total_source_frames.saturating_sub(WINDOW_SIZE))
             } else {
@@ -264,14 +279,12 @@ impl WsolaProcessor {
     /// 改進：
     /// - 使用所有聲道的平均相關性（而非僅 channel 0）
     /// - 二階搜尋（粗搜 step=4 + 精搜 ±4）減少計算量
-    fn find_best_offset(
-        &self,
-        source: &[f32],
-        nominal_pos: usize,
-        total_frames: usize,
-    ) -> isize {
+    fn find_best_offset(&self, source: &[f32], nominal_pos: usize, total_frames: usize) -> isize {
         let ch = self.channels;
-        let compare_len = HOP_SYN;
+        // 相關性必須看完整重疊區。
+        // 先前只看 HOP_SYN（25% 視窗），容易在複雜伴奏上選到錯的接縫，
+        // 聽感會變尖銳、毛躁，尤其在變速和移調時更明顯。
+        let compare_len = OVERLAP_LEN;
 
         let search_start = -(SEARCH_RANGE as isize);
         let search_end = SEARCH_RANGE as isize;
@@ -284,7 +297,12 @@ impl WsolaProcessor {
         let mut offset = search_start;
         while offset <= search_end {
             let corr = self.compute_correlation(
-                source, nominal_pos, total_frames, offset, ch, compare_len,
+                source,
+                nominal_pos,
+                total_frames,
+                offset,
+                ch,
+                compare_len,
             );
             if corr > best_corr {
                 best_corr = corr;
@@ -299,7 +317,12 @@ impl WsolaProcessor {
 
         for offset in fine_start..=fine_end {
             let corr = self.compute_correlation(
-                source, nominal_pos, total_frames, offset, ch, compare_len,
+                source,
+                nominal_pos,
+                total_frames,
+                offset,
+                ch,
+                compare_len,
             );
             if corr > best_corr {
                 best_corr = corr;
@@ -547,18 +570,9 @@ mod tests {
         }
 
         // 跳過 ramp-up 後比較能量
-        let big_rms: f32 = (big_out[5000..8000]
-            .iter()
-            .map(|s| s * s)
-            .sum::<f32>()
-            / 3000.0)
-            .sqrt();
-        let small_rms: f32 = (small_out[5000..8000]
-            .iter()
-            .map(|s| s * s)
-            .sum::<f32>()
-            / 3000.0)
-            .sqrt();
+        let big_rms: f32 = (big_out[5000..8000].iter().map(|s| s * s).sum::<f32>() / 3000.0).sqrt();
+        let small_rms: f32 =
+            (small_out[5000..8000].iter().map(|s| s * s).sum::<f32>() / 3000.0).sqrt();
 
         // 兩者的 RMS 應該接近（10% 以內）
         let diff = (big_rms - small_rms).abs() / big_rms;

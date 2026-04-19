@@ -7,6 +7,7 @@ pub mod commands;
 pub mod core;
 pub mod error;
 pub mod events;
+pub mod security;
 
 use tauri::Manager;
 
@@ -40,6 +41,7 @@ pub fn run() {
             commands::audio_commands::load_backing,
             commands::audio_commands::start_recording,
             commands::audio_commands::stop_recording,
+            commands::audio_commands::clear_recording,
             commands::audio_commands::start_preview,
             commands::audio_commands::start_playback,
             commands::audio_commands::pause_playback,

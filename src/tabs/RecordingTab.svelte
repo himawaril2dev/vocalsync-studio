@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { save } from "@tauri-apps/plugin-dialog";
+  import { ask, save } from "@tauri-apps/plugin-dialog";
   import {
     transportState,
     elapsed,
@@ -16,14 +16,35 @@
     clearLoop,
     speed,
     pitchSemitones,
-    hasSpeedOrPitch,
+    hasNonDefaultSpeed,
+    hasNonDefaultPitch,
     setSpeed,
     setPitchSemitones,
-    resetSpeedAndPitch,
+    resetSpeed,
+    resetPitch,
+    pausedResumeMode,
+    pausedAtElapsed,
+    isTransportRunning,
+    isTransportPaused,
+    type ResumeMode,
+    PITCH_SEMITONES_MIN,
+    PITCH_SEMITONES_MAX,
   } from "../stores/transport";
+  import { get } from "svelte/store";
   import { loadedMedia } from "../stores/media";
   import { clearLiveVocalSamples } from "../stores/pitch";
-  import { inputDeviceIndex, outputDeviceIndex, latencyMs, backingVolume, micGain, autoBalanceMixin } from "../stores/settings";
+  import {
+    inputDeviceIndex,
+    outputDeviceIndex,
+    latencyMs,
+    backingVolume,
+    micGain,
+    autoBalanceMixin,
+    resetBackingVolume,
+    resetMicGain,
+    DEFAULT_BACKING_VOLUME,
+    DEFAULT_MIC_GAIN,
+  } from "../stores/settings";
   import { detectedKey, keyDetectionStatus } from "../stores/pitch";
   import { showToast } from "../stores/toast";
   import Icon from "../components/Icon.svelte";
@@ -113,7 +134,13 @@
 
   function onSeekChange(e: Event) {
     const val = parseFloat((e.target as HTMLInputElement).value);
-    invoke("seek", { seconds: val });
+    // paused 狀態下後端不會 emit progress，前端要自行同步 elapsed
+    // 以便「暫停後拖進度條到 N 秒 → 按繼續」能正確從 N 秒啟動。
+    // 進行中狀態下 set 也無害，後端下一個 tick 會覆蓋。
+    elapsed.set(val);
+    invoke("seek", { seconds: val }).catch((err) =>
+      console.error("[seek] failed:", err),
+    );
   }
 
   function fmtTime(sec: number): string {
@@ -129,54 +156,160 @@
     }
   }
 
+  /** 計算從目前 $elapsed 換算的 start_frame；elapsed == 0 時回傳 null（fresh start）。*/
+  function currentStartFrame(): number | null {
+    const media = $loadedMedia;
+    if (!media || $elapsed <= 0) return null;
+    return Math.round($elapsed * media.sample_rate);
+  }
+
   async function startPreview() {
-    resetVideo();
+    // paused 模式下按 Play = 從暫停位置續播；idle 則從 0 起播。
+    const resuming = $isTransportPaused && $pausedResumeMode === "previewing";
+    const startFrame = resuming ? currentStartFrame() : null;
+    if (!resuming) {
+      resetVideo();
+    }
     try {
       await invoke("start_preview", {
-        startFrame: null,
+        startFrame,
         outputDevice: $outputDeviceIndex,
         inputDevice: $inputDeviceIndex,
       });
+      pausedResumeMode.set(null);
+      pausedAtElapsed.set(null);
     } catch (e) {
       showToast(`試聽失敗：${e}`, "error");
     }
   }
 
   async function startPlayback() {
-    resetVideo();
+    const resuming = $isTransportPaused && $pausedResumeMode === "playing_back";
+    const startFrame = resuming ? currentStartFrame() : null;
+    if (!resuming) {
+      resetVideo();
+    }
     try {
-      await invoke("start_playback", { startFrame: null, outputDevice: $outputDeviceIndex, latencyMs: $latencyMs });
+      await invoke("start_playback", {
+        startFrame,
+        outputDevice: $outputDeviceIndex,
+        latencyMs: $latencyMs,
+      });
+      pausedResumeMode.set(null);
+      pausedAtElapsed.set(null);
     } catch (e) {
       showToast(`回放失敗：${e}`, "error");
     }
   }
 
-  async function pausePlayback() {
-    try {
-      await invoke("pause_playback");
-      videoEl?.pause();
-    } catch (e) {
-      showToast(`暫停失敗：${e}`, "error");
-    }
-  }
-
   async function startRecording() {
-    resetVideo();
-    clearLiveVocalSamples();
+    // 續錄判斷優先序（從高到低）：
+    //   1. paused + 上次是 recording → 從 $elapsed 續錄（已錄內容保留，允許拖進度條向後跳）
+    //   2. idle + 已有錄音 + $elapsed > 0 → 也視為續錄（錄→停止→再錄的情境）
+    //   3. 其他 → fresh start，清空影片與即時音高
+    const media = $loadedMedia;
+    const wasRecording =
+      $isTransportPaused && $pausedResumeMode === "recording";
+    const canResume =
+      wasRecording || ($hasRecording && $elapsed > 0 && media !== null);
+    const startFrame = canResume ? currentStartFrame() : null;
+
+    // 🔴 Codex 安全審查 P1：若使用者拖進度條**向前**跳後按錄音，
+    // 後端會 truncate vocal_buffer 到新位置（捨棄後段已錄的聲音）。
+    // 先跳 dialog 確認，避免誤觸毀掉錄音。
+    if (canResume && wasRecording && $pausedAtElapsed !== null) {
+      const baseline = $pausedAtElapsed;
+      const now = $elapsed;
+      if (now + 0.05 < baseline) {
+        const confirmed = await ask(
+          `目前播放位置（${now.toFixed(1)} 秒）比暫停時（${baseline.toFixed(1)} 秒）更前，` +
+            `繼續錄音會捨棄 ${now.toFixed(1)} 秒之後已錄的內容，確定要繼續嗎？`,
+          { title: "向前錄音確認", kind: "warning" },
+        );
+        if (!confirmed) return;
+      }
+    }
+
+    if (!canResume) {
+      resetVideo();
+      clearLiveVocalSamples();
+    }
+
     try {
-      await invoke("start_recording", { inputDevice: $inputDeviceIndex, outputDevice: $outputDeviceIndex });
+      await invoke("start_recording", {
+        startFrame,
+        inputDevice: $inputDeviceIndex,
+        outputDevice: $outputDeviceIndex,
+      });
       hasRecording.set(true);
+      pausedResumeMode.set(null);
+      pausedAtElapsed.set(null);
     } catch (e) {
       showToast(`錄音失敗：${e}`, "error");
     }
   }
 
+  /** 暫停目前進行中的模式：保留位置，記住模式與位置供之後繼續。*/
+  async function pauseCurrent(): Promise<void> {
+    const current = get(transportState);
+    if (current === "idle" || current === "paused") return;
+
+    const resumeMode = current as ResumeMode;
+    try {
+      await invoke("pause_playback");
+      videoEl?.pause();
+      pausedResumeMode.set(resumeMode);
+      pausedAtElapsed.set(get(elapsed));
+      transportState.set("paused");
+    } catch (e) {
+      showToast(`暫停失敗：${e}`, "error");
+    }
+  }
+
+  /** 從 paused 狀態繼續上一次模式；透過對應的 start* 函式統一走續播邏輯。*/
+  async function resumeFromPause(): Promise<void> {
+    const mode = get(pausedResumeMode);
+    if (mode === "previewing") await startPreview();
+    else if (mode === "recording") await startRecording();
+    else if (mode === "playing_back") await startPlayback();
+  }
+
+  /** 停止並回到最開頭（使用者要求：停止按鈕一律 seek 0）。*/
   async function stopAll() {
     try {
-      await invoke("stop_recording");
-      if (videoEl) videoEl.pause();
+      // pause_playback 對任何模式都適用（內部走 engine.pause → stop worker）
+      await invoke("pause_playback").catch(() => {});
+      await invoke("seek", { seconds: 0 });
+      elapsed.set(0);
+      pausedResumeMode.set(null);
+      pausedAtElapsed.set(null);
+      transportState.set("idle");
+      if (videoEl) {
+        videoEl.currentTime = 0;
+        videoEl.pause();
+      }
     } catch (e) {
       showToast(`停止失敗：${e}`, "error");
+    }
+  }
+
+  /** 清除目前錄音：vocal buffer + pitch track 全部歸零，seek 回 0，hasRecording → false。
+   *  供使用者在續錄不想要時「重新開始」。*/
+  async function clearRecording(): Promise<void> {
+    const confirmed = await ask(
+      "清除後目前這段錄音將無法恢復，確定要清除嗎？",
+      { title: "清除錄音", kind: "warning" },
+    );
+    if (!confirmed) return;
+
+    try {
+      await invoke("clear_recording");
+      hasRecording.set(false);
+      clearLiveVocalSamples();
+      resetVideo();
+      showToast("已清除錄音，可從頭重錄", "success", 2500);
+    } catch (e) {
+      showToast(`清除失敗：${e}`, "error");
     }
   }
 
@@ -217,7 +350,22 @@
     previewing: "試聽中",
     recording: "錄音中",
     playing_back: "回放中",
+    paused: "已暫停",
   };
+
+  const resumeModeSuffix: Record<ResumeMode, string> = {
+    previewing: "（試聽）",
+    recording: "（錄音）",
+    playing_back: "（回放）",
+  };
+
+  let stateLabelText = $derived.by(() => {
+    const s = $transportState;
+    if (s === "paused" && $pausedResumeMode) {
+      return `${transportStateLabel.paused}${resumeModeSuffix[$pausedResumeMode]}`;
+    }
+    return transportStateLabel[s];
+  });
 
   function rmsToWidth(rms: number, boost: number = 3.0): number {
     return Math.min(100, rms * boost * 100);
@@ -230,15 +378,22 @@
 
     switch (e.code) {
       case "Space":
+        // Space = 通用 play/pause toggle
+        //   running → pauseCurrent
+        //   paused → resumeFromPause
+        //   idle → startPreview（試聽）
         e.preventDefault();
-        if ($transportState === "previewing" || $transportState === "playing_back") {
-          pausePlayback();
+        if ($isTransportRunning) {
+          pauseCurrent();
+        } else if ($isTransportPaused) {
+          resumeFromPause();
         } else if ($transportState === "idle" && $loadedMedia) {
           startPreview();
         }
         break;
       case "KeyR":
-        if (!e.ctrlKey && !e.metaKey && $transportState === "idle" && $loadedMedia) {
+        // R = 錄音。running 時無作用（避免誤觸切模式）；idle/paused 時按即錄
+        if (!e.ctrlKey && !e.metaKey && !$isTransportRunning && $loadedMedia) {
           e.preventDefault();
           startRecording();
         }
@@ -271,6 +426,53 @@
         break;
     }
   }
+
+  // ── Speed 檔位 ──
+  // 0.5 / 0.75 / 0.9 / 1.0 / 1.1 / 1.25 六段
+  // 1.0 走 bypass、純移調走 timestretch producer、其他走 WSOLA（方向正確且穩定）
+  const SPEED_STEPS = [0.5, 0.75, 0.9, 1.0, 1.1, 1.25] as const;
+  const SPEED_EPSILON = 0.01;
+
+  /** 在 SPEED_STEPS 中找最接近目前值的索引（若無完全吻合則取最近的）。*/
+  function currentSpeedIndex(v: number): number {
+    let bestIdx = 0;
+    let bestDiff = Math.abs(SPEED_STEPS[0] - v);
+    for (let i = 1; i < SPEED_STEPS.length; i++) {
+      const d = Math.abs(SPEED_STEPS[i] - v);
+      if (d < bestDiff) {
+        bestDiff = d;
+        bestIdx = i;
+      }
+    }
+    return bestIdx;
+  }
+
+  function decrementSpeedStep() {
+    const i = currentSpeedIndex($speed);
+    // 若目前值就在某檔位 ±epsilon 內，則往下切一檔；否則先 snap 到最近檔位
+    const onStep = Math.abs(SPEED_STEPS[i] - $speed) < SPEED_EPSILON;
+    const targetIdx = onStep ? Math.max(0, i - 1) : i;
+    setSpeed(SPEED_STEPS[targetIdx]);
+  }
+
+  function incrementSpeedStep() {
+    const i = currentSpeedIndex($speed);
+    const onStep = Math.abs(SPEED_STEPS[i] - $speed) < SPEED_EPSILON;
+    const targetIdx = onStep ? Math.min(SPEED_STEPS.length - 1, i + 1) : i;
+    setSpeed(SPEED_STEPS[targetIdx]);
+  }
+
+  // 按鈕 disabled 判定（響應式，跟著 $speed 自動更新）
+  let atMinSpeed = $derived($speed <= SPEED_STEPS[0] + SPEED_EPSILON);
+  let atMaxSpeed = $derived($speed >= SPEED_STEPS[SPEED_STEPS.length - 1] - SPEED_EPSILON);
+
+  /** 各軌音量是否已偏離預設值（用於顯示對應的「重設」按鈕）*/
+  let hasNonDefaultBacking = $derived(
+    Math.abs($backingVolume - DEFAULT_BACKING_VOLUME) > 0.001,
+  );
+  let hasNonDefaultMic = $derived(
+    Math.abs($micGain - DEFAULT_MIC_GAIN) > 0.001,
+  );
 </script>
 
 <svelte:window
@@ -353,24 +555,60 @@
   <div class="transport-row">
     <div class="transport-left">
       <div class="transport-buttons">
-        {#if $transportState === "playing_back" || $transportState === "previewing"}
-          <button class="t-btn pause" onclick={pausePlayback} title="暫停 (Space)"><Icon name="pause" size={14} /></button>
+        <!-- 試聽：idle 可按；running / paused 時 disabled（paused 下由 Pause 鈕繼續）-->
+        <button
+          class="t-btn play"
+          onclick={startPreview}
+          disabled={!$loadedMedia || $isTransportRunning || $isTransportPaused}
+          title="試聽 (Space)"
+          aria-label="試聽"
+        ><Icon name="play" size={14} /></button>
+
+        <!-- 錄音：非 running 時可按。idle→新錄/續錄，paused(recording)→續錄，paused(其他)→從當前位置開錄 -->
+        <button
+          class="t-btn rec"
+          onclick={startRecording}
+          disabled={!$loadedMedia || $isTransportRunning}
+          title="錄音 (R)"
+          aria-label="錄音"
+        ><Icon name="record" size={14} /></button>
+
+        <!-- 暫停/繼續 toggle：running→暫停，paused→繼續 -->
+        {#if $isTransportPaused}
+          <button
+            class="t-btn pause"
+            onclick={resumeFromPause}
+            title="繼續 (Space)"
+            aria-label="繼續"
+          ><Icon name="play" size={14} /></button>
         {:else}
-          <button class="t-btn play" onclick={startPreview} disabled={!$loadedMedia} title="試聽 (Space)"><Icon name="play" size={14} /></button>
+          <button
+            class="t-btn pause"
+            onclick={pauseCurrent}
+            disabled={!$isTransportRunning}
+            title="暫停 (Space)"
+            aria-label="暫停"
+          ><Icon name="pause" size={14} /></button>
         {/if}
 
-        {#if $transportState === "idle"}
-          <button class="t-btn rec" onclick={startRecording} disabled={!$loadedMedia} title="錄音 (R)"><Icon name="record" size={12} /></button>
-        {:else}
-          <button class="t-btn stop" onclick={stopAll} title="停止 (Esc)"><Icon name="stop" size={12} /></button>
-        {/if}
+        <!-- 停止：回到最開頭。running 或 paused 時可按 -->
+        <button
+          class="t-btn stop"
+          onclick={stopAll}
+          disabled={$transportState === "idle"}
+          title="停止 (Esc)"
+          aria-label="停止並回到開頭"
+        ><Icon name="stop" size={14} /></button>
       </div>
 
       <div class="state-chip">
         {#if $transportState === "recording"}
           <span class="rec-dot" aria-label="錄音中"></span>
         {/if}
-        <strong>{transportStateLabel[$transportState]}</strong>
+        <strong>{stateLabelText}</strong>
+        {#if $loadedMedia}
+          <span class="track-name" title={$loadedMedia.file_path}>{$loadedMedia.file_name}</span>
+        {/if}
         {#if $loopActive}
           <span class="loop-badge">循環</span>
         {/if}
@@ -404,11 +642,27 @@
         <span class="vu-label">伴奏</span>
         <div class="vu-bar"><div class="vu-fill" style="width: {rmsToWidth($backingRms, 3.0)}%"></div></div>
         <input type="range" class="vol-slider" min="0" max="1" step="0.01" bind:value={$backingVolume} title="伴奏音量 {Math.round($backingVolume * 100)}%">
+        <span class="vu-value">{Math.round($backingVolume * 100)}%</span>
+        <button
+          class="vu-reset"
+          onclick={resetBackingVolume}
+          disabled={!hasNonDefaultBacking}
+          aria-label="重設伴奏音量為預設值 {Math.round(DEFAULT_BACKING_VOLUME * 100)}%"
+          title="重設伴奏為 {Math.round(DEFAULT_BACKING_VOLUME * 100)}%"
+        >↺</button>
       </div>
       <div class="vu-item">
         <span class="vu-label">人聲</span>
         <div class="vu-bar"><div class="vu-fill" style="width: {rmsToWidth($micRms, 5.0)}%"></div></div>
         <input type="range" class="vol-slider" min="0" max="3" step="0.01" bind:value={$micGain} title="麥克風增益 {Math.round($micGain * 100)}%">
+        <span class="vu-value">{Math.round($micGain * 100)}%</span>
+        <button
+          class="vu-reset"
+          onclick={resetMicGain}
+          disabled={!hasNonDefaultMic}
+          aria-label="重設人聲音量為預設值 {Math.round(DEFAULT_MIC_GAIN * 100)}%"
+          title="重設人聲為 {Math.round(DEFAULT_MIC_GAIN * 100)}%"
+        >↺</button>
       </div>
     </div>
 
@@ -416,27 +670,41 @@
 
     <div class="sp-control">
       <span class="sp-label">速度</span>
-      <input
-        type="range"
-        class="sp-slider"
-        min="0.25"
-        max="2"
-        step="0.05"
-        value={$speed}
-        oninput={(e) => setSpeed(parseFloat((e.target as HTMLInputElement).value))}
-      />
+      <button
+        class="sp-btn"
+        onclick={decrementSpeedStep}
+        disabled={atMinSpeed}
+        title="降低速度檔位"
+      >-</button>
       <span class="sp-value">{$speed.toFixed(2)}x</span>
+      <button
+        class="sp-btn"
+        onclick={incrementSpeedStep}
+        disabled={atMaxSpeed}
+        title="提高速度檔位"
+      >+</button>
+      <button
+        class="vu-reset"
+        onclick={resetSpeed}
+        disabled={!$hasNonDefaultSpeed}
+        aria-label="重設速度為預設值 1.00x"
+        title="重設速度為 1.00x"
+      >↺</button>
     </div>
 
     <div class="sp-control">
       <span class="sp-label">移調</span>
-      <button class="sp-btn" onclick={() => setPitchSemitones($pitchSemitones - 1)} disabled={$pitchSemitones <= -24} title="降半音 (-)">-</button>
+      <button class="sp-btn" onclick={() => setPitchSemitones($pitchSemitones - 1)} disabled={$pitchSemitones <= PITCH_SEMITONES_MIN} title="降半音 (-)">-</button>
       <span class="sp-value pitch-val">{$pitchSemitones > 0 ? "+" : ""}{$pitchSemitones}</span>
-      <button class="sp-btn" onclick={() => setPitchSemitones($pitchSemitones + 1)} disabled={$pitchSemitones >= 24} title="升半音 (+)">+</button>
+      <button class="sp-btn" onclick={() => setPitchSemitones($pitchSemitones + 1)} disabled={$pitchSemitones >= PITCH_SEMITONES_MAX} title="升半音 (+)">+</button>
+      <button
+        class="vu-reset"
+        onclick={resetPitch}
+        disabled={!$hasNonDefaultPitch}
+        aria-label="重設移調為預設值 0 半音"
+        title="重設移調為 0 半音"
+      >↺</button>
     </div>
-    {#if $hasSpeedOrPitch}
-      <button class="t-btn sp-reset" onclick={resetSpeedAndPitch} title="重設速度與移調">重設</button>
-    {/if}
 
     <div class="divider"></div>
 
@@ -467,7 +735,7 @@
     <button
       class="t-btn export"
       onclick={exportAudio}
-      disabled={$transportState !== "idle" || !$hasRecording}
+      disabled={$isTransportRunning || !$hasRecording}
     >
       <Icon name="download" size={14} /> 導出
     </button>
@@ -475,16 +743,33 @@
     <button
       class="t-btn playback"
       onclick={startPlayback}
-      disabled={!$hasRecording || !$loadedMedia || $transportState !== "idle"}
+      disabled={!$hasRecording || !$loadedMedia || $isTransportRunning}
       title="回放錄音"
     >
       回放
     </button>
 
-    <label class="auto-balance-label" title="匯出時自動平衡音量">
-      <input type="checkbox" bind:checked={$autoBalanceMixin} />
-      標準化
-    </label>
+    <button
+      class="t-btn clear-rec"
+      onclick={clearRecording}
+      disabled={!$hasRecording || $isTransportRunning}
+      title="清除目前錄音，從頭開始錄"
+    >
+      清除錄音
+    </button>
+
+    <div class="auto-balance-group">
+      <button
+        type="button"
+        class="auto-balance-hint"
+        data-tooltip="勾選後，匯出混音時會自動把人聲音量稍微蓋過伴奏（約 +2 dB），讓歌聲清楚主導。關閉則完全依目前的伴奏/人聲滑桿比例輸出。"
+        aria-label="標準化說明"
+      >!</button>
+      <label class="auto-balance-label">
+        <input type="checkbox" bind:checked={$autoBalanceMixin} />
+        標準化
+      </label>
+    </div>
   </div>
 
 </div>
@@ -674,6 +959,16 @@
     white-space: nowrap;
   }
 
+  .track-name {
+    font-size: 12px;
+    color: var(--color-text);
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: help;
+  }
+
   .time-display {
     font-family: var(--font-mono);
     font-size: 14px;
@@ -736,7 +1031,7 @@
     display: flex;
     flex-direction: column;
     gap: 3px;
-    min-width: 180px;
+    min-width: 250px;
   }
 
   .vu-item {
@@ -770,6 +1065,44 @@
   .vol-slider {
     width: 60px;
     accent-color: var(--color-brand);
+  }
+
+  .vu-value {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--color-text);
+    min-width: 36px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  .vu-reset {
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: var(--color-bg-hover);
+    color: var(--color-text-muted);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition-fast);
+  }
+
+  .vu-reset:hover:not(:disabled) {
+    background: var(--color-bg-active);
+    color: var(--color-text);
+  }
+
+  .vu-reset:disabled {
+    opacity: 0.25;
+    cursor: not-allowed;
   }
 
   /* ── 共用按鈕 ── */
@@ -828,8 +1161,8 @@
   .t-btn.rec {
     background: var(--color-danger);
     color: #fff;
-    width: 32px;
-    height: 32px;
+    width: 36px;
+    height: 36px;
     padding: 0;
     justify-content: center;
     border-radius: 50%;
@@ -842,8 +1175,8 @@
   .t-btn.stop {
     background: var(--color-brand-dark);
     color: #fff;
-    width: 32px;
-    height: 32px;
+    width: 36px;
+    height: 36px;
     padding: 0;
     justify-content: center;
     border-radius: 50%;
@@ -864,6 +1197,19 @@
 
   .t-btn.playback {
     font-size: 12px;
+  }
+
+  .t-btn.clear-rec {
+    font-size: 12px;
+    background: transparent;
+    border: 1px solid var(--color-border);
+    color: var(--color-text-muted);
+  }
+
+  .t-btn.clear-rec:hover:not(:disabled) {
+    background: var(--color-danger-soft, #fde8e8);
+    border-color: var(--color-danger, #b71c1c);
+    color: var(--color-danger, #b71c1c);
   }
 
   /* ── A-B 循環 ── */
@@ -928,6 +1274,73 @@
     font-style: italic;
   }
 
+  .auto-balance-group {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    margin-left: auto;
+  }
+
+  .auto-balance-hint {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--color-text-muted);
+    border: 1px solid var(--color-border);
+    border-radius: 50%;
+    cursor: help;
+    user-select: none;
+  }
+
+  .auto-balance-hint:hover,
+  .auto-balance-hint:focus-visible {
+    color: var(--color-text);
+    border-color: var(--color-text-muted);
+    outline: none;
+  }
+
+  /* 自訂 tooltip：Tauri WebView2 對原生 title 支援不穩定，改用 CSS ::after */
+  .auto-balance-hint:hover::after,
+  .auto-balance-hint:focus-visible::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 8px);
+    right: 0;
+    background: #2a241e;
+    color: #fff;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.5;
+    white-space: normal;
+    width: max-content;
+    max-width: 280px;
+    text-align: left;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    z-index: 9999;
+    pointer-events: none;
+  }
+
+  /* 下方小三角形指向按鈕 */
+  .auto-balance-hint:hover::before,
+  .auto-balance-hint:focus-visible::before {
+    content: "";
+    position: absolute;
+    bottom: calc(100% + 3px);
+    right: 6px;
+    border: 5px solid transparent;
+    border-top-color: #2a241e;
+    z-index: 9999;
+    pointer-events: none;
+  }
+
   .auto-balance-label {
     font-size: 11px;
     color: var(--color-text-secondary);
@@ -936,7 +1349,6 @@
     gap: var(--space-xs);
     cursor: pointer;
     white-space: nowrap;
-    margin-left: auto;
   }
 
   /* ── 速度/移調 ── */
@@ -952,11 +1364,6 @@
     font-weight: 500;
     font-size: 11px;
     color: var(--color-text-muted);
-  }
-
-  .sp-slider {
-    width: 80px;
-    accent-color: var(--color-brand);
   }
 
   .sp-value {
@@ -997,10 +1404,6 @@
     cursor: not-allowed;
   }
 
-  .sp-reset {
-    font-size: 11px;
-    padding: 2px var(--space-sm);
-  }
 
   /* ── 錄音指示 ── */
   .rec-dot {

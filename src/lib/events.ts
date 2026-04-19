@@ -6,6 +6,8 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import {
   transportState,
+  pausedResumeMode,
+  pausedAtElapsed,
   elapsed,
   duration,
   backingRms,
@@ -98,7 +100,12 @@ export async function setupEventListeners(): Promise<void> {
 
   unlisteners.push(
     await listen<{ state: string }>("audio:state_changed", (e) => {
-      transportState.set(e.payload.state as TransportState);
+      // 後端沒有 "paused" 概念（pause 會停 worker → emit idle）。
+      // 前端要能區分「真的 idle」與「使用者按暫停」，因此忽略後端 emit 的 idle，
+      // 由前端的 pauseCurrent / stopAll / audio:finished 自行設定 idle vs paused。
+      const s = e.payload.state;
+      if (s === "idle") return;
+      transportState.set(s as TransportState);
     }),
   );
 
@@ -193,6 +200,8 @@ export async function setupEventListeners(): Promise<void> {
   unlisteners.push(
     await listen("audio:finished", async () => {
       transportState.set("idle");
+      pausedResumeMode.set(null);
+      pausedAtElapsed.set(null);
 
       // 錄音結束後自動偵測調性：拉取完整 pitch track → 偵測
       try {
@@ -217,6 +226,8 @@ export async function setupEventListeners(): Promise<void> {
       console.error("[audio:error]", e.payload.message);
       showToast(e.payload.message, "error", 5000);
       transportState.set("idle");
+      pausedResumeMode.set(null);
+      pausedAtElapsed.set(null);
     }),
   );
 

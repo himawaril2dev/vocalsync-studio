@@ -6,9 +6,7 @@ use std::sync::Mutex;
 use tauri::State;
 
 #[tauri::command]
-pub fn load_settings(
-    settings: State<'_, Mutex<AppSettings>>,
-) -> Result<AppSettings, AppError> {
+pub fn load_settings(settings: State<'_, Mutex<AppSettings>>) -> Result<AppSettings, AppError> {
     let settings = settings
         .lock()
         .map_err(|e| AppError::Internal(e.to_string()))?;

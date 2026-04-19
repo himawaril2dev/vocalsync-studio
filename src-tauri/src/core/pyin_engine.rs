@@ -15,7 +15,7 @@
 //! - 不適用於即時偵測（需要全序列才能解碼）→ 即時 mic 仍用 `pitch_engine::PitchDetector`
 //! - Beta 分佈簡化為查表（離散 21 點）以避免依賴額外 crate
 
-use crate::core::pitch_data::{freq_to_note, freq_to_midi, PitchSample, PitchTrack};
+use crate::core::pitch_data::{freq_to_midi, freq_to_note, PitchSample, PitchTrack};
 
 /// 一個 frame 的單一 candidate
 #[derive(Clone, Debug)]
@@ -225,8 +225,7 @@ impl PyinAnalyzer {
         while tau + 1 < self.tau_max {
             let d = self.diff_buf[tau];
             if d < self.max_threshold {
-                let is_local_min =
-                    self.diff_buf[tau - 1] >= d && self.diff_buf[tau + 1] >= d;
+                let is_local_min = self.diff_buf[tau - 1] >= d && self.diff_buf[tau + 1] >= d;
                 if is_local_min {
                     let better_tau = parabolic_interpolation(&self.diff_buf, tau);
                     if better_tau > 0.0 {
@@ -569,27 +568,27 @@ fn median_smooth_track(track: &PitchTrack, window: usize) -> PitchTrack {
 fn pyin_likelihood(d_prime: f64) -> f64 {
     // 21 點 (d=0.00, 0.05, 0.10, ..., 1.00) 的 1 - I_d(2, 18) 值
     const TABLE: [f64; 21] = [
-        1.0_f64,        // d'=0.00
-        0.641_513,      // d'=0.05
-        0.121_576,      // d'=0.10  (corrected from canonical CDF)
-        0.041_366,      // d'=0.15
-        0.013_502,      // d'=0.20
-        0.004_198,      // d'=0.25
-        0.001_232,      // d'=0.30
-        3.387e-4,       // d'=0.35
-        8.567e-5,       // d'=0.40
-        1.972e-5,       // d'=0.45
-        4.077e-6,       // d'=0.50
-        7.466e-7,       // d'=0.55
-        1.182e-7,       // d'=0.60
-        1.580e-8,       // d'=0.65
-        1.731e-9,       // d'=0.70
-        1.479e-10,      // d'=0.75
-        9.218e-12,      // d'=0.80
-        3.815e-13,      // d'=0.85
-        9.123e-15,      // d'=0.90
-        7.812e-17,      // d'=0.95
-        1.0e-18,        // d'=1.00
+        1.0_f64,   // d'=0.00
+        0.641_513, // d'=0.05
+        0.121_576, // d'=0.10  (corrected from canonical CDF)
+        0.041_366, // d'=0.15
+        0.013_502, // d'=0.20
+        0.004_198, // d'=0.25
+        0.001_232, // d'=0.30
+        3.387e-4,  // d'=0.35
+        8.567e-5,  // d'=0.40
+        1.972e-5,  // d'=0.45
+        4.077e-6,  // d'=0.50
+        7.466e-7,  // d'=0.55
+        1.182e-7,  // d'=0.60
+        1.580e-8,  // d'=0.65
+        1.731e-9,  // d'=0.70
+        1.479e-10, // d'=0.75
+        9.218e-12, // d'=0.80
+        3.815e-13, // d'=0.85
+        9.123e-15, // d'=0.90
+        7.812e-17, // d'=0.95
+        1.0e-18,   // d'=1.00
     ];
 
     if !d_prime.is_finite() || d_prime <= 0.0 {
@@ -625,13 +624,7 @@ mod tests {
 
     /// 兩段 tone 中間插入 silence gap，給 viterbi 明確的 voiced/unvoiced 邊界，
     /// 避免「過渡 frame」（buf_size 跨越切換點）的混合信號造成 candidate 不一致
-    fn two_tone_with_gap(
-        low: f64,
-        high: f64,
-        sr: u32,
-        n_tone: usize,
-        n_gap: usize,
-    ) -> Vec<f32> {
+    fn two_tone_with_gap(low: f64, high: f64, sr: u32, n_tone: usize, n_gap: usize) -> Vec<f32> {
         let mut out = sine_wave(low, sr, n_tone);
         out.extend(std::iter::repeat(0.0_f32).take(n_gap));
         out.extend(sine_wave(high, sr, n_tone));
@@ -642,10 +635,10 @@ mod tests {
     // 純正弦的「真實基頻」在 sample misalignment 下無唯一解，這是演算法本質限制。
     const TEST_SR: u32 = 44100;
     const TEST_F_HIGH: f64 = 441.0; // = 44100 / 100, sample-aligned ≈ A4
-    // detects_pitch_change 用 220.5 → 300（非諧波關係）
-    // 220.5 candidates: τ ∈ {200, 400, 600} = {220.5, 110, 73.5}
-    // 300 candidates:   τ ∈ {147, 294, 441, 588} = {300, 150, 100, 75}
-    // 兩段沒有共同 τ，viterbi 必須真正跳音
+                                    // detects_pitch_change 用 220.5 → 300（非諧波關係）
+                                    // 220.5 candidates: τ ∈ {200, 400, 600} = {220.5, 110, 73.5}
+                                    // 300 candidates:   τ ∈ {147, 294, 441, 588} = {300, 150, 100, 75}
+                                    // 兩段沒有共同 τ，viterbi 必須真正跳音
     const TEST_F_JUMP_LOW: f64 = 220.5;
     const TEST_F_JUMP_HIGH: f64 = 300.0; // = 44100 / 147
 
@@ -679,13 +672,7 @@ mod tests {
         // 1 秒 220.5Hz + 0.5 秒 silence + 1 秒 300Hz
         let n_tone = TEST_SR as usize;
         let n_gap = TEST_SR as usize / 2;
-        let samples = two_tone_with_gap(
-            TEST_F_JUMP_LOW,
-            TEST_F_JUMP_HIGH,
-            TEST_SR,
-            n_tone,
-            n_gap,
-        );
+        let samples = two_tone_with_gap(TEST_F_JUMP_LOW, TEST_F_JUMP_HIGH, TEST_SR, n_tone, n_gap);
         let result = analyzer.analyze(&samples);
         assert!(result.quality.voiced_ratio > 0.5);
 
@@ -756,5 +743,4 @@ mod tests {
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
         sorted[sorted.len() / 2]
     }
-
 }

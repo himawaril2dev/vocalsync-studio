@@ -309,15 +309,21 @@ mod tests {
 
     #[test]
     fn pearson_perfect_correlation() {
-        let x = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0];
-        let y = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0];
+        let x = [
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+        ];
+        let y = [
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+        ];
         let r = pearson_correlation(&x, &y);
         assert!((r - 1.0).abs() < 1e-10, "完美正相關應為 1.0，得到 {}", r);
     }
 
     #[test]
     fn chroma_rotation_preserves_sum() {
-        let chroma = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0];
+        let chroma = [
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+        ];
         let original_sum: f64 = chroma.iter().sum();
         for shift in 0..12 {
             let rotated = rotate_chroma(&chroma, shift);

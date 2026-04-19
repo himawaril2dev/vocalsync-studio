@@ -123,7 +123,6 @@ pub struct CalibrationFailedPayload {
     pub reason: String,
 }
 
-
 // ── 推送輔助 ──
 
 pub fn emit_progress(app: &AppHandle, elapsed: f64, duration: f64) {
@@ -131,7 +130,13 @@ pub fn emit_progress(app: &AppHandle, elapsed: f64, duration: f64) {
 }
 
 pub fn emit_rms(app: &AppHandle, backing_rms: f32, mic_rms: f32) {
-    let _ = app.emit(AUDIO_RMS, RmsPayload { backing_rms, mic_rms });
+    let _ = app.emit(
+        AUDIO_RMS,
+        RmsPayload {
+            backing_rms,
+            mic_rms,
+        },
+    );
 }
 
 pub fn emit_state(app: &AppHandle, state: &str) {
@@ -173,10 +178,7 @@ pub fn emit_backing_pitch_ready(app: &AppHandle, payload: BackingPitchQualityPay
     let _ = app.emit(BACKING_PITCH_READY, payload);
 }
 
-pub fn emit_backing_pitch_not_detected(
-    app: &AppHandle,
-    payload: BackingPitchNotDetectedPayload,
-) {
+pub fn emit_backing_pitch_not_detected(app: &AppHandle, payload: BackingPitchNotDetectedPayload) {
     let _ = app.emit(BACKING_PITCH_NOT_DETECTED, payload);
 }
 
@@ -195,4 +197,3 @@ pub fn emit_calibration_complete(app: &AppHandle, payload: CalibrationCompletePa
 pub fn emit_calibration_failed(app: &AppHandle, payload: CalibrationFailedPayload) {
     let _ = app.emit(CALIBRATION_FAILED, payload);
 }
-

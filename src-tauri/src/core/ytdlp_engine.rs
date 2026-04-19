@@ -201,7 +201,11 @@ pub fn find_ffmpeg() -> Option<PathBuf> {
     if let Some(bin_dir) = get_app_bin_dir() {
         if let Some(candidate) = find_tool_in_dir(
             &bin_dir,
-            if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" },
+            if cfg!(windows) {
+                "ffmpeg.exe"
+            } else {
+                "ffmpeg"
+            },
         ) {
             return Some(candidate);
         }
@@ -213,9 +217,11 @@ pub fn find_ffmpeg() -> Option<PathBuf> {
     }
 
     // 3. 應用程式目錄（打包模式）
-    if let Some(candidate) = find_tool_next_to_current_exe(
-        if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" },
-    ) {
+    if let Some(candidate) = find_tool_next_to_current_exe(if cfg!(windows) {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    }) {
         return Some(candidate);
     }
 
@@ -243,7 +249,11 @@ pub fn get_ytdlp_version() -> Option<String> {
     let ytdlp = find_ytdlp()?;
     let output = Command::new(ytdlp).arg("--version").output().ok()?;
     let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if version.is_empty() { None } else { Some(version) }
+    if version.is_empty() {
+        None
+    } else {
+        Some(version)
+    }
 }
 
 /// 取得 FFmpeg 版本字串（第一行）。
@@ -294,7 +304,9 @@ fn verify_sha256(path: &std::path::Path, expected_hash: &str) -> Result<(), AppE
         let mut buf = [0u8; 65536];
         loop {
             let n = file.read(&mut buf).map_err(AppError::Io)?;
-            if n == 0 { break; }
+            if n == 0 {
+                break;
+            }
             hasher.update(&buf[..n]);
         }
         let hash = format!("{:x}", hasher.finalize());
@@ -310,7 +322,9 @@ fn verify_sha256(path: &std::path::Path, expected_hash: &str) -> Result<(), AppE
     let mut buf = [0u8; 65536];
     loop {
         let n = file.read(&mut buf).map_err(AppError::Io)?;
-        if n == 0 { break; }
+        if n == 0 {
+            break;
+        }
         hasher.update(&buf[..n]);
     }
     let actual = format!("{:x}", hasher.finalize());
@@ -328,38 +342,43 @@ fn verify_sha256(path: &std::path::Path, expected_hash: &str) -> Result<(), AppE
 ///
 /// 透過 `ytdlp:install_progress` event 推送進度。
 pub fn download_ytdlp(app: &AppHandle) -> Result<PathBuf, AppError> {
-    let bin_dir = get_app_bin_dir().ok_or_else(|| {
-        AppError::Internal("無法取得應用程式資料目錄".into())
-    })?;
+    let bin_dir =
+        get_app_bin_dir().ok_or_else(|| AppError::Internal("無法取得應用程式資料目錄".into()))?;
 
     // 建立目錄
-    std::fs::create_dir_all(&bin_dir)
-        .map_err(|e| AppError::Io(e))?;
+    std::fs::create_dir_all(&bin_dir).map_err(|e| AppError::Io(e))?;
 
     let target_path = bin_dir.join(YTDLP_EXE_NAME);
 
-    let _ = app.emit("ytdlp:install_progress", &InstallProgress {
-        percent: 0.0,
-        status: "downloading".into(),
-        message: "正在從 GitHub 下載 yt-dlp...".into(),
-    });
+    let _ = app.emit(
+        "ytdlp:install_progress",
+        &InstallProgress {
+            percent: 0.0,
+            status: "downloading".into(),
+            message: "正在從 GitHub 下載 yt-dlp...".into(),
+        },
+    );
 
-    log::info!("[ytdlp] 下載 yt-dlp: {} -> {:?}", YTDLP_DOWNLOAD_URL, target_path);
+    log::info!(
+        "[ytdlp] 下載 yt-dlp: {} -> {:?}",
+        YTDLP_DOWNLOAD_URL,
+        target_path
+    );
 
     // 使用 ureq 下載（專案已有此依賴）
     let resp = ureq::get(YTDLP_DOWNLOAD_URL)
         .call()
         .map_err(|e| AppError::Internal(format!("下載 yt-dlp 失敗: {}", e)))?;
 
-    let content_length = resp.header("content-length")
+    let content_length = resp
+        .header("content-length")
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(0);
 
     // 寫入暫存檔再改名（避免不完整的檔案）
     let tmp_path = target_path.with_extension("tmp");
     let mut _tmp_guard = TempFileGuard::new(tmp_path.clone());
-    let mut file = std::fs::File::create(&tmp_path)
-        .map_err(|e| AppError::Io(e))?;
+    let mut file = std::fs::File::create(&tmp_path).map_err(|e| AppError::Io(e))?;
 
     let mut reader = resp.into_reader();
     let mut buf = [0u8; 65536];
@@ -367,13 +386,13 @@ pub fn download_ytdlp(app: &AppHandle) -> Result<PathBuf, AppError> {
     let mut last_reported_pct: f64 = 0.0;
 
     loop {
-        let n = reader.read(&mut buf)
+        let n = reader
+            .read(&mut buf)
             .map_err(|e| AppError::Internal(format!("下載讀取失敗: {}", e)))?;
         if n == 0 {
             break;
         }
-        file.write_all(&buf[..n])
-            .map_err(|e| AppError::Io(e))?;
+        file.write_all(&buf[..n]).map_err(|e| AppError::Io(e))?;
         downloaded += n as u64;
 
         // 每 5% 報告一次
@@ -381,15 +400,18 @@ pub fn download_ytdlp(app: &AppHandle) -> Result<PathBuf, AppError> {
             let pct = (downloaded as f64 / content_length as f64) * 100.0;
             if pct - last_reported_pct >= 5.0 {
                 last_reported_pct = pct;
-                let _ = app.emit("ytdlp:install_progress", &InstallProgress {
-                    percent: pct,
-                    status: "downloading".into(),
-                    message: format!(
-                        "下載中... {:.1} MB / {:.1} MB",
-                        downloaded as f64 / 1_048_576.0,
-                        content_length as f64 / 1_048_576.0,
-                    ),
-                });
+                let _ = app.emit(
+                    "ytdlp:install_progress",
+                    &InstallProgress {
+                        percent: pct,
+                        status: "downloading".into(),
+                        message: format!(
+                            "下載中... {:.1} MB / {:.1} MB",
+                            downloaded as f64 / 1_048_576.0,
+                            content_length as f64 / 1_048_576.0,
+                        ),
+                    },
+                );
             }
         }
     }
@@ -398,11 +420,9 @@ pub fn download_ytdlp(app: &AppHandle) -> Result<PathBuf, AppError> {
 
     // 重命名（成功後解除 guard）
     if target_path.exists() {
-        std::fs::remove_file(&target_path)
-            .map_err(|e| AppError::Io(e))?;
+        std::fs::remove_file(&target_path).map_err(|e| AppError::Io(e))?;
     }
-    std::fs::rename(&tmp_path, &target_path)
-        .map_err(|e| AppError::Io(e))?;
+    std::fs::rename(&tmp_path, &target_path).map_err(|e| AppError::Io(e))?;
     _tmp_guard.disarm(); // 重命名成功，不再刪除
 
     // SHA-256 驗證
@@ -416,13 +436,20 @@ pub fn download_ytdlp(app: &AppHandle) -> Result<PathBuf, AppError> {
             .map_err(|e| AppError::Io(e))?;
     }
 
-    let _ = app.emit("ytdlp:install_progress", &InstallProgress {
-        percent: 100.0,
-        status: "finished".into(),
-        message: format!("yt-dlp {} 安裝完成", YTDLP_VERSION),
-    });
+    let _ = app.emit(
+        "ytdlp:install_progress",
+        &InstallProgress {
+            percent: 100.0,
+            status: "finished".into(),
+            message: format!("yt-dlp {} 安裝完成", YTDLP_VERSION),
+        },
+    );
 
-    log::info!("[ytdlp] yt-dlp {} 已下載至: {:?}", YTDLP_VERSION, target_path);
+    log::info!(
+        "[ytdlp] yt-dlp {} 已下載至: {:?}",
+        YTDLP_VERSION,
+        target_path
+    );
 
     Ok(target_path)
 }
@@ -433,18 +460,19 @@ pub fn download_ytdlp(app: &AppHandle) -> Result<PathBuf, AppError> {
 /// 透過 `ffmpeg:install_progress` event 推送進度。
 #[cfg(windows)]
 pub fn download_ffmpeg(app: &AppHandle) -> Result<PathBuf, AppError> {
-    let bin_dir = get_app_bin_dir().ok_or_else(|| {
-        AppError::Internal("無法取得應用程式資料目錄".into())
-    })?;
+    let bin_dir =
+        get_app_bin_dir().ok_or_else(|| AppError::Internal("無法取得應用程式資料目錄".into()))?;
 
-    std::fs::create_dir_all(&bin_dir)
-        .map_err(|e| AppError::Io(e))?;
+    std::fs::create_dir_all(&bin_dir).map_err(|e| AppError::Io(e))?;
 
-    let _ = app.emit("ffmpeg:install_progress", &InstallProgress {
-        percent: 0.0,
-        status: "downloading".into(),
-        message: "正在從 GitHub 下載 FFmpeg（約 80 MB）...".into(),
-    });
+    let _ = app.emit(
+        "ffmpeg:install_progress",
+        &InstallProgress {
+            percent: 0.0,
+            status: "downloading".into(),
+            message: "正在從 GitHub 下載 FFmpeg（約 80 MB）...".into(),
+        },
+    );
 
     log::info!("[ffmpeg] 下載 FFmpeg: {}", FFMPEG_DOWNLOAD_URL);
 
@@ -456,26 +484,26 @@ pub fn download_ffmpeg(app: &AppHandle) -> Result<PathBuf, AppError> {
         .call()
         .map_err(|e| AppError::Internal(format!("下載 FFmpeg 失敗: {}", e)))?;
 
-    let content_length = resp.header("content-length")
+    let content_length = resp
+        .header("content-length")
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(0);
 
     let mut reader = resp.into_reader();
-    let mut file = std::fs::File::create(&tmp_zip)
-        .map_err(|e| AppError::Io(e))?;
+    let mut file = std::fs::File::create(&tmp_zip).map_err(|e| AppError::Io(e))?;
 
     let mut buf = [0u8; 65536];
     let mut downloaded: u64 = 0;
     let mut last_reported_pct: f64 = 0.0;
 
     loop {
-        let n = reader.read(&mut buf)
+        let n = reader
+            .read(&mut buf)
             .map_err(|e| AppError::Internal(format!("下載讀取失敗: {}", e)))?;
         if n == 0 {
             break;
         }
-        file.write_all(&buf[..n])
-            .map_err(|e| AppError::Io(e))?;
+        file.write_all(&buf[..n]).map_err(|e| AppError::Io(e))?;
         downloaded += n as u64;
 
         if content_length > 0 {
@@ -483,15 +511,18 @@ pub fn download_ffmpeg(app: &AppHandle) -> Result<PathBuf, AppError> {
             let pct = (downloaded as f64 / content_length as f64) * 80.0;
             if pct - last_reported_pct >= 3.0 {
                 last_reported_pct = pct;
-                let _ = app.emit("ffmpeg:install_progress", &InstallProgress {
-                    percent: pct,
-                    status: "downloading".into(),
-                    message: format!(
-                        "下載中... {:.1} MB / {:.1} MB",
-                        downloaded as f64 / 1_048_576.0,
-                        content_length as f64 / 1_048_576.0,
-                    ),
-                });
+                let _ = app.emit(
+                    "ffmpeg:install_progress",
+                    &InstallProgress {
+                        percent: pct,
+                        status: "downloading".into(),
+                        message: format!(
+                            "下載中... {:.1} MB / {:.1} MB",
+                            downloaded as f64 / 1_048_576.0,
+                            content_length as f64 / 1_048_576.0,
+                        ),
+                    },
+                );
             }
         }
     }
@@ -499,19 +530,21 @@ pub fn download_ffmpeg(app: &AppHandle) -> Result<PathBuf, AppError> {
     drop(file);
 
     // 解壓 — 只提取 ffmpeg.exe 和 ffprobe.exe
-    let _ = app.emit("ffmpeg:install_progress", &InstallProgress {
-        percent: 85.0,
-        status: "downloading".into(),
-        message: "解壓縮中...".into(),
-    });
+    let _ = app.emit(
+        "ffmpeg:install_progress",
+        &InstallProgress {
+            percent: 85.0,
+            status: "downloading".into(),
+            message: "解壓縮中...".into(),
+        },
+    );
 
     // SHA-256 驗證（解壓前）
     verify_sha256(&tmp_zip, FFMPEG_ZIP_SHA256)?;
 
     log::info!("[ffmpeg] 解壓: {:?}", tmp_zip);
 
-    let zip_file = std::fs::File::open(&tmp_zip)
-        .map_err(|e| AppError::Io(e))?;
+    let zip_file = std::fs::File::open(&tmp_zip).map_err(|e| AppError::Io(e))?;
     let mut archive = zip::ZipArchive::new(zip_file)
         .map_err(|e| AppError::Internal(format!("zip 開啟失敗: {}", e)))?;
 
@@ -519,7 +552,8 @@ pub fn download_ffmpeg(app: &AppHandle) -> Result<PathBuf, AppError> {
     let mut extracted_count = 0;
 
     for i in 0..archive.len() {
-        let mut entry = archive.by_index(i)
+        let mut entry = archive
+            .by_index(i)
             .map_err(|e| AppError::Internal(format!("zip 讀取失敗: {}", e)))?;
 
         let entry_name = entry.name().to_string();
@@ -528,10 +562,8 @@ pub fn download_ffmpeg(app: &AppHandle) -> Result<PathBuf, AppError> {
         for target in &targets {
             if entry_name.ends_with(&format!("bin/{}", target)) {
                 let out_path = bin_dir.join(target);
-                let mut out_file = std::fs::File::create(&out_path)
-                    .map_err(|e| AppError::Io(e))?;
-                std::io::copy(&mut entry, &mut out_file)
-                    .map_err(|e| AppError::Io(e))?;
+                let mut out_file = std::fs::File::create(&out_path).map_err(|e| AppError::Io(e))?;
+                std::io::copy(&mut entry, &mut out_file).map_err(|e| AppError::Io(e))?;
                 log::info!("[ffmpeg] 解壓: {} -> {:?}", entry_name, out_path);
                 extracted_count += 1;
                 break;
@@ -551,11 +583,14 @@ pub fn download_ffmpeg(app: &AppHandle) -> Result<PathBuf, AppError> {
 
     let ffmpeg_path = bin_dir.join("ffmpeg.exe");
 
-    let _ = app.emit("ffmpeg:install_progress", &InstallProgress {
-        percent: 100.0,
-        status: "finished".into(),
-        message: "FFmpeg 安裝完成".into(),
-    });
+    let _ = app.emit(
+        "ffmpeg:install_progress",
+        &InstallProgress {
+            percent: 100.0,
+            status: "finished".into(),
+            message: "FFmpeg 安裝完成".into(),
+        },
+    );
 
     log::info!("[ffmpeg] FFmpeg 已安裝至: {:?}", bin_dir);
 
@@ -566,7 +601,8 @@ pub fn download_ffmpeg(app: &AppHandle) -> Result<PathBuf, AppError> {
 #[cfg(not(windows))]
 pub fn download_ffmpeg(_app: &AppHandle) -> Result<PathBuf, AppError> {
     Err(AppError::Internal(
-        "Linux / macOS 請使用套件管理器安裝 FFmpeg：apt install ffmpeg / brew install ffmpeg".into(),
+        "Linux / macOS 請使用套件管理器安裝 FFmpeg：apt install ffmpeg / brew install ffmpeg"
+            .into(),
     ))
 }
 
@@ -657,10 +693,18 @@ fn validate_url(url: &str) -> Result<(), AppError> {
         return Err(AppError::Audio("URL 過長（上限 2048 字元）".into()));
     }
     if !url.starts_with("https://") && !url.starts_with("http://") {
-        return Err(AppError::Audio("URL 必須以 http:// 或 https:// 開頭".into()));
+        return Err(AppError::Audio(
+            "URL 必須以 http:// 或 https:// 開頭".into(),
+        ));
     }
     if url.contains('\0') {
         return Err(AppError::Audio("URL 包含無效字元".into()));
+    }
+    // 🔴 Codex 安全審查 P1 #2：擋 yt-dlp option injection。
+    // 正常的 URL 不會含空白字元；若允許，攻擊者可傳 `http://x --exec "calc.exe"`
+    // 讓 yt-dlp 把第二段當成獨立 argument 執行 hook 指令。
+    if url.chars().any(char::is_whitespace) {
+        return Err(AppError::Audio("URL 不可包含空白字元".into()));
     }
     Ok(())
 }
@@ -673,7 +717,10 @@ struct TempFileGuard {
 
 impl TempFileGuard {
     fn new(path: PathBuf) -> Self {
-        Self { path, disarmed: false }
+        Self {
+            path,
+            disarmed: false,
+        }
     }
 
     /// 解除 guard（檔案不再自動刪除）。
@@ -781,12 +828,14 @@ pub fn run_download(
     // 驗證 URL
     validate_url(&req.url)?;
 
-    let ytdlp = find_ytdlp().ok_or_else(|| {
-        AppError::Audio("找不到 yt-dlp。請點擊「自動安裝」或手動安裝".into())
-    })?;
+    let ytdlp = find_ytdlp()
+        .ok_or_else(|| AppError::Audio("找不到 yt-dlp。請點擊「自動安裝」或手動安裝".into()))?;
 
     let args = build_args(&req);
-    log::info!("[ytdlp] 啟動下載，URL 類型: {:?}", detect_url_type(&req.url));
+    log::info!(
+        "[ytdlp] 啟動下載，URL 類型: {:?}",
+        detect_url_type(&req.url)
+    );
 
     let mut cmd = Command::new(&ytdlp);
     cmd.args(&args)
@@ -806,7 +855,11 @@ pub fn run_download(
         match stderr {
             Some(s) => {
                 let reader = BufReader::new(s);
-                reader.lines().filter_map(|l| l.ok()).collect::<Vec<_>>().join("\n")
+                reader
+                    .lines()
+                    .filter_map(|l| l.ok())
+                    .collect::<Vec<_>>()
+                    .join("\n")
             }
             None => String::new(),
         }
@@ -848,19 +901,21 @@ pub fn run_download(
     let stderr_output = stderr_handle.join().unwrap_or_default();
 
     if status.success() {
-        let _ = app.emit("ytdlp:progress", &DownloadProgress {
-            percent: 100.0,
-            filename: last_filename,
-            status: "finished".into(),
-            downloaded: String::new(),
-            total: String::new(),
-            speed: String::new(),
-            eta: String::new(),
-        });
+        let _ = app.emit(
+            "ytdlp:progress",
+            &DownloadProgress {
+                percent: 100.0,
+                filename: last_filename,
+                status: "finished".into(),
+                downloaded: String::new(),
+                total: String::new(),
+                speed: String::new(),
+                eta: String::new(),
+            },
+        );
 
         // 掃描下載目錄中的字幕檔案
-        let subtitle_paths =
-            crate::core::lyrics_parser::find_subtitle_files(&req.output_dir);
+        let subtitle_paths = crate::core::lyrics_parser::find_subtitle_files(&req.output_dir);
 
         Ok(DownloadResult {
             success: true,
@@ -963,7 +1018,11 @@ fn extract_field(s: &str, prefix: &str, delimiter: &str) -> Option<String> {
         rest.find(delimiter).unwrap_or(rest.len())
     };
     let value = rest[..end].trim().to_string();
-    if value.is_empty() { None } else { Some(value) }
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 // ── 測試 ─────────────────────────────────────────────────────────
@@ -978,10 +1037,7 @@ mod tests {
             detect_url_type("https://www.youtube.com/watch?v=abc123"),
             UrlType::Video
         );
-        assert_eq!(
-            detect_url_type("https://youtu.be/abc123"),
-            UrlType::Video
-        );
+        assert_eq!(detect_url_type("https://youtu.be/abc123"), UrlType::Video);
     }
 
     #[test]

@@ -72,10 +72,7 @@ fn get_or_init_session(model_dir: &Path) -> Result<&'static Mutex<Session>, Stri
     let result = CREPE_SESSION.get_or_init(|| {
         let model_path = model_dir.join("crepe-tiny.onnx");
         if !model_path.exists() {
-            return Err(format!(
-                "CREPE 模型檔不存在: {}",
-                model_path.display()
-            ));
+            return Err(format!("CREPE 模型檔不存在: {}", model_path.display()));
         }
 
         println!(
@@ -171,9 +168,8 @@ pub fn detect_realtime(
 
     // RMS 門檻：避免對靜音/殘響 frame 推論
     const MIN_FRAME_RMS: f64 = 0.003;
-    let rms = (frame.iter().map(|&x| (x as f64) * (x as f64)).sum::<f64>()
-        / FRAME_SIZE as f64)
-        .sqrt();
+    let rms =
+        (frame.iter().map(|&x| (x as f64) * (x as f64)).sum::<f64>() / FRAME_SIZE as f64).sqrt();
     if rms < MIN_FRAME_RMS {
         return Ok(None);
     }
@@ -365,9 +361,7 @@ pub fn analyze_offline(
     if let Some(range) = &vocal_range {
         println!(
             "[crepe_engine] 偵測音域: {:.1} Hz ~ {:.1} Hz (MIDI {:.1} ~ {:.1}), 中位 {:.1} Hz",
-            range.low_freq, range.high_freq,
-            range.low_midi, range.high_midi,
-            range.median_freq
+            range.low_freq, range.high_freq, range.low_midi, range.high_midi, range.median_freq
         );
     }
 
@@ -486,9 +480,7 @@ const HARD_VOCAL_HIGH_HZ: f64 = 1400.0;
 /// 2. 收集所有頻率，排序後取 5th ~ 95th percentile 作為核心音域
 /// 3. 向外再擴展 300 cent（2.5 個半音）作為容許邊界
 /// 4. 超出邊界的 sample 被移除
-fn filter_by_vocal_range(
-    samples: Vec<PitchSample>,
-) -> (Vec<PitchSample>, Option<VocalRange>) {
+fn filter_by_vocal_range(samples: Vec<PitchSample>) -> (Vec<PitchSample>, Option<VocalRange>) {
     // 第一階段：硬邊界過濾（無論 sample 數量多少都執行）
     let samples: Vec<PitchSample> = samples
         .into_iter()
@@ -733,11 +725,7 @@ mod tests {
         let (freq, conf) = decode_pitch(&probs);
         assert!(conf > 0.8, "confidence={}", conf);
         // 允許 ±10 Hz 誤差（受 bin 離散化影響）
-        assert!(
-            (freq - 440.0).abs() < 10.0,
-            "freq={} expected ~440",
-            freq
-        );
+        assert!((freq - 440.0).abs() < 10.0, "freq={} expected ~440", freq);
     }
 
     #[test]
@@ -772,14 +760,22 @@ mod tests {
     #[test]
     fn freq_to_midi_a4_is_69() {
         let midi = freq_to_midi_f64(440.0);
-        assert!((midi - 69.0).abs() < 1e-9, "A4=440Hz should be MIDI 69, got {}", midi);
+        assert!(
+            (midi - 69.0).abs() < 1e-9,
+            "A4=440Hz should be MIDI 69, got {}",
+            midi
+        );
     }
 
     #[test]
     fn freq_to_midi_c4_is_60() {
         // C4 ≈ 261.626 Hz
         let midi = freq_to_midi_f64(261.626);
-        assert!((midi - 60.0).abs() < 0.01, "C4 should be MIDI 60, got {}", midi);
+        assert!(
+            (midi - 60.0).abs() < 0.01,
+            "C4 should be MIDI 60, got {}",
+            midi
+        );
     }
 
     #[test]

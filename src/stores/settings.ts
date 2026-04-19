@@ -7,10 +7,22 @@ export const outputDeviceIndex = writable<number | null>(null);
 export const latencyMs = writable<number>(0);
 
 // 伴奏音量 (預設 0.1 = 10%)
-export const backingVolume = writable<number>(0.1);
+export const DEFAULT_BACKING_VOLUME = 0.1;
+export const backingVolume = writable<number>(DEFAULT_BACKING_VOLUME);
 
 // 麥克風增益 (預設 1.0)
-export const micGain = writable<number>(1.0);
+export const DEFAULT_MIC_GAIN = 1.0;
+export const micGain = writable<number>(DEFAULT_MIC_GAIN);
+
+/** 重設伴奏音量回到預設值 */
+export function resetBackingVolume(): void {
+  backingVolume.set(DEFAULT_BACKING_VOLUME);
+}
+
+/** 重設人聲音量回到預設值 */
+export function resetMicGain(): void {
+  micGain.set(DEFAULT_MIC_GAIN);
+}
 
 // 自動標準化混音 (預設 true)
 export const autoBalanceMixin = writable<boolean>(true);

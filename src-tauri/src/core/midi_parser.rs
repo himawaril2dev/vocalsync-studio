@@ -56,10 +56,10 @@ pub fn load_midi(path: &str) -> Result<MelodyTrack, AppError> {
             }
         }
     }
-    
+
     // 依時間排序並去重
     raw_tempos.sort_by_key(|&(tick, _)| tick);
-    
+
     // 3. 建立連續的 Tempo Map
     let mut tempo_map: Vec<TempoChange> = Vec::new();
     let mut current_secs = 0.0;
@@ -115,7 +115,7 @@ pub fn load_midi(path: &str) -> Result<MelodyTrack, AppError> {
         let mut current_track_notes: Vec<MelodyNote> = Vec::new();
         let mut curr_track_name: Option<String> = None;
         let mut abs_tick = 0;
-        
+
         // 簡單陣列記錄 128 個 MIDI pitch 目前開啟的 start_tick
         // MIDI 允許同音重複開啟，但此處簡化處理，同一個 key 一次只有一個 active
         let mut active_notes: [Option<u64>; 128] = [None; 128];
@@ -127,7 +127,10 @@ pub fn load_midi(path: &str) -> Result<MelodyTrack, AppError> {
                 TrackEventKind::Meta(MetaMessage::TrackName(name_bytes)) => {
                     curr_track_name = Some(String::from_utf8_lossy(name_bytes).to_string());
                 }
-                TrackEventKind::Midi { channel: _, message } => match message {
+                TrackEventKind::Midi {
+                    channel: _,
+                    message,
+                } => match message {
                     midly::MidiMessage::NoteOn { key, vel } => {
                         let pitch = key.as_int();
                         if vel.as_int() > 0 {
@@ -243,7 +246,7 @@ mod tests {
             start_time_secs: 0.0,
             secs_per_tick: (500_000.0 / 1_000_000.0) / 480.0,
         });
-        
+
         // 960 tick 後變更為 60 BPM = 1,000,000 us/q => 每 quarter note 1.0 秒
         // 960 tick = 2 quarter notes = 1.0s
         map.push(TempoChange {
@@ -268,7 +271,7 @@ mod tests {
         assert!((tick_to_secs(0) - 0.0).abs() < 1e-6);
         assert!((tick_to_secs(480) - 0.5).abs() < 1e-6);
         assert!((tick_to_secs(960) - 1.0).abs() < 1e-6);
-        
+
         // 此後每個 quarter note = 1.0s。 1440 = 960 + 480 => 1.0 + 1.0 = 2.0s
         assert!((tick_to_secs(1440) - 2.0).abs() < 1e-6);
     }

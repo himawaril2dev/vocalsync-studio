@@ -1,10 +1,10 @@
 <script lang="ts">
   import { invoke, convertFileSrc } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
-  import { loadedMedia } from "../stores/media";
+  import { loadedMedia, basename } from "../stores/media";
   import { lyricsLines, lyricsFileName, type LyricLine } from "../stores/lyrics";
-  import { resetBackingState, backingPitchTrack } from "../stores/pitch";
-  import { clearLoop } from "../stores/transport";
+  import { resetBackingState, backingPitchTrack, clearLiveVocalSamples } from "../stores/pitch";
+  import { clearLoop, hasRecording } from "../stores/transport";
   import {
     currentMelody,
     detectedMelodySourceKind,
@@ -63,8 +63,9 @@
     melody_source: string | null;
   }
 
-  /** 目前載入的伴奏路徑（給「重試載入 melody」按鈕用）*/
-  let currentBackingPath = $state<string | null>(null);
+  /** 目前載入的伴奏路徑（給「重試載入 melody」按鈕用）。
+   *  從 loadedMedia store 推導，切換 tab 後 SetupTab re-mount 也能恢復。 */
+  let currentBackingPath = $derived($loadedMedia?.file_path ?? null);
 
   /** AppSettings 子集合（只取此頁需要的欄位）*/
   interface PartialAppSettings {
@@ -78,8 +79,23 @@
     codec: string;
   }
 
-  let backingLoaded = $state(false);
-  let statusText = $state("請載入伴奏檔案開始練唱");
+  /** 伴奏是否已載入（從 store 推導，切 tab 不會丟失） */
+  let backingLoaded = $derived($loadedMedia !== null);
+
+  /** 載入過程中的暫時訊息（如「載入中...」「載入失敗：...」），
+   *  非 null 時優先顯示，否則由下方 statusText 從 store 自動推導。 */
+  let pendingStatusText = $state<string | null>(null);
+
+  let statusText = $derived.by(() => {
+    if (pendingStatusText !== null) return pendingStatusText;
+    const m = $loadedMedia;
+    if (!m) return "請載入伴奏檔案開始練唱";
+    const min = Math.floor(m.duration / 60);
+    const sec = Math.floor(m.duration % 60);
+    const kind = m.is_video ? "影片" : "音訊";
+    return `已載入${kind}：${m.file_name}（${min}:${sec.toString().padStart(2, "0")}）`;
+  });
+
   let lyricsStatus = $state("尚未載入歌詞");
 
   /** 影片內嵌字幕軌列表（載入影片後自動偵測） */
@@ -173,28 +189,30 @@
     });
     if (!path) return;
 
-    statusText = "載入中...";
+    pendingStatusText = "載入中...";
     // 載入新伴奏前先重設旋律相關狀態，避免上一首的灰藍線殘留
     resetBackingState();
     resetMelodyState();
     clearLoop();
+    // 換曲 → 舊錄音也會在後端被清掉（engine.load_backing 內已呼叫 clear_recording），
+    // 同步前端 hasRecording，避免「匯出/回放」按鈕誤開。
+    hasRecording.set(false);
+    clearLiveVocalSamples();
     try {
       const result: LoadResult = await invoke("load_backing", { path });
-      backingLoaded = true;
-      currentBackingPath = path;
 
+      const videoUrl = result.video_path ? convertFileSrc(result.video_path) : null;
       loadedMedia.set({
+        file_path: path,
+        file_name: basename(path),
         duration: result.duration,
         sample_rate: result.sample_rate,
         is_video: result.is_video,
         video_path: result.video_path,
-        video_url: result.video_path ? convertFileSrc(result.video_path) : null,
+        video_url: videoUrl,
       });
-
-      const min = Math.floor(result.duration / 60);
-      const sec = Math.floor(result.duration % 60);
-      const kind = result.is_video ? "影片" : "音訊";
-      statusText = `已載入${kind}（${min}:${sec.toString().padStart(2, "0")}）`;
+      // 載入成功 → 清掉暫時訊息，讓 statusText 從 store 推導
+      pendingStatusText = null;
 
       // 後端偵測結果（提示來源種類）
       detectedMelodySourceKind.set(result.melody_source);
@@ -219,7 +237,7 @@
       // 自動載入目標旋律
       await autoLoadMelodyForPath(path);
     } catch (err) {
-      statusText = `載入失敗：${err}`;
+      pendingStatusText = `載入失敗：${err}`;
     }
   }
 

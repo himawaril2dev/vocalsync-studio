@@ -33,6 +33,12 @@ impl PitchTrack {
     pub fn clear(&mut self) {
         self.samples.clear();
     }
+
+    /// 保留 timestamp < `cutoff_secs` 的樣本，捨棄之後的。
+    /// 用於續錄向前 seek 時同步截斷 pitch 軌跡，避免後段殘留。
+    pub fn truncate_after(&mut self, cutoff_secs: f64) {
+        self.samples.retain(|s| s.timestamp < cutoff_secs);
+    }
 }
 
 /// MIDI 音符編號轉頻率

@@ -116,10 +116,7 @@ fn parse_lrc(content: &str) -> Vec<LyricLine> {
     // 計算 end_ms（下一行的 start_ms，或最後一行 +5 秒）
     let mut lines: Vec<LyricLine> = Vec::with_capacity(entries.len());
     for (i, (start, text)) in entries.iter().enumerate() {
-        let end = entries
-            .get(i + 1)
-            .map(|(s, _)| *s)
-            .unwrap_or(start + 5000);
+        let end = entries.get(i + 1).map(|(s, _)| *s).unwrap_or(start + 5000);
         lines.push(LyricLine {
             start_ms: *start,
             end_ms: end,
@@ -243,9 +240,7 @@ fn parse_srt_time(s: &str) -> Option<u64> {
     let h: u64 = parts[0].parse().ok()?;
     let m: u64 = parts[1].parse().ok()?;
     let sec_part = parts[2].replace(',', ".");
-    let (sec_str, ms_str) = sec_part
-        .split_once('.')
-        .unwrap_or((sec_part.as_str(), "0"));
+    let (sec_str, ms_str) = sec_part.split_once('.').unwrap_or((sec_part.as_str(), "0"));
     let sec: u64 = sec_str.parse().ok()?;
     let ms: u64 = match ms_str.len() {
         0 => 0,
@@ -538,10 +533,7 @@ pub fn find_subtitle_files_filtered(dir: &str, base_name: Option<&str>) -> Vec<S
             }
             // 若指定 base_name，過濾不匹配的檔案
             if let Some(base) = base_name {
-                let stem = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("");
+                let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
                 if !stem.starts_with(base) {
                     continue;
                 }
@@ -678,7 +670,8 @@ mod tests {
 
     #[test]
     fn detects_slash_bilingual_lrc() {
-        let lrc = "[00:10.00]こんにちは / 你好\n[00:15.00]さようなら / 再見\n[00:20.00]ありがとう / 謝謝";
+        let lrc =
+            "[00:10.00]こんにちは / 你好\n[00:15.00]さようなら / 再見\n[00:20.00]ありがとう / 謝謝";
         let mut lines = parse_lrc(lrc);
         detect_and_split_bilingual(&mut lines);
         assert_eq!(lines.len(), 3);
@@ -748,7 +741,8 @@ mod tests {
 
     #[test]
     fn parse_vtt_empty_cues() {
-        let vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:04.000\n\n\n00:00:05.000 --> 00:00:08.000\n真正歌詞";
+        let vtt =
+            "WEBVTT\n\n00:00:01.000 --> 00:00:04.000\n\n\n00:00:05.000 --> 00:00:08.000\n真正歌詞";
         let lines = parse_vtt(vtt);
         // 空白 cue 應被跳過
         assert!(lines.iter().any(|l| l.text == "真正歌詞"));
@@ -759,7 +753,10 @@ mod tests {
         // 零秒
         assert_eq!(parse_lrc_time("00:00.00"), Some(0));
         // 99 分鐘 59 秒（極端值）
-        assert_eq!(parse_lrc_time("99:59.99"), Some(99 * 60 * 1000 + 59 * 1000 + 990));
+        assert_eq!(
+            parse_lrc_time("99:59.99"),
+            Some(99 * 60 * 1000 + 59 * 1000 + 990)
+        );
     }
 
     #[test]
@@ -772,7 +769,11 @@ mod tests {
     fn decode_text_strips_utf8_bom() {
         let with_bom = b"\xEF\xBB\xBF[00:10.00]BOM test";
         let decoded = decode_text(with_bom);
-        assert!(decoded.starts_with("[00:10.00]"), "BOM should be stripped, got: {}", &decoded[..20.min(decoded.len())]);
+        assert!(
+            decoded.starts_with("[00:10.00]"),
+            "BOM should be stripped, got: {}",
+            &decoded[..20.min(decoded.len())]
+        );
     }
 
     #[test]

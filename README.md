@@ -93,6 +93,38 @@ vocalsync-studio-tauri/
 | `+` | 升半音 |
 | `-` | 降半音 |
 
+## 問題回報
+
+使用遇到問題、想回報 bug 或有功能建議都很歡迎，可以透過以下兩種方式聯絡：
+
+- **GitHub Issues**：[vocalsync-studio/issues](https://github.com/himawaril2dev/vocalsync-studio/issues)
+- **電子信箱**：`himawaril2dev@gmail.com`
+
+回報時若能附上：作業系統版本、VocalSync Studio 版本、操作步驟與錯誤訊息截圖，會更容易定位問題。
+
+## 版本更新
+
+### v0.2.0（2026-04-19）
+
+**新增功能**
+- 錄音「暫停 / 繼續」按鈕：試聽與錄音都可暫停，暫停時可拖動進度條從目標位置續播 / 續錄（向前 seek 會跳確認對話框，避免誤觸）
+- 停止按鈕固定回到開頭，4 顆 Transport 按鈕統一 36×36 尺寸
+- 匯出自動平衡：以 RMS 比例讓人聲主導（係數 1.5，無上限鉗制），避免伴奏蓋過人聲
+- 「標準化」選項旁加上 tooltip 說明（滑鼠移到驚嘆號上顯示）
+- 伴奏 / 人聲 / 速度 / 移調皆提供獨立的 ↺ 重設按鈕
+
+**安全性強化**
+- 新增 `security` 模組：所有接收路徑的 Tauri command 都會做 path traversal / NUL / dash-prefix / 絕對路徑 / `..` 檢查
+- FFmpeg / FFprobe 參數注入防線，yt-dlp 擋空白字元 URL
+- CSP 收緊：新增 `object-src 'none'`、`base-uri 'self'`、`frame-ancestors 'none'`、`form-action 'self'`，並移除未使用的 `api.github.com` connect-src
+- Asset 協定 scope 拔掉 `$HOME/**`，只保留 Downloads / Desktop / Documents / Videos / Music / AppData / Temp
+- 移除前端未使用的 `shell:allow-open` 權限
+
+**錯誤修復與體驗調整**
+- 載入新伴奏時自動清空上一首的錄音緩衝與即時音高樣本，避免跨歌殘影
+- 關閉 `USE_PRODUCER_PATH` 停用中的 producer thread，減少多餘 CPU 與潛在競態
+- 修掉 RecordingTab 的 a11y warning：tooltip 觸發元素改用 `<button>`
+
 ## 授權
 
 本專案以 [MIT License](LICENSE) 開源發佈。

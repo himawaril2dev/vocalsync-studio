@@ -13,6 +13,7 @@
 
 use crate::core::ytdlp_engine;
 use crate::error::AppError;
+use crate::security;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -41,21 +42,26 @@ pub struct SubtitleStream {
 /// 使用 ffprobe JSON 輸出格式，解析所有 subtitle 類型的 stream。
 /// 如果找不到 ffprobe 或影片沒有字幕軌，回傳空 Vec。
 pub fn probe_subtitles(video_path: &str) -> Result<Vec<SubtitleStream>, AppError> {
+    // 🔴 Codex 安全審查 P1 #2：擋 subprocess argument injection
+    // （絕對路徑 + 不以 `-` 開頭，避免被 ffprobe 當 option）
+    security::validate_path_safe(video_path)?;
     // 🟡 Y1 修正：先驗證輸入路徑是否存在
     if !Path::new(video_path).exists() {
         return Err(AppError::Audio(format!("影片檔案不存在：{}", video_path)));
     }
 
-    let ffprobe = find_ffprobe().ok_or_else(|| {
-        AppError::Audio("找不到 ffprobe。請確認 FFmpeg 已安裝".into())
-    })?;
+    let ffprobe = find_ffprobe()
+        .ok_or_else(|| AppError::Audio("找不到 ffprobe。請確認 FFmpeg 已安裝".into()))?;
 
     let mut cmd = Command::new(&ffprobe);
     cmd.args([
-        "-v", "quiet",
-        "-print_format", "json",
+        "-v",
+        "quiet",
+        "-print_format",
+        "json",
         "-show_streams",
-        "-select_streams", "s", // 只顯示字幕軌
+        "-select_streams",
+        "s", // 只顯示字幕軌
         video_path,
     ]);
 
@@ -89,14 +95,18 @@ pub fn extract_subtitle(
     stream_index: usize,
     output_dir: Option<&str>,
 ) -> Result<PathBuf, AppError> {
+    // 🔴 Codex 安全審查 P1 #2：ffmpeg argument injection 防線
+    security::validate_path_safe(video_path)?;
+    if let Some(dir) = output_dir {
+        security::validate_path_safe(dir)?;
+    }
     // 🟡 Y1 修正：先驗證輸入路徑是否存在
     if !Path::new(video_path).exists() {
         return Err(AppError::Audio(format!("影片檔案不存在：{}", video_path)));
     }
 
-    let ffmpeg = ytdlp_engine::find_ffmpeg().ok_or_else(|| {
-        AppError::Audio("找不到 FFmpeg。請確認 FFmpeg 已安裝".into())
-    })?;
+    let ffmpeg = ytdlp_engine::find_ffmpeg()
+        .ok_or_else(|| AppError::Audio("找不到 FFmpeg。請確認 FFmpeg 已安裝".into()))?;
 
     let video = Path::new(video_path);
     let stem = video
@@ -105,11 +115,12 @@ pub fn extract_subtitle(
         .unwrap_or("subtitle");
 
     // 輸出到影片同目錄或指定目錄
-    let out_dir = output_dir
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            video.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."))
-        });
+    let out_dir = output_dir.map(PathBuf::from).unwrap_or_else(|| {
+        video
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."))
+    });
 
     let out_path = out_dir.join(format!("{}.sub{}.srt", stem, stream_index));
 
@@ -151,7 +162,11 @@ pub fn extract_subtitle(
 fn find_ffprobe() -> Option<PathBuf> {
     // 1. app bin 資料夾
     if let Some(bin_dir) = ytdlp_engine::get_app_bin_dir() {
-        let candidate = bin_dir.join(if cfg!(windows) { "ffprobe.exe" } else { "ffprobe" });
+        let candidate = bin_dir.join(if cfg!(windows) {
+            "ffprobe.exe"
+        } else {
+            "ffprobe"
+        });
         if candidate.exists() {
             return Some(candidate);
         }
@@ -165,7 +180,11 @@ fn find_ffprobe() -> Option<PathBuf> {
     // 3. 跟 ffmpeg 同目錄
     if let Some(ffmpeg) = ytdlp_engine::find_ffmpeg() {
         if let Some(dir) = ffmpeg.parent() {
-            let candidate = dir.join(if cfg!(windows) { "ffprobe.exe" } else { "ffprobe" });
+            let candidate = dir.join(if cfg!(windows) {
+                "ffprobe.exe"
+            } else {
+                "ffprobe"
+            });
             if candidate.exists() {
                 return Some(candidate);
             }
