@@ -1753,8 +1753,9 @@ fn run_playback(
     //   抑制力約 -60 dB/oct；+5 semi 邊界衰減 ~-22 dB → ~-37 dB（+15 dB 改善），
     //   針對 hi-hat/cymbal/sibilance 觸發的低頻 aliasing 殘音。CPU 小幅增加、零額外延遲。
     //   若過悶可回退成 3 級（改 array 長度 + init/clear/apply loop）。
-    let mut pitch_aa_filters: Vec<[Option<biquad::DirectForm1<f32>>; 5]> =
-        (0..backing_channels).map(|_| [None, None, None, None, None]).collect();
+    let mut pitch_aa_filters: Vec<[Option<biquad::DirectForm1<f32>>; 5]> = (0..backing_channels)
+        .map(|_| [None, None, None, None, None])
+        .collect();
     let mut pitch_aa_last_st: i32 = 0; // 追蹤上次的 pitch_st 以避免重複建 filter
 
     // P0: 追蹤 callback 端看到的 pitch 值，變動時需視為 seek 級 discontinuity
@@ -2407,8 +2408,9 @@ fn stretch_producer_worker(
     // 把 Nyquist 附近能量折射成 aliasing。每 channel 5 階 cascade（= 10 階 Butterworth）
     // (2026-04-15, 選項 1): 與 WSOLA 路徑同步升到 5 級；F POC 下此路徑雖未被 consumer
     //   取用（use_producer_path=false），但保持一致避免將來 revert F POC 時再追改。
-    let mut pitch_aa_filters: Vec<[Option<biquad::DirectForm1<f32>>; 5]> =
-        (0..backing_channels).map(|_| [None, None, None, None, None]).collect();
+    let mut pitch_aa_filters: Vec<[Option<biquad::DirectForm1<f32>>; 5]> = (0..backing_channels)
+        .map(|_| [None, None, None, None, None])
+        .collect();
     let mut pitch_aa_last_st: i32 = 0;
     let mut source_pos: u64 = 0;
     let mut chunk_buf: Vec<f32> = Vec::with_capacity(262_144);

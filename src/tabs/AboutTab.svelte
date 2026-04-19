@@ -1,15 +1,25 @@
 <script lang="ts">
+  import { invoke } from "@tauri-apps/api/core";
   import { showToast } from "../stores/toast";
 
-  const VERSION = "0.2.1";
+  const VERSION = "0.2.2";
   const KOFI_URL = "https://ko-fi.com/himawari168";
   const GITHUB_URL = "https://github.com/himawaril2dev/vocalsync-studio";
   const ISSUES_URL = "https://github.com/himawaril2dev/vocalsync-studio/issues";
   const SUPPORT_EMAIL = "himawaril2dev@gmail.com";
-  const RELEASES_API = "https://api.github.com/repos/himawaril2dev/vocalsync-studio/releases/latest";
+
+  /** 後端回傳的 release 資訊結構，對應 `updates_commands::ReleaseInfo` */
+  interface ReleaseInfo {
+    tag_name: string;
+    html_url: string;
+  }
 
   let checking = $state(false);
 
+  /**
+   * 比對兩個版本號：回傳 > 0 表示 latest 較新、= 0 相同、< 0 current 較新。
+   * 容忍前綴 "v" 與不同段數（如 "0.2.2" vs "v0.2.2.1"）。
+   */
   function compareVersions(current: string, latest: string): number {
     const a = current.replace(/^v/, "").split(".").map(Number);
     const b = latest.replace(/^v/, "").split(".").map(Number);
@@ -32,18 +42,12 @@
   async function checkForUpdates() {
     checking = true;
     try {
-      const resp = await fetch(RELEASES_API, {
-        headers: { "Accept": "application/vnd.github.v3+json" },
-      });
-      if (!resp.ok) {
-        showToast("無法連線到 GitHub，請稍後再試", "error");
-        return;
-      }
-      const data = await resp.json();
-      const latestTag = data.tag_name as string;
-      const cmp = compareVersions(VERSION, latestTag);
+      // v0.2.2 起走後端 ureq（參見 updates_commands.rs）。
+      // 不再從前端直接 fetch GitHub API，CSP connect-src 因此不必放寬。
+      const info = await invoke<ReleaseInfo>("check_latest_release");
+      const cmp = compareVersions(VERSION, info.tag_name);
       if (cmp > 0) {
-        showToast(`有新版本 ${latestTag} 可用，點選 GitHub 連結前往下載`, "info");
+        showToast(`有新版本 ${info.tag_name} 可用，點選 GitHub 連結前往下載`, "info");
       } else {
         showToast(`目前已是最新版本 v${VERSION}`, "success");
       }

@@ -82,6 +82,7 @@ pub fn run() {
             commands::download_commands::get_default_download_dir,
             commands::download_commands::install_ytdlp,
             commands::download_commands::install_ffmpeg,
+            commands::updates_commands::check_latest_release,
         ])
         .run(tauri::generate_context!())
         .expect("error while running VocalSync Studio");

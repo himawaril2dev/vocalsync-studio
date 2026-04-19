@@ -121,6 +121,12 @@ vocalsync-studio-tauri/
 
 ## 版本更新
 
+### v0.2.2（2026-04-19）
+
+**錯誤修復**
+- 關於頁的「檢查更新」按鈕在 v0.2.0 之後失效：CSP 收緊時把 `api.github.com` 從 `connect-src` 拿掉，前端 `fetch` 被攔。改走後端 Tauri command（`check_latest_release`）用 `ureq` 打 GitHub API，CSP 維持最小面
+- 後端新增 10 秒 timeout、帶規範的 User-Agent (`vocalsync-studio/x.y.z`)、完整的單元測試（解析、trim、缺欄位、畸形 JSON 各一）
+
 ### v0.2.1（2026-04-19）
 
 **錯誤修復**
