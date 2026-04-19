@@ -32,9 +32,26 @@ VocalSync Studio 是一款桌面應用程式，結合伴奏播放、即時錄音
 
 ## 安裝
 
-### 從 Release 下載
+### 從 Release 下載（推薦）
 
-前往 [Releases](https://github.com/himawaril2dev/vocalsync-studio/releases) 頁面，下載適合你系統的安裝檔。
+1. 前往 [Releases](https://github.com/himawaril2dev/vocalsync-studio/releases) 頁面，下載最新的 `VocalSync.Studio.Portable.x.y.z.zip`
+2. 解壓縮到任意位置（例如桌面或 `D:\Tools\`）
+3. 進入資料夾，雙擊 **`vocalsync-studio.exe`** 即可啟動
+
+資料夾內其他檔案是依賴，請保留不要移動：
+
+| 檔案 | 說明 |
+|---|---|
+| **`vocalsync-studio.exe`** | 主程式 ← 點這個啟動 |
+| `DirectML.dll` | ONNX Runtime 的 DirectX ML 加速 DLL（CREPE 音高偵測需要）|
+| `yt-dlp.exe` | YouTube 伴奏下載 CLI |
+| `models/crepe-tiny.onnx` | CREPE 音高偵測模型 |
+
+> **第一次執行的 Windows SmartScreen 警告**
+> 因為目前還沒有做 code-signing 數位簽章，Windows SmartScreen 可能會跳出「已防止 Windows 保護您的電腦」的警告。
+> 點警告視窗左上的 **「其他資訊」**，再按下方出現的 **「仍要執行」** 按鈕即可啟動。
+> 之後同一個 exe 不會再跳此警告。
+> 若對來源仍有疑慮，可以在 Release 頁下載 zip 後用 `certutil -hashfile "檔名.zip" SHA256` 比對 GitHub 上顯示的 digest。
 
 ### 從原始碼建置
 
