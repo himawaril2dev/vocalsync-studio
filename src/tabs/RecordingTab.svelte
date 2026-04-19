@@ -591,15 +591,6 @@
           aria-label={$isTransportPaused ? "繼續播放" : "試聽"}
         ><Icon name="play" size={14} /></button>
 
-        <!-- 錄音：idle → 新錄/續錄，paused(recording) → 續錄，paused(其他) → 從當前位置開錄 -->
-        <button
-          class="t-btn rec"
-          onclick={startRecording}
-          disabled={!$loadedMedia || $isTransportRunning}
-          title="錄音 (R)"
-          aria-label="錄音"
-        ><Icon name="record" size={14} /></button>
-
         <!-- 暫停：running 時可按暫停；paused 時保持 II 圖示且 disabled（由試聽/錄音鍵繼續）-->
         <button
           class="t-btn pause"
@@ -617,6 +608,15 @@
           title="停止 (Esc)"
           aria-label="停止並回到開頭"
         ><Icon name="stop" size={14} /></button>
+
+        <!-- 錄音：idle → 新錄/續錄，paused(recording) → 續錄，paused(其他) → 從當前位置開錄 -->
+        <button
+          class="t-btn rec"
+          onclick={startRecording}
+          disabled={!$loadedMedia || $isTransportRunning}
+          title="錄音 (R)"
+          aria-label="錄音"
+        ><Icon name="record" size={14} /></button>
       </div>
 
       <div class="state-chip">

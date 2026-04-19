@@ -121,6 +121,22 @@ vocalsync-studio-tauri/
 
 ## 版本更新
 
+### v0.2.1（2026-04-19）
+
+**錯誤修復**
+- 試聽暫停時影片沒跟著停：`$effect` 重跑時誤觸發 `videoEl.play()` 把畫面喚醒，現在 idle / paused 都正確 pause，且 paused 下拖動進度條會同步跳畫格
+- 播放中拖動進度條偶爾卡住：slider 被後端 ~20 Hz 推送的 `elapsed` 覆蓋回去，加 `isSeekDragging` 本地緩衝，拖動中不被覆蓋
+
+**UI / UX 調整**
+- 四顆 Transport 按鈕順序改為：▶ 試聽 → ❚❚ 暫停 → ■ 停止 → ● 錄音（錄音移到最右邊）
+- 暫停鈕永遠顯示 ❚❚ 圖示：running 時可按、paused 時 disabled，由試聽鈵接手「繼續」
+- 試聽鈕在 paused 狀態可按，點擊會從暫停位置繼續原模式
+
+**文件補強**
+- README 新增完整的第三方元件授權說明（yt-dlp / FFmpeg / CREPE / Tauri 等）
+- 明確指引免安裝版啟動步驟與 Windows SmartScreen 警告處理
+- About 頁授權卡片同步展開，加上免責聲明區塊
+
 ### v0.2.0（2026-04-19）
 
 **新增功能**
