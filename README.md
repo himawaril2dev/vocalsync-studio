@@ -121,6 +121,12 @@ vocalsync-studio-tauri/
 
 ## 版本更新
 
+### v0.2.3（2026-04-19）
+
+**清理**
+- 移除 `Cargo.toml` / `security.rs` 測試中洩漏的 Windows 使用者名，統一使用 `himawari168` / `testuser` 通用識別
+- 為 repo 公開前的最後清理版本
+
 ### v0.2.2（2026-04-19）
 
 **錯誤修復**

@@ -101,7 +101,7 @@ mod tests {
     fn accepts_normal_absolute_paths() {
         // 不驗證檔案是否真的存在，只看路徑格式
         #[cfg(windows)]
-        assert!(validate_path_safe("C:\\Users\\himawari168\\video.mp4").is_ok());
+        assert!(validate_path_safe("C:\\Users\\testuser\\video.mp4").is_ok());
         #[cfg(not(windows))]
         assert!(validate_path_safe("/home/user/video.mp4").is_ok());
     }

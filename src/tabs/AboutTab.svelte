@@ -2,7 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { showToast } from "../stores/toast";
 
-  const VERSION = "0.2.2";
+  const VERSION = "0.2.3";
   const KOFI_URL = "https://ko-fi.com/himawari168";
   const GITHUB_URL = "https://github.com/himawaril2dev/vocalsync-studio";
   const ISSUES_URL = "https://github.com/himawaril2dev/vocalsync-studio/issues";
