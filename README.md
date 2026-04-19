@@ -144,10 +144,40 @@ vocalsync-studio-tauri/
 
 ## 授權
 
-本專案以 [MIT License](LICENSE) 開源發佈。
+本專案以 [MIT License](LICENSE) 開源發佈，可自由使用、修改與散佈，無任何擔保。
 
-CREPE 音高偵測模型由 NYU 開發，同樣以 MIT License 授權。
-yt-dlp 與 FFmpeg 為獨立的第三方工具，各有其授權條款。
+### 第三方元件授權
+
+| 元件 | 授權 | 在本專案中的用途 |
+|---|---|---|
+| [CREPE](https://github.com/marl/crepe) | MIT | AI 音高偵測模型（NYU MARL 開發，`crepe-tiny.onnx`）|
+| [ONNX Runtime](https://github.com/microsoft/onnxruntime) | MIT | 執行 CREPE 模型的推論引擎 |
+| [DirectML](https://github.com/microsoft/DirectML) | MIT | Windows 下的 ML 加速層（`DirectML.dll`）|
+| [Tauri](https://github.com/tauri-apps/tauri) | MIT / Apache-2.0 | 桌面應用框架 |
+| [Svelte](https://github.com/sveltejs/svelte) | MIT | 前端 UI 框架 |
+| [Symphonia](https://github.com/pdeljanov/Symphonia) / [cpal](https://github.com/RustAudio/cpal) / [rustfft](https://github.com/ejmahler/RustFFT) / [biquad](https://github.com/korken89/biquad-rs) 等 Rust crate | MIT / Apache-2.0 | 音訊解碼、錄放音、訊號處理 |
+
+### yt-dlp（Unlicense / 公有領域）
+
+[yt-dlp](https://github.com/yt-dlp/yt-dlp) 是 youtube-dl 的社群維護 fork，以 **[The Unlicense](https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE)** 釋出（等同公有領域，CC0-like）。
+
+- **使用方式**：本專案以 **subprocess / CLI 方式**呼叫 `yt-dlp.exe`，不做靜態連結、不修改其原始碼
+- **來源**：`yt-dlp.exe` 為從 [yt-dlp 官方 Releases](https://github.com/yt-dlp/yt-dlp/releases) 下載的未修改二進位檔
+- **使用者責任**：透過 yt-dlp 下載的內容是否合乎當地法律（著作權、YouTube 服務條款等），由使用者自行負責
+- 官方完整授權文字：<https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE>
+
+### FFmpeg（LGPL 2.1+ / 可能為 GPL）
+
+[FFmpeg](https://ffmpeg.org/) 預設以 **[LGPL-2.1-or-later](https://ffmpeg.org/legal.html)** 授權釋出；若啟用特定編碼器（如 libx264、libx265）則需改為 **GPL-2.0-or-later**。
+
+- **使用方式**：本專案以 **subprocess / CLI 方式**呼叫 `ffmpeg` / `ffprobe` 執行檔，不靜態連結 libavcodec / libavformat 等函式庫；因此本專案本體不受 LGPL / GPL 傳染
+- **來源**：預設從 [gyan.dev FFmpeg Windows builds](https://www.gyan.dev/ffmpeg/builds/) 或系統既有安裝載入。請使用者自行留意所下載 build 的具體授權版本（essentials build 通常為 LGPL；full build 含 GPL 組件）
+- **修改 / 再散佈**：若你要把 FFmpeg binaries 連同本專案一起散佈，需遵守 FFmpeg 的授權條款（附上授權文字、提供原始碼取得方式等）。本倉庫內**未**附 ffmpeg binaries，避免授權衝突
+- 官方完整授權文字：<https://ffmpeg.org/legal.html>
+
+### 免責聲明
+
+VocalSync Studio 僅為本地練唱輔助工具。使用者透過本工具下載、處理、轉錄的任何音訊內容，其著作權與合法使用責任均歸使用者本人。開發者不對使用者的任何不當使用負責。
 
 ## 支持開發
 

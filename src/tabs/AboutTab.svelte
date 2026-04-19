@@ -122,8 +122,34 @@
       你可以自由使用、修改及散佈本軟體，但不提供任何擔保。
     </p>
     <p class="license-note">
-      本軟體使用的 CREPE 音高偵測模型由 NYU 開發，同樣以 MIT License 授權。
-      yt-dlp 與 FFmpeg 為獨立的第三方工具，各有其授權條款。
+      本軟體使用的 CREPE 音高偵測模型由 NYU MARL 開發，同樣以 MIT License 授權。
+      Tauri、Svelte、Symphonia、cpal、rustfft 等主要框架與函式庫皆為 MIT / Apache-2.0。
+    </p>
+
+    <h3 class="license-subheading">yt-dlp（Unlicense）</h3>
+    <p class="license-note">
+      <a href="https://github.com/yt-dlp/yt-dlp" target="_blank" rel="noopener">yt-dlp</a>
+      以 <a href="https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE" target="_blank" rel="noopener">The Unlicense</a>
+      釋出（等同公有領域）。本程式以 CLI subprocess 方式呼叫未修改的
+      <code>yt-dlp.exe</code>，不做靜態連結。透過 yt-dlp 下載的內容是否
+      符合當地著作權與 YouTube 服務條款，由使用者自行負責。
+    </p>
+
+    <h3 class="license-subheading">FFmpeg（LGPL 2.1+ / 可能為 GPL）</h3>
+    <p class="license-note">
+      <a href="https://ffmpeg.org/" target="_blank" rel="noopener">FFmpeg</a>
+      預設以
+      <a href="https://ffmpeg.org/legal.html" target="_blank" rel="noopener">LGPL-2.1-or-later</a>
+      授權；若啟用 libx264 / libx265 等特定編碼器則改為 GPL-2.0-or-later。
+      本程式以 CLI subprocess 方式呼叫 <code>ffmpeg</code> / <code>ffprobe</code>，
+      不靜態連結 libav* 函式庫；本倉庫內未附帶 FFmpeg binaries。
+      請自行留意所用 build 的具體授權版本（essentials build 通常為 LGPL；
+      full build 含 GPL 組件）。
+    </p>
+
+    <p class="license-disclaimer">
+      免責聲明：本工具僅為本地練唱輔助。透過本工具處理、下載的音訊內容，
+      其著作權與合法使用責任均歸使用者本人，開發者不對任何不當使用負責。
     </p>
   </div>
 
@@ -382,8 +408,44 @@
   }
 
   .license-note {
-    margin: 0;
+    margin: 0 0 var(--space-sm);
     font-size: 12px;
+    color: var(--color-text-muted);
+    line-height: 1.7;
+  }
+
+  .license-note a {
+    color: var(--color-info);
+    text-decoration: none;
+  }
+
+  .license-note a:hover {
+    text-decoration: underline;
+  }
+
+  .license-note code {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 1px 4px;
+    background: var(--color-bg-hover);
+    border-radius: var(--radius-sm);
+    color: var(--color-text);
+  }
+
+  .license-subheading {
+    margin: var(--space-md) 0 var(--space-xs);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--color-text);
+  }
+
+  .license-disclaimer {
+    margin: var(--space-md) 0 0;
+    padding: var(--space-sm) var(--space-md);
+    background: var(--color-bg-hover);
+    border-left: 3px solid var(--color-accent);
+    border-radius: var(--radius-sm);
+    font-size: 11px;
     color: var(--color-text-muted);
     line-height: 1.6;
   }
