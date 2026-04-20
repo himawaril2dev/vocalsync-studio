@@ -127,7 +127,7 @@ vocalsync-studio-tauri/
 
 | 元件 | 授權 | 在本專案中的用途 |
 |---|---|---|
-| [CREPE](https://github.com/marl/crepe) | MIT | AI 音高偵測模型（NYU MARL 開發，`crepe-tiny.onnx`）|
+| [CREPE](https://github.com/marl/crepe) / [onnxcrepe v1.1.0](https://github.com/yqzhishen/onnxcrepe) | MIT | AI 音高偵測模型（NYU MARL 開發；ONNX 轉換版本來自 onnxcrepe v1.1.0）|
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime) | MIT | 執行 CREPE 模型的推論引擎 |
 | [DirectML](https://github.com/microsoft/DirectML) | MIT | Windows 下的 ML 加速層（`DirectML.dll`）|
 | [Tauri](https://github.com/tauri-apps/tauri) | MIT / Apache-2.0 | 桌面應用框架 |
