@@ -119,57 +119,6 @@ vocalsync-studio-tauri/
 
 回報時若能附上：作業系統版本、VocalSync Studio 版本、操作步驟與錯誤訊息截圖，會更容易定位問題。
 
-## 版本更新
-
-### v0.2.3（2026-04-19）
-
-**清理**
-- 移除 `Cargo.toml` / `security.rs` 測試中洩漏的 Windows 使用者名，統一使用 `himawari168` / `testuser` 通用識別
-- 為 repo 公開前的最後清理版本
-
-### v0.2.2（2026-04-19）
-
-**錯誤修復**
-- 關於頁的「檢查更新」按鈕在 v0.2.0 之後失效：CSP 收緊時把 `api.github.com` 從 `connect-src` 拿掉，前端 `fetch` 被攔。改走後端 Tauri command（`check_latest_release`）用 `ureq` 打 GitHub API，CSP 維持最小面
-- 後端新增 10 秒 timeout、帶規範的 User-Agent (`vocalsync-studio/x.y.z`)、完整的單元測試（解析、trim、缺欄位、畸形 JSON 各一）
-
-### v0.2.1（2026-04-19）
-
-**錯誤修復**
-- 試聽暫停時影片沒跟著停：`$effect` 重跑時誤觸發 `videoEl.play()` 把畫面喚醒，現在 idle / paused 都正確 pause，且 paused 下拖動進度條會同步跳畫格
-- 播放中拖動進度條偶爾卡住：slider 被後端 ~20 Hz 推送的 `elapsed` 覆蓋回去，加 `isSeekDragging` 本地緩衝，拖動中不被覆蓋
-
-**UI / UX 調整**
-- 四顆 Transport 按鈕順序改為：▶ 試聽 → ❚❚ 暫停 → ■ 停止 → ● 錄音（錄音移到最右邊）
-- 暫停鈕永遠顯示 ❚❚ 圖示：running 時可按、paused 時 disabled，由試聽鈵接手「繼續」
-- 試聽鈕在 paused 狀態可按，點擊會從暫停位置繼續原模式
-
-**文件補強**
-- README 新增完整的第三方元件授權說明（yt-dlp / FFmpeg / CREPE / Tauri 等）
-- 明確指引免安裝版啟動步驟與 Windows SmartScreen 警告處理
-- About 頁授權卡片同步展開，加上免責聲明區塊
-
-### v0.2.0（2026-04-19）
-
-**新增功能**
-- 錄音「暫停 / 繼續」按鈕：試聽與錄音都可暫停，暫停時可拖動進度條從目標位置續播 / 續錄（向前 seek 會跳確認對話框，避免誤觸）
-- 停止按鈕固定回到開頭，4 顆 Transport 按鈕統一 36×36 尺寸
-- 匯出自動平衡：以 RMS 比例讓人聲主導（係數 1.5，無上限鉗制），避免伴奏蓋過人聲
-- 「標準化」選項旁加上 tooltip 說明（滑鼠移到驚嘆號上顯示）
-- 伴奏 / 人聲 / 速度 / 移調皆提供獨立的 ↺ 重設按鈕
-
-**安全性強化**
-- 新增 `security` 模組：所有接收路徑的 Tauri command 都會做 path traversal / NUL / dash-prefix / 絕對路徑 / `..` 檢查
-- FFmpeg / FFprobe 參數注入防線，yt-dlp 擋空白字元 URL
-- CSP 收緊：新增 `object-src 'none'`、`base-uri 'self'`、`frame-ancestors 'none'`、`form-action 'self'`，並移除未使用的 `api.github.com` connect-src
-- Asset 協定 scope 拔掉 `$HOME/**`，只保留 Downloads / Desktop / Documents / Videos / Music / AppData / Temp
-- 移除前端未使用的 `shell:allow-open` 權限
-
-**錯誤修復與體驗調整**
-- 載入新伴奏時自動清空上一首的錄音緩衝與即時音高樣本，避免跨歌殘影
-- 關閉 `USE_PRODUCER_PATH` 停用中的 producer thread，減少多餘 CPU 與潛在競態
-- 修掉 RecordingTab 的 a11y warning：tooltip 觸發元素改用 `<button>`
-
 ## 授權
 
 本專案以 [MIT License](LICENSE) 開源發佈，可自由使用、修改與散佈，無任何擔保。
