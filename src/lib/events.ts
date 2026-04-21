@@ -33,7 +33,6 @@ import {
 import { calibrationStatus } from "../stores/settings";
 import { showToast } from "../stores/toast";
 import { get } from "svelte/store";
-import { tSync } from "../i18n";
 
 interface CalibrationStartedPayload {
   bpm: number;
@@ -146,7 +145,7 @@ export async function setupEventListeners(): Promise<void> {
         // 進入分析狀態時暫時清掉舊的灰藍線與自由模式狀態
         backingPitchTrack.set(null);
         freeMode.set(false);
-        freeModeReason.set("");
+        freeModeReason.set(null);
       },
     ),
   );
@@ -165,14 +164,18 @@ export async function setupEventListeners(): Promise<void> {
             backingPitchTrack.set(track);
             backingPitchQuality.set(e.payload);
             freeMode.set(false);
-            freeModeReason.set("");
+            freeModeReason.set(null);
           }
         } catch (err) {
           // 伴奏旋律拉取失敗時優雅降級為自由模式
           console.warn("[backing_pitch] 旋律軌跡載入失敗，降級為自由模式", err);
           backingPitchTrack.set(null);
           freeMode.set(true);
-          freeModeReason.set(tSync("pitchTimeline.banner.freeMode.loadFailed"));
+          // 存 i18n key 而非已翻譯字串，讓 PitchTimeline 的 $derived 跟著 locale 重翻
+          freeModeReason.set({
+            kind: "i18n",
+            key: "pitchTimeline.banner.freeMode.loadFailed",
+          });
         }
       },
     ),
@@ -193,7 +196,8 @@ export async function setupEventListeners(): Promise<void> {
           elapsed_secs: e.payload.elapsed_secs,
         });
         freeMode.set(true);
-        freeModeReason.set(e.payload.reason);
+        // 後端 reason 是即時產生的純文字，用 kind: "text" 保留原樣
+        freeModeReason.set({ kind: "text", text: e.payload.reason });
       },
     ),
   );

@@ -138,7 +138,15 @@
     const translate = $t;
     const m = $melodyStatus;
     if (!m) return translate("setup.melody.status.empty");
-    const base = translate(m.key, m.vars);
+    let mergedVars = m.vars;
+    if (m.nestedVars) {
+      const translated: Record<string, string | number> = { ...(m.vars ?? {}) };
+      for (const [field, desc] of Object.entries(m.nestedVars)) {
+        translated[field] = translate(desc.key, desc.vars);
+      }
+      mergedVars = translated;
+    }
+    const base = translate(m.key, mergedVars);
     if (m.appendKey) {
       return translate(m.appendKey, { ...(m.appendVars ?? {}), status: base });
     }

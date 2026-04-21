@@ -20,6 +20,7 @@
     type MelodyTrack,
     type AlignmentResult,
     type MelodyStatusMessage,
+    type TranslatableDescriptor,
   } from "../stores/melody";
   import { get } from "svelte/store";
   import {
@@ -127,7 +128,17 @@
     const translate = $t;
     const m = $melodyStatus;
     if (!m) return translate("setup.melody.status.empty");
-    const base = translate(m.key, m.vars);
+    // 先把 nestedVars（如 source descriptor）翻成文字，再 merge 進外層 vars，
+    // 這樣切換 locale 時連內層片段也會跟著重翻。
+    let mergedVars = m.vars;
+    if (m.nestedVars) {
+      const translated: Record<string, string | number> = { ...(m.vars ?? {}) };
+      for (const [field, desc] of Object.entries(m.nestedVars)) {
+        translated[field] = translate(desc.key, desc.vars);
+      }
+      mergedVars = translated;
+    }
+    const base = translate(m.key, mergedVars);
     if (m.appendKey) {
       return translate(m.appendKey, { ...(m.appendVars ?? {}), status: base });
     }
@@ -299,10 +310,11 @@
       );
       if (track) {
         await commitMelodyTrack(track, null);
-        const sourceLabel = describeMelodySource(track);
+        const sourceDescriptor = describeMelodySource(track);
         melodyStatus.set({
           key: "setup.melody.status.autoLoaded",
-          vars: { source: sourceLabel, n: track.notes.length },
+          vars: { n: track.notes.length },
+          nestedVars: { source: sourceDescriptor },
         });
       } else {
         melodyStatus.set({ key: "setup.melody.status.noAutoDetect" });
@@ -331,10 +343,11 @@
         path,
       });
       await commitMelodyTrack(track, path);
-      const sourceLabel = describeMelodySource(track);
+      const sourceDescriptor = describeMelodySource(track);
       melodyStatus.set({
         key: "setup.melody.status.loaded",
-        vars: { source: sourceLabel, n: track.notes.length },
+        vars: { n: track.notes.length },
+        nestedVars: { source: sourceDescriptor },
       });
       if (currentBackingPath) {
         await runAutoAlignment(path, currentBackingPath);
@@ -373,13 +386,13 @@
       });
       // Vocals 與練唱伴奏通常來自不同檔，需要做自動對齊
       await commitMelodyTrack(track, path);
-      const sourceLabel = describeMelodySource(track);
+      const sourceDescriptor = describeMelodySource(track);
       melodyStatus.set({
         key: "setup.melody.status.vocalsLoaded",
         vars: {
-          source: sourceLabel,
           n: track.raw_pitch_track?.length ?? track.notes.length,
         },
+        nestedVars: { source: sourceDescriptor },
       });
       // 若練唱伴奏已載入，自動跑對齊
       if (currentBackingPath) {
@@ -518,16 +531,30 @@
     refreshBackingPitchFromMelody();
   });
 
-  function describeMelodySource(track: MelodyTrack): string {
+  /**
+   * 回傳一個「待翻譯的 descriptor」，而非立刻翻譯後的字串。
+   * 這樣 melodyStatus 存進 store 之後，使用者切換 locale 時
+   * `melodyStatusText` 的 `$derived.by` 會重新翻譯這段，不會卡舊語言。
+   */
+  function describeMelodySource(track: MelodyTrack): TranslatableDescriptor {
     const src = track.source;
     if (src.type === "midi") {
-      return tSync("setup.melody.source.midi", { n: src.track_index + 1 });
+      return {
+        key: "setup.melody.source.midi",
+        vars: { n: src.track_index + 1 },
+      };
     }
     if (src.type === "imported_vocals") {
       const voiced = (src.voiced_ratio * 100).toFixed(0);
-      return tSync("setup.melody.source.importedVocals", { ratio: voiced });
+      return {
+        key: "setup.melody.source.importedVocals",
+        vars: { ratio: voiced },
+      };
     }
-    return tSync("setup.melody.source.separated", { model: src.model });
+    return {
+      key: "setup.melody.source.separated",
+      vars: { model: src.model },
+    };
   }
 
   /** 人類可讀的對齊結果描述 */

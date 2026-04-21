@@ -44,8 +44,19 @@ export const backingPitchQuality = writable<BackingPitchQuality | null>(null);
 /** 自由模式狀態：true 代表伴奏沒有可偵測的主旋律，前端應隱藏目標旋律線 */
 export const freeMode = writable<boolean>(false);
 
-/** 自由模式提示文字（給 UI 顯示「為什麼進入自由模式」）*/
-export const freeModeReason = writable<string>("");
+/**
+ * 自由模式提示的結構化表示。
+ * - `{ kind: "i18n", key, vars }`：可翻譯的 key，切 locale 時 UI 要重翻
+ * - `{ kind: "text", text }`：後端傳來的 raw 字串（payload.reason），原樣顯示
+ * - `null`：沒提示
+ */
+export type FreeModeReason =
+  | null
+  | { kind: "i18n"; key: string; vars?: Record<string, string | number> }
+  | { kind: "text"; text: string };
+
+/** 自由模式提示（給 UI 顯示「為什麼進入自由模式」）*/
+export const freeModeReason = writable<FreeModeReason>(null);
 
 /**
  * 伴奏旋律分析中狀態：
@@ -102,6 +113,6 @@ export function resetBackingState() {
   backingPitchQuality.set(null);
   backingPitchAnalyzing.set(null);
   freeMode.set(false);
-  freeModeReason.set("");
+  freeModeReason.set(null);
   resetKeyDetection();
 }

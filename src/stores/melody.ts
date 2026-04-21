@@ -67,11 +67,26 @@ export const detectedMelodySourceKind = writable<string | null>(null);
  * - `{ key, vars }`：一般狀態訊息
  * - `{ key, vars, appendKey, appendVars }`：包裹式訊息（如「已載入 + 自動對齊失敗」）
  */
+/**
+ * 巢狀翻譯描述子：代表一個「待翻譯的片段」。
+ * 用在 nestedVars 裡，讓消費端在 locale 變動時重新翻譯，避免卡舊語言。
+ */
+export interface TranslatableDescriptor {
+  key: string;
+  vars?: Record<string, string | number>;
+}
+
 export type MelodyStatusMessage =
   | null
   | {
       key: string;
       vars?: Record<string, string | number>;
+      /**
+       * 子片段翻譯：key 代表要代入 vars 的欄位名（如 "source"），
+       * value 是 TranslatableDescriptor。消費端先翻譯每個 descriptor，
+       * 再 merge 進 vars，最後翻譯外層 key。
+       */
+      nestedVars?: Record<string, TranslatableDescriptor>;
       appendKey?: string;
       appendVars?: Record<string, string | number>;
     };

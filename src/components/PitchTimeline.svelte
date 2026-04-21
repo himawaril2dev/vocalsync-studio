@@ -20,14 +20,24 @@
 
   // 反應式訂閱：自由模式 / 分析中狀態切換時重新調整 UI
   let isFreeMode = $state(false);
-  let freeReason = $state("");
   let analyzing = $state<BackingPitchAnalyzing | null>(null);
   // 分析中經過秒數（每秒更新一次，給橫幅顯示「已 X 秒」）
   let analyzingSeconds = $state(0);
   let analyzingTimer: number | null = null;
 
   const unsubFree = freeMode.subscribe((v) => (isFreeMode = v));
-  const unsubReason = freeModeReason.subscribe((v) => (freeReason = v));
+
+  /**
+   * 把結構化 freeModeReason 翻成顯示字串。
+   * 綁定 $t 讓 locale 切換時自動重翻，避免卡舊語言。
+   */
+  let freeReason = $derived.by(() => {
+    const translate = $t;
+    const r = $freeModeReason;
+    if (!r) return "";
+    if (r.kind === "i18n") return translate(r.key, r.vars);
+    return r.text;
+  });
   const unsubAnalyzing = backingPitchAnalyzing.subscribe((v) => {
     analyzing = v;
     if (analyzingTimer !== null) {
@@ -307,7 +317,6 @@
     if (rafId !== null) cancelAnimationFrame(rafId);
     if (analyzingTimer !== null) clearInterval(analyzingTimer);
     unsubFree();
-    unsubReason();
     unsubAnalyzing();
   });
 </script>
