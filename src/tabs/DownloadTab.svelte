@@ -25,6 +25,7 @@
     type InstallProgress,
   } from "../stores/download";
   import { lyricsLines, lyricsFileName, type LyricLine } from "../stores/lyrics";
+  import { t, tSync } from "../i18n";
 
   // ── 表單狀態 ──────────────────────────────────────────────────
 
@@ -70,7 +71,7 @@
       ffmpegInstallProgress.set(event.payload);
     });
     } catch (e) {
-      showToast(`初始化下載工具失敗：${e}`, "error");
+      showToast(tSync("download.result.initFailed", { error: String(e) }), "error");
     }
   });
 
@@ -111,7 +112,7 @@
   async function selectOutputDir(): Promise<void> {
     const selected = await open({
       directory: true,
-      title: "選擇下載目錄",
+      title: tSync("download.form.outputDir.dialog"),
     });
     if (selected) {
       outputDir = selected as string;
@@ -125,7 +126,7 @@
     if (!outputDir.trim()) {
       lastResult.set({
         success: false,
-        message: "請先選擇輸出目錄",
+        message: tSync("download.result.noOutputDir"),
         output_dir: "",
         subtitle_paths: [],
       });
@@ -187,7 +188,7 @@
       installProgress.set({
         percent: 0,
         status: "error",
-        message: `安裝失敗: ${message}`,
+        message: tSync("download.result.installFailed", { error: message }),
       });
     } finally {
       isInstalling.set(false);
@@ -210,7 +211,7 @@
       ffmpegInstallProgress.set({
         percent: 0,
         status: "error",
-        message: `安裝失敗: ${message}`,
+        message: tSync("download.result.installFailed", { error: message }),
       });
     } finally {
       isInstallingFfmpeg.set(false);
@@ -221,9 +222,9 @@
 
   function urlTypeLabel(type: string | null): string {
     switch (type) {
-      case "video": return "影片";
-      case "playlist": return "播放清單";
-      case "channel": return "頻道";
+      case "video": return tSync("download.urlType.video");
+      case "playlist": return tSync("download.urlType.playlist");
+      case "channel": return tSync("download.urlType.channel");
       default: return "";
     }
   }
@@ -238,17 +239,17 @@
   async function loadSubtitleAsLyrics(path: string): Promise<void> {
     if (subtitleLoading) return; // Y3: 防止重複點擊 race condition
     subtitleLoading = true;
-    subtitleLoadMsg = "載入中...";
+    subtitleLoadMsg = tSync("download.subtitle.loadingAsLyrics");
     try {
       const lines = await invoke<LyricLine[]>("load_lyrics", { path });
       lyricsLines.set(lines);
       // 取檔名部分作為歌詞檔名
       const parts = path.replace(/\\/g, "/").split("/");
       lyricsFileName.set(parts[parts.length - 1] ?? path);
-      subtitleLoadMsg = `已載入 ${lines.length} 行歌詞`;
+      subtitleLoadMsg = tSync("download.subtitle.loadedAsLyrics", { count: lines.length });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      subtitleLoadMsg = `載入失敗：${message}`;
+      subtitleLoadMsg = tSync("download.subtitle.loadFailed", { error: message });
     } finally {
       subtitleLoading = false;
     }
@@ -268,11 +269,11 @@
     <div class="tool-status">
       <div class="status-item" class:ok={$toolStatus.ytdlp_available} class:missing={!$toolStatus.ytdlp_available}>
         <span class="status-dot"></span>
-        <span>yt-dlp {$toolStatus.ytdlp_available ? $toolStatus.ytdlp_version ?? "" : "未安裝"}</span>
+        <span>yt-dlp {$toolStatus.ytdlp_available ? $toolStatus.ytdlp_version ?? "" : $t("download.tool.ytdlp.notInstalled")}</span>
       </div>
       <div class="status-item" class:ok={$toolStatus.ffmpeg_available} class:missing={!$toolStatus.ffmpeg_available}>
         <span class="status-dot"></span>
-        <span>FFmpeg {$toolStatus.ffmpeg_available ? "已安裝" : "未安裝"}</span>
+        <span>FFmpeg {$toolStatus.ffmpeg_available ? $t("download.tool.ffmpeg.installed") : $t("download.tool.ffmpeg.notInstalled")}</span>
       </div>
     </div>
 
@@ -280,13 +281,13 @@
       <div class="warning-box">
         {#if !$toolStatus.ytdlp_available}
           <div class="install-section">
-            <p>yt-dlp 尚未安裝。點擊按鈕即可自動下載（約 20 MB）。</p>
+            <p>{$t("download.tool.ytdlp.hint")}</p>
             <button
               class="btn btn-install"
               onclick={installYtdlp}
               disabled={$isInstalling}
             >
-              {$isInstalling ? "安裝中..." : "自動安裝 yt-dlp"}
+              {$isInstalling ? $t("download.tool.ytdlp.installing") : $t("download.tool.ytdlp.install")}
             </button>
             {#if $installProgress}
               <div class="install-status">
@@ -301,19 +302,19 @@
                 <span class="install-message">{$installProgress.message}</span>
               </div>
             {/if}
-            <p class="hint-text">或手動安裝：<code>pip install yt-dlp</code> / <code>choco install yt-dlp</code></p>
+            <p class="hint-text">{$t("download.tool.ytdlp.manualHint")}</p>
           </div>
         {/if}
 
         {#if !$toolStatus.ffmpeg_available}
           <div class="install-section">
-            <p>FFmpeg 尚未安裝。影片下載和音訊轉檔需要 FFmpeg。</p>
+            <p>{$t("download.tool.ffmpeg.hint")}</p>
             <button
               class="btn btn-install"
               onclick={installFfmpeg}
               disabled={$isInstallingFfmpeg}
             >
-              {$isInstallingFfmpeg ? "安裝中..." : "自動安裝 FFmpeg（約 80 MB）"}
+              {$isInstallingFfmpeg ? $t("download.tool.ytdlp.installing") : $t("download.tool.ffmpeg.install")}
             </button>
             {#if $ffmpegInstallProgress}
               <div class="install-status">
@@ -336,13 +337,13 @@
 
   <!-- URL 輸入 -->
   <div class="form-group">
-    <label class="form-label" for="url-input">YouTube 網址</label>
+    <label class="form-label" for="url-input">{$t("download.form.url.label")}</label>
     <div class="url-row">
       <input
         id="url-input"
         type="text"
         class="form-input"
-        placeholder="https://www.youtube.com/watch?v=..."
+        placeholder={$t("download.form.url.placeholder")}
         bind:value={url}
         oninput={onUrlChange}
         disabled={$isDownloading}
@@ -356,21 +357,21 @@
   <!-- 格式選項 -->
   <div class="form-row">
     <div class="form-group">
-      <label class="form-label" for="format-select">格式</label>
+      <label class="form-label" for="format-select">{$t("download.form.format.label")}</label>
       <select id="format-select" class="form-select" bind:value={format} disabled={$isDownloading}>
-        <option value="mp3">MP3 (音訊)</option>
-        <option value="m4a">M4A (音訊)</option>
-        <option value="wav">WAV (無損音訊)</option>
-        <option value="video">MP4 (影片)</option>
-        <option value="subtitle_only">只下載字幕</option>
+        <option value="mp3">{$t("download.form.format.mp3")}</option>
+        <option value="m4a">{$t("download.form.format.m4a")}</option>
+        <option value="wav">{$t("download.form.format.wav")}</option>
+        <option value="video">{$t("download.form.format.video")}</option>
+        <option value="subtitle_only">{$t("download.form.format.subtitleOnly")}</option>
       </select>
     </div>
 
     {#if format === "video"}
       <div class="form-group">
-        <label class="form-label" for="quality-select">畫質</label>
+        <label class="form-label" for="quality-select">{$t("download.form.quality.label")}</label>
         <select id="quality-select" class="form-select" bind:value={quality} disabled={$isDownloading}>
-          <option value="best">最佳</option>
+          <option value="best">{$t("download.form.quality.best")}</option>
           <option value="1080p">1080p</option>
           <option value="720p">720p</option>
           <option value="480p">480p</option>
@@ -381,36 +382,36 @@
 
     <div class="form-group">
       <label class="form-label" for="sub-select">
-        {format === "subtitle_only" ? "字幕語言" : "字幕"}
+        {format === "subtitle_only" ? $t("download.form.subtitle.labelOnly") : $t("download.form.subtitle.label")}
       </label>
       <select id="sub-select" class="form-select" bind:value={subtitleLang} disabled={$isDownloading}>
         {#if format !== "subtitle_only"}
-          <option value="none">不下載</option>
+          <option value="none">{$t("download.form.subtitle.none")}</option>
         {/if}
-        <option value="traditional_chinese">繁體中文</option>
-        <option value="simplified_chinese">簡體中文</option>
-        <option value="english">英文</option>
-        <option value="japanese">日文</option>
-        <option value="all">全部語言</option>
+        <option value="traditional_chinese">{$t("download.form.subtitle.traditional")}</option>
+        <option value="simplified_chinese">{$t("download.form.subtitle.simplified")}</option>
+        <option value="english">{$t("download.form.subtitle.english")}</option>
+        <option value="japanese">{$t("download.form.subtitle.japanese")}</option>
+        <option value="all">{$t("download.form.subtitle.all")}</option>
       </select>
     </div>
   </div>
 
   <!-- 輸出目錄 -->
   <div class="form-group">
-    <label class="form-label" for="output-dir-input">輸出目錄</label>
+    <label class="form-label" for="output-dir-input">{$t("download.form.outputDir.label")}</label>
     <div class="dir-row">
       <input
         id="output-dir-input"
         type="text"
         class="form-input dir-input"
         bind:value={outputDir}
-        placeholder="選擇下載位置..."
+        placeholder={$t("download.form.outputDir.placeholder")}
         disabled={$isDownloading}
         readonly
       />
       <button class="btn btn-secondary" onclick={selectOutputDir} disabled={$isDownloading}>
-        瀏覽
+        {$t("download.form.outputDir.browse")}
       </button>
     </div>
   </div>
@@ -419,7 +420,7 @@
   <div class="actions">
     {#if $isDownloading}
       <button class="btn btn-danger" onclick={cancelDownload}>
-        取消下載
+        {$t("download.action.cancel")}
       </button>
     {:else}
       <button
@@ -427,7 +428,7 @@
         onclick={startDownload}
         disabled={!url.trim() || !outputDir.trim() || !$toolStatus?.ytdlp_available}
       >
-        {format === "subtitle_only" ? "下載字幕" : "開始下載"}
+        {format === "subtitle_only" ? $t("download.action.downloadSubtitle") : $t("download.action.download")}
       </button>
     {/if}
   </div>
@@ -447,10 +448,10 @@
           <span class="progress-speed">{$downloadProgress.speed}</span>
         {/if}
         {#if $downloadProgress.eta}
-          <span class="progress-eta">ETA {$downloadProgress.eta}</span>
+          <span class="progress-eta">{$t("download.progress.eta", { eta: $downloadProgress.eta })}</span>
         {/if}
         {#if $downloadProgress.status === "postprocessing"}
-          <span class="progress-postproc">轉檔中...</span>
+          <span class="progress-postproc">{$t("download.progress.postprocessing")}</span>
         {/if}
       </div>
       {#if $downloadProgress.filename}
@@ -470,7 +471,7 @@
     <!-- 字幕檔案發現 + 載入為歌詞 -->
     {#if $lastResult.success && $lastResult.subtitle_paths.length > 0}
       <div class="subtitle-section">
-        <p class="subtitle-title">找到 {$lastResult.subtitle_paths.length} 個字幕檔案</p>
+        <p class="subtitle-title">{$t("download.subtitle.foundCount", { count: $lastResult.subtitle_paths.length })}</p>
         <div class="subtitle-list">
           {#each $lastResult.subtitle_paths as subPath}
             <div class="subtitle-item">
@@ -480,7 +481,7 @@
                 onclick={() => loadSubtitleAsLyrics(subPath)}
                 disabled={subtitleLoading}
               >
-                {subtitleLoading ? "載入中..." : "載入為歌詞"}
+                {subtitleLoading ? $t("download.subtitle.loadingAsLyrics") : $t("download.subtitle.loadAsLyrics")}
               </button>
             </div>
           {/each}
@@ -493,7 +494,7 @@
   {/if}
 
   {#if $downloadStatus === "cancelled"}
-    <div class="result-box fail">下載已取消</div>
+    <div class="result-box fail">{$t("download.result.cancelled")}</div>
   {/if}
 </div>
 

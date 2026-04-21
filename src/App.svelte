@@ -10,6 +10,8 @@
     teardownEventListeners,
   } from "./lib/events";
   import ToastContainer from "./components/ToastContainer.svelte";
+  import LanguageSwitcher from "./components/LanguageSwitcher.svelte";
+  import { t } from "./i18n";
 
   let activeTab = $state<"setup" | "recording" | "pitch" | "about">("setup");
   let boundaryError = $state<Error | null>(null);
@@ -49,10 +51,10 @@
 <div class="titlebar" onmousedown={startDrag} ondblclick={handleTitlebarDblClick}>
   <span class="titlebar-title">VocalSync Studio</span>
   <div class="titlebar-buttons">
-    <button class="titlebar-btn" onclick={() => appWindow.minimize()} aria-label="最小化">
+    <button class="titlebar-btn" onclick={() => appWindow.minimize()} aria-label={$t("app.titlebar.minimize")}>
       <svg width="10" height="1" viewBox="0 0 10 1"><rect width="10" height="1" fill="currentColor"/></svg>
     </button>
-    <button class="titlebar-btn" onclick={() => appWindow.toggleMaximize()} aria-label="最大化">
+    <button class="titlebar-btn" onclick={() => appWindow.toggleMaximize()} aria-label={$t("app.titlebar.maximize")}>
       {#if isMaximized}
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1">
           <rect x="2" y="0" width="8" height="8" rx="1"/>
@@ -64,7 +66,7 @@
         </svg>
       {/if}
     </button>
-    <button class="titlebar-btn close-btn" onclick={() => appWindow.close()} aria-label="關閉">
+    <button class="titlebar-btn close-btn" onclick={() => appWindow.close()} aria-label={$t("app.titlebar.close")}>
       <svg width="10" height="10" viewBox="0 0 10 10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round">
         <line x1="1" y1="1" x2="9" y2="9"/><line x1="9" y1="1" x2="1" y2="9"/>
       </svg>
@@ -77,11 +79,11 @@
   <aside class="sidebar">
     <div class="sidebar-brand">
       <span class="brand-name">VocalSync</span>
-      <span class="brand-sub">STUDIO EDITION</span>
+      <span class="brand-sub">{$t("app.brand.sub")}</span>
     </div>
 
     <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
-    <nav class="sidebar-nav" role="tablist" aria-label="主要功能">
+    <nav class="sidebar-nav" role="tablist" aria-label={$t("app.nav.aria")}>
       <button
         class="nav-btn"
         class:active={activeTab === "setup"}
@@ -90,7 +92,7 @@
         aria-selected={activeTab === "setup"}
         tabindex={activeTab === "setup" ? 0 : -1}
       >
-        準備
+        {$t("app.nav.setup")}
       </button>
       <button
         class="nav-btn"
@@ -100,7 +102,7 @@
         aria-selected={activeTab === "recording"}
         tabindex={activeTab === "recording" ? 0 : -1}
       >
-        錄音
+        {$t("app.nav.recording")}
       </button>
       <button
         class="nav-btn"
@@ -110,7 +112,7 @@
         aria-selected={activeTab === "pitch"}
         tabindex={activeTab === "pitch" ? 0 : -1}
       >
-        音高
+        {$t("app.nav.pitch")}
       </button>
 
       <div class="nav-spacer"></div>
@@ -123,9 +125,11 @@
         aria-selected={activeTab === "about"}
         tabindex={activeTab === "about" ? 0 : -1}
       >
-        關於
+        {$t("app.nav.about")}
       </button>
     </nav>
+
+    <LanguageSwitcher />
   </aside>
 
   <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
@@ -142,10 +146,10 @@
       {/if}
       {#snippet failed()}
         <div class="error-boundary">
-          <h2>發生了未預期的錯誤</h2>
-          <p class="error-msg">{boundaryError?.message ?? '未知錯誤'}</p>
+          <h2>{$t("app.error.title")}</h2>
+          <p class="error-msg">{boundaryError?.message ?? $t("app.error.unknown")}</p>
           <button class="error-retry-btn" onclick={() => { boundaryError = null; }}>
-            重新載入頁面
+            {$t("app.error.retry")}
           </button>
         </div>
       {/snippet}

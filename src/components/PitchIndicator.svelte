@@ -1,5 +1,6 @@
 <script lang="ts">
   import { currentPitch } from "../stores/pitch";
+  import { t, tSync } from "../i18n";
 
   // 把 cent 對應到水平 bar 的位置（0~100%）
   function centToPosition(cent: number): number {
@@ -16,9 +17,10 @@
   }
 
   function statusText(cent: number): string {
+    void $t;
     const abs = Math.abs(cent);
-    if (abs <= 10) return "音準";
-    return cent > 0 ? "偏高" : "偏低";
+    if (abs <= 10) return tSync("pitchIndicator.status.inTune");
+    return cent > 0 ? tSync("pitchIndicator.status.high") : tSync("pitchIndicator.status.low");
   }
 </script>
 
@@ -37,7 +39,7 @@
           class="status-label"
           style="color: {statusColor($currentPitch.cent)};"
         >
-          {statusText($currentPitch.cent)}
+          {($t, statusText($currentPitch.cent))}
         </span>
         <span class="cent-num">
           {$currentPitch.cent > 0 ? "+" : ""}{$currentPitch.cent.toFixed(0)}¢
@@ -63,7 +65,7 @@
   {:else}
     <div class="empty-state">
       <span class="empty-dot"></span>
-      <span class="empty-text">未偵測到聲音</span>
+      <span class="empty-text">{$t("pitchIndicator.empty")}</span>
     </div>
   {/if}
 </div>

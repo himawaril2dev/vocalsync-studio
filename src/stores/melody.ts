@@ -59,14 +59,30 @@ export const currentMelody = writable<MelodyTrack | null>(null);
  */
 export const detectedMelodySourceKind = writable<string | null>(null);
 
-/** 旋律載入狀態的使用者可讀文字（給 SetupTab 顯示） */
-export const melodyStatus = writable<string>("尚未載入目標旋律");
+/**
+ * 旋律載入狀態訊息（給 SetupTab / PitchAnalysisTab 顯示）。
+ * 以 i18n 鍵 + 變數的形式保存，讓消費端能隨 locale 切換即時重新渲染。
+ *
+ * - `null`：預設空狀態，顯示 `setup.melody.status.empty`
+ * - `{ key, vars }`：一般狀態訊息
+ * - `{ key, vars, appendKey, appendVars }`：包裹式訊息（如「已載入 + 自動對齊失敗」）
+ */
+export type MelodyStatusMessage =
+  | null
+  | {
+      key: string;
+      vars?: Record<string, string | number>;
+      appendKey?: string;
+      appendVars?: Record<string, string | number>;
+    };
+
+export const melodyStatus = writable<MelodyStatusMessage>(null);
 
 /** 重置與旋律相關的所有 store（載入新伴奏時呼叫） */
 export function resetMelodyState(): void {
   currentMelody.set(null);
   detectedMelodySourceKind.set(null);
-  melodyStatus.set("尚未載入目標旋律");
+  melodyStatus.set(null);
   alignmentResult.set(null);
   alignmentFineTuneMs.set(0);
   melodySourcePath.set(null);

@@ -19,6 +19,7 @@
     finalOffsetSecs,
     type MelodyTrack,
     type AlignmentResult,
+    type MelodyStatusMessage,
   } from "../stores/melody";
   import { get } from "svelte/store";
   import {
@@ -32,6 +33,7 @@
   } from "../stores/settings";
   import CalibrationVisualizer from "../components/CalibrationVisualizer.svelte";
   import DownloadTab from "./DownloadTab.svelte";
+  import { t, tSync } from "../i18n";
 
   /** 各區塊收合狀態 */
   let sections = $state({
@@ -87,16 +89,50 @@
   let pendingStatusText = $state<string | null>(null);
 
   let statusText = $derived.by(() => {
+    const translate = $t;
     if (pendingStatusText !== null) return pendingStatusText;
     const m = $loadedMedia;
-    if (!m) return "請載入伴奏檔案開始練唱";
+    if (!m) return translate("setup.backing.hint.empty");
     const min = Math.floor(m.duration / 60);
-    const sec = Math.floor(m.duration % 60);
-    const kind = m.is_video ? "影片" : "音訊";
-    return `已載入${kind}：${m.file_name}（${min}:${sec.toString().padStart(2, "0")}）`;
+    const sec = Math.floor(m.duration % 60).toString().padStart(2, "0");
+    const kind = m.is_video
+      ? translate("setup.backing.kind.video")
+      : translate("setup.backing.kind.audio");
+    return translate("setup.backing.hint.loaded", {
+      kind,
+      name: m.file_name,
+      min,
+      sec,
+    });
   });
 
-  let lyricsStatus = $state("尚未載入歌詞");
+  /**
+   * 歌詞載入狀態訊息（以 i18n 鍵 + 變數保存，讓顯示能隨 locale 切換）。
+   * `null` = 預設空狀態，顯示 `setup.lyrics.status.empty`。
+   */
+  type LyricsStatusMessage =
+    | null
+    | { key: string; vars?: Record<string, string | number> };
+  let lyricsStatus = $state<LyricsStatusMessage>(null);
+
+  let lyricsStatusText = $derived.by(() => {
+    const translate = $t;
+    const m = lyricsStatus;
+    return m
+      ? translate(m.key, m.vars)
+      : translate("setup.lyrics.status.empty");
+  });
+
+  let melodyStatusText = $derived.by(() => {
+    const translate = $t;
+    const m = $melodyStatus;
+    if (!m) return translate("setup.melody.status.empty");
+    const base = translate(m.key, m.vars);
+    if (m.appendKey) {
+      return translate(m.appendKey, { ...(m.appendVars ?? {}), status: base });
+    }
+    return base;
+  });
 
   /** 影片內嵌字幕軌列表（載入影片後自動偵測） */
   let embeddedSubtitles = $state<SubtitleStream[]>([]);
@@ -114,7 +150,9 @@
       .then((s) => {
         if (typeof s.calibrated_latency_ms === "number") {
           $latencyMs = Math.round(s.calibrated_latency_ms);
-          calibrationResultText = `已載入上次校準值：${$latencyMs} ms`;
+          calibrationResultText = tSync("setup.calibration.result.lastLoaded", {
+            ms: $latencyMs,
+          });
         }
         if (typeof s.pitch_engine === "string") {
           $pitchEngine = s.pitch_engine as import("../stores/settings").PitchEngineType;
@@ -149,7 +187,7 @@
   async function startCalibration() {
     if ($calibrationStatus.isRunning) return;
     resetCalibrationStatus();
-    calibrationResultText = "校準中，請看著畫面的球，碰到準線時對麥克風拍手...";
+    calibrationResultText = tSync("setup.calibration.result.prep");
     try {
       const res: number = await invoke("calibrate_latency", {
         inputDevice: $inputDeviceIndex,
@@ -165,10 +203,10 @@
       const std = $calibrationStatus.stdDevMs;
       calibrationResultText =
         std !== null
-          ? `校準完成！延遲 ${res} ms（標準差 ${std.toFixed(1)} ms）`
-          : `校準完成！延遲 ${res} ms`;
+          ? tSync("setup.calibration.result.success", { ms: res, std: std.toFixed(1) })
+          : tSync("setup.calibration.result.successNoStd", { ms: res });
     } catch (e) {
-      calibrationResultText = `校準失敗：${e}`;
+      calibrationResultText = tSync("setup.calibration.result.failed", { error: String(e) });
     }
   }
 
@@ -179,17 +217,17 @@
 
   async function loadFile() {
     const path = await open({
-      title: "選擇伴奏檔案",
+      title: tSync("setup.backing.dialog.title"),
       filters: [
         {
-          name: "音訊/影片",
+          name: tSync("setup.backing.dialog.filter"),
           extensions: ["wav", "mp3", "mp4", "m4a", "aac", "flac", "ogg", "mkv", "webm"],
         },
       ],
     });
     if (!path) return;
 
-    pendingStatusText = "載入中...";
+    pendingStatusText = tSync("setup.backing.hint.loading");
     // 載入新伴奏前先重設旋律相關狀態，避免上一首的灰藍線殘留
     resetBackingState();
     resetMelodyState();
@@ -227,7 +265,10 @@
           );
           embeddedSubtitles = subs;
           if (subs.length > 0) {
-            lyricsStatus = `偵測到 ${subs.length} 個內嵌字幕軌，可直接提取為歌詞`;
+            lyricsStatus = {
+              key: "setup.lyrics.status.subDetected",
+              vars: { n: subs.length },
+            };
           }
         } catch (err) {
           console.warn("[setup] 字幕軌偵測失敗（ffprobe 不可用或無字幕）", err);
@@ -237,7 +278,7 @@
       // 自動載入目標旋律
       await autoLoadMelodyForPath(path);
     } catch (err) {
-      pendingStatusText = `載入失敗：${err}`;
+      pendingStatusText = tSync("setup.backing.hint.loadFailed", { error: String(err) });
     }
   }
 
@@ -259,44 +300,50 @@
       if (track) {
         await commitMelodyTrack(track, null);
         const sourceLabel = describeMelodySource(track);
-        melodyStatus.set(
-          `已自動載入目標旋律（${sourceLabel}，共 ${track.notes.length} 個音符）`,
-        );
+        melodyStatus.set({
+          key: "setup.melody.status.autoLoaded",
+          vars: { source: sourceLabel, n: track.notes.length },
+        });
       } else {
-        melodyStatus.set(
-          "沒有自動偵測到目標旋律。可改用下方「匯入人聲軌」或「載入 MIDI」",
-        );
+        melodyStatus.set({ key: "setup.melody.status.noAutoDetect" });
       }
     } catch (err) {
-      melodyStatus.set(`旋律載入失敗：${err}`);
+      melodyStatus.set({
+        key: "setup.melody.status.loadFailed",
+        vars: { error: String(err) },
+      });
     }
   }
 
   /** 載入 MIDI 檔作為 melody 來源（手動路徑） */
   async function loadMelodyFile(): Promise<void> {
     const path = await open({
-      title: "選擇 MIDI 旋律檔",
+      title: tSync("setup.melody.dialog.midi.title"),
       filters: [
-        { name: "MIDI", extensions: ["mid", "midi"] },
+        { name: tSync("setup.melody.dialog.midi.filter"), extensions: ["mid", "midi"] },
       ],
     });
     if (!path) return;
 
-    melodyStatus.set("正在解析旋律軌...");
+    melodyStatus.set({ key: "setup.melody.status.parsing" });
     try {
       const track = await invoke<MelodyTrack>("load_melody_from_path", {
         path,
       });
       await commitMelodyTrack(track, path);
       const sourceLabel = describeMelodySource(track);
-      melodyStatus.set(
-        `已載入旋律（${sourceLabel}，${track.notes.length} 個音符）。若時間對不上，請用 fine-tune 微調。`,
-      );
+      melodyStatus.set({
+        key: "setup.melody.status.loaded",
+        vars: { source: sourceLabel, n: track.notes.length },
+      });
       if (currentBackingPath) {
         await runAutoAlignment(path, currentBackingPath);
       }
     } catch (err) {
-      melodyStatus.set(`旋律載入失敗：${err}`);
+      melodyStatus.set({
+        key: "setup.melody.status.loadFailed",
+        vars: { error: String(err) },
+      });
     }
   }
 
@@ -309,17 +356,17 @@
    */
   async function loadVocalsTrack(): Promise<void> {
     const path = await open({
-      title: "選擇已分離的人聲音檔 (vocals.wav)",
+      title: tSync("setup.melody.dialog.vocals.title"),
       filters: [
         {
-          name: "音訊",
+          name: tSync("setup.melody.dialog.vocals.filter"),
           extensions: ["wav", "mp3", "flac", "m4a", "aac", "ogg", "opus"],
         },
       ],
     });
     if (!path) return;
 
-    melodyStatus.set("分析人聲音高中（YIN + 群聚）...");
+    melodyStatus.set({ key: "setup.melody.status.parsingVocals" });
     try {
       const track = await invoke<MelodyTrack>("load_vocals_and_extract_melody", {
         vocalsPath: path,
@@ -327,15 +374,22 @@
       // Vocals 與練唱伴奏通常來自不同檔，需要做自動對齊
       await commitMelodyTrack(track, path);
       const sourceLabel = describeMelodySource(track);
-      melodyStatus.set(
-        `已匯入人聲軌（${sourceLabel}，${track.raw_pitch_track?.length ?? track.notes.length} 個音高樣本）`,
-      );
+      melodyStatus.set({
+        key: "setup.melody.status.vocalsLoaded",
+        vars: {
+          source: sourceLabel,
+          n: track.raw_pitch_track?.length ?? track.notes.length,
+        },
+      });
       // 若練唱伴奏已載入，自動跑對齊
       if (currentBackingPath) {
         await runAutoAlignment(path, currentBackingPath);
       }
     } catch (err) {
-      melodyStatus.set(`人聲分析失敗：${err}`);
+      melodyStatus.set({
+        key: "setup.melody.status.vocalsFailed",
+        vars: { error: String(err) },
+      });
     }
   }
 
@@ -345,16 +399,22 @@
    */
   async function centerChannelCancel(): Promise<void> {
     if (!currentBackingPath) return;
-    melodyStatus.set("中央聲道消除 + 音高分析中...");
+    melodyStatus.set({ key: "setup.melody.status.cancelling" });
     try {
       const track = await invoke<MelodyTrack>("extract_melody_center_cancel", {
         backingPath: currentBackingPath,
       });
       await commitMelodyTrack(track, null); // 同源，不需對齊
       const count = track.raw_pitch_track?.length ?? track.notes.length;
-      melodyStatus.set(`中央聲道消除完成（${count} 個音高樣本）`);
+      melodyStatus.set({
+        key: "setup.melody.status.cancelDone",
+        vars: { n: count },
+      });
     } catch (err) {
-      melodyStatus.set(`中央聲道消除失敗：${err}`);
+      melodyStatus.set({
+        key: "setup.melody.status.cancelFailed",
+        vars: { error: String(err) },
+      });
     }
   }
 
@@ -401,9 +461,21 @@
     } catch (err) {
       console.error("自動對齊失敗:", err);
       alignmentResult.set(null);
-      melodyStatus.update(
-        (s) => `${s}（自動對齊失敗：${err}，請用 fine-tune 手動微調）`,
-      );
+      melodyStatus.update((s) => {
+        if (!s) {
+          return {
+            key: "setup.melody.status.empty",
+            appendKey: "setup.melody.status.alignFailedAppend",
+            appendVars: { error: String(err) },
+          };
+        }
+        return {
+          key: s.key,
+          vars: s.vars,
+          appendKey: "setup.melody.status.alignFailedAppend",
+          appendVars: { error: String(err) },
+        };
+      });
     }
   }
 
@@ -449,13 +521,13 @@
   function describeMelodySource(track: MelodyTrack): string {
     const src = track.source;
     if (src.type === "midi") {
-      return `MIDI：Track ${src.track_index + 1}`;
+      return tSync("setup.melody.source.midi", { n: src.track_index + 1 });
     }
     if (src.type === "imported_vocals") {
       const voiced = (src.voiced_ratio * 100).toFixed(0);
-      return `voiced ${voiced}%`;
+      return tSync("setup.melody.source.importedVocals", { ratio: voiced });
     }
-    return `人聲分離：${src.model}`;
+    return tSync("setup.melody.source.separated", { model: src.model });
   }
 
   /** 人類可讀的對齊結果描述 */
@@ -463,14 +535,17 @@
     if (!result) return "";
     const secs = result.offset_secs;
     const sign = secs >= 0 ? "+" : "";
-    return `${sign}${secs.toFixed(3)} 秒`;
+    return `${sign}${secs.toFixed(3)} ${tSync("setup.alignment.offset.seconds")}`;
   }
 
   /** 提取影片內嵌字幕並載入為歌詞 */
   async function extractAndLoadSubtitle(sub: SubtitleStream): Promise<void> {
     if (!currentBackingPath || subtitleExtracting) return;
     subtitleExtracting = true;
-    lyricsStatus = `提取字幕軌 #${sub.index}（${sub.language || sub.codec}）...`;
+    lyricsStatus = {
+      key: "setup.lyrics.status.subExtracting",
+      vars: { index: sub.index, lang: sub.language || sub.codec },
+    };
     try {
       const srtPath = await invoke<string>("extract_embedded_subtitle", {
         videoPath: currentBackingPath,
@@ -481,9 +556,15 @@
       lyricsLines.set(lines);
       const fileName = srtPath.replace(/\\/g, "/").split("/").pop() ?? "";
       lyricsFileName.set(fileName);
-      lyricsStatus = `已提取 ${lines.length} 行歌詞（${fileName}）`;
+      lyricsStatus = {
+        key: "setup.lyrics.status.subExtracted",
+        vars: { n: lines.length, name: fileName },
+      };
     } catch (err) {
-      lyricsStatus = `字幕提取失敗：${err}`;
+      lyricsStatus = {
+        key: "setup.lyrics.status.subFailed",
+        vars: { error: String(err) },
+      };
     } finally {
       subtitleExtracting = false;
     }
@@ -500,29 +581,35 @@
 
   async function loadLyrics() {
     const path = await open({
-      title: "選擇歌詞檔案",
+      title: tSync("setup.lyrics.dialog.title"),
       filters: [
-        { name: "歌詞檔", extensions: ["lrc", "srt", "vtt", "txt"] },
+        { name: tSync("setup.lyrics.dialog.filter"), extensions: ["lrc", "srt", "vtt", "txt"] },
       ],
     });
     if (!path) return;
 
-    lyricsStatus = "解析中...";
+    lyricsStatus = { key: "setup.lyrics.status.parsing" };
     try {
       const lines: LyricLine[] = await invoke("load_lyrics", { path });
       lyricsLines.set(lines);
       const fileName = path.split(/[\\\/]/).pop() || "";
       lyricsFileName.set(fileName);
-      lyricsStatus = `已載入 ${lines.length} 行歌詞（${fileName}）`;
+      lyricsStatus = {
+        key: "setup.lyrics.status.loaded",
+        vars: { n: lines.length, name: fileName },
+      };
     } catch (err) {
-      lyricsStatus = `載入失敗：${err}`;
+      lyricsStatus = {
+        key: "setup.lyrics.status.loadFailed",
+        vars: { error: String(err) },
+      };
     }
   }
 
   function clearLyrics() {
     lyricsLines.set([]);
     lyricsFileName.set("");
-    lyricsStatus = "尚未載入歌詞";
+    lyricsStatus = null;
   }
 </script>
 
@@ -530,7 +617,7 @@
   <!-- YouTube 下載 -->
   <div class="card">
     <button class="section-header" onclick={() => sections.download = !sections.download}>
-      <h2>YouTube 下載</h2>
+      <h2>{$t("setup.section.download")}</h2>
       <span class="chevron" class:open={sections.download}>▸</span>
     </button>
     {#if sections.download}
@@ -543,17 +630,17 @@
   <!-- 練唱伴奏 -->
   <div class="card">
     <button class="section-header" onclick={() => sections.backing = !sections.backing}>
-      <h2>練唱伴奏</h2>
+      <h2>{$t("setup.section.backing")}</h2>
       <span class="chevron" class:open={sections.backing}>▸</span>
     </button>
     {#if sections.backing}
       <div class="section-body">
         <p class="hint">{statusText}</p>
         <p class="sub-hint">
-          載入伴奏版 / off vocal，避免原唱蓋過自己的聲音。
+          {$t("setup.backing.subHint")}
         </p>
         <div class="actions">
-          <button class="btn primary" onclick={loadFile}>本機匯入</button>
+          <button class="btn primary" onclick={loadFile}>{$t("setup.backing.action.import")}</button>
         </div>
       </div>
     {/if}
@@ -562,16 +649,16 @@
   <!-- 歌詞 / 字幕 -->
   <div class="card">
     <button class="section-header" onclick={() => sections.lyrics = !sections.lyrics}>
-      <h2>歌詞 / 字幕</h2>
+      <h2>{$t("setup.section.lyrics")}</h2>
       <span class="chevron" class:open={sections.lyrics}>▸</span>
     </button>
     {#if sections.lyrics}
       <div class="section-body">
-        <p class="hint">{lyricsStatus}</p>
+        <p class="hint">{lyricsStatusText}</p>
 
     {#if embeddedSubtitles.length > 0}
       <div class="embedded-subs">
-        <p class="sub-hint">偵測到影片內嵌字幕，點擊即可提取為歌詞：</p>
+        <p class="sub-hint">{$t("setup.lyrics.subTitle")}</p>
         <div class="sub-list">
           {#each embeddedSubtitles as sub}
             <button
@@ -587,9 +674,9 @@
     {/if}
 
     <div class="actions">
-      <button class="btn primary" onclick={loadLyrics}>載入 LRC / SRT / VTT</button>
+      <button class="btn primary" onclick={loadLyrics}>{$t("setup.lyrics.action.load")}</button>
       {#if $lyricsLines.length > 0}
-        <button class="btn secondary" onclick={clearLyrics}>清除歌詞</button>
+        <button class="btn secondary" onclick={clearLyrics}>{$t("setup.lyrics.action.clear")}</button>
       {/if}
     </div>
       </div>
@@ -599,16 +686,16 @@
   <!-- 目標旋律 -->
   <div class="card">
     <button class="section-header" onclick={() => sections.melody = !sections.melody}>
-      <h2>目標旋律來源</h2>
+      <h2>{$t("setup.section.melody")}</h2>
       <span class="chevron" class:open={sections.melody}>▸</span>
     </button>
     {#if sections.melody}
       <div class="section-body">
-    <p class="hint">{$melodyStatus}</p>
+    <p class="hint">{melodyStatusText}</p>
 
     {#if $currentMelody === null}
       <p class="sub-hint">
-        請匯入<strong>預先分離好的人聲軌</strong>或<strong>手動載入 MIDI</strong>作為參考旋律。
+        {$t("setup.melody.hint.empty.prefix")}<strong>{$t("setup.melody.hint.empty.vocals")}</strong>{$t("setup.melody.hint.empty.or")}<strong>{$t("setup.melody.hint.empty.midi")}</strong>{$t("setup.melody.hint.empty.suffix")}
       </p>
     {/if}
 
@@ -617,31 +704,31 @@
         class="btn primary"
         onclick={loadVocalsTrack}
         disabled={!backingLoaded}
-        title="匯入使用者預先用 UVR5 / Moises 分離好的乾淨人聲軌"
+        title={$t("setup.melody.action.importVocals.title")}
       >
-        🎤 匯入人聲軌 (vocals.wav)
+        {$t("setup.melody.action.importVocals")}
       </button>
       <button
         class="btn secondary"
         onclick={loadMelodyFile}
         disabled={!backingLoaded}
       >
-        載入 MIDI
+        {$t("setup.melody.action.loadMidi")}
       </button>
       <button
         class="btn secondary"
         onclick={centerChannelCancel}
         disabled={!backingLoaded}
-        title="對立體聲伴奏進行 L-R 差分消除人聲（適用 center-panned 流行歌，mono 不適用）"
+        title={$t("setup.melody.action.centerCancel.title")}
       >
-        🔇 快速消人聲
+        {$t("setup.melody.action.centerCancel")}
       </button>
       {#if currentBackingPath && $currentMelody === null}
         <button
           class="btn ghost"
           onclick={() => currentBackingPath && autoLoadMelodyForPath(currentBackingPath)}
         >
-          重新掃描
+          {$t("setup.melody.action.rescan")}
         </button>
       {/if}
     </div>
@@ -649,40 +736,41 @@
     {#if $currentMelody}
       <div class="alignment-box">
         <div class="alignment-header">
-          <span class="alignment-title">時間軸對齊</span>
+          <span class="alignment-title">{$t("setup.alignment.title")}</span>
           {#if $melodySourcePath === null}
-            <span class="badge badge-muted">不需對齊</span>
+            <span class="badge badge-muted">{$t("setup.alignment.badge.noNeed")}</span>
           {:else if $alignmentResult}
             {#if alignmentConfidence($alignmentResult) === "high"}
-              <span class="badge badge-high">高信心</span>
+              <span class="badge badge-high">{$t("setup.alignment.badge.high")}</span>
             {:else if alignmentConfidence($alignmentResult) === "medium"}
-              <span class="badge badge-medium">中信心</span>
+              <span class="badge badge-medium">{$t("setup.alignment.badge.medium")}</span>
             {:else}
-              <span class="badge badge-low">低信心，建議微調</span>
+              <span class="badge badge-low">{$t("setup.alignment.badge.low")}</span>
             {/if}
           {:else}
-            <span class="badge badge-muted">尚未對齊</span>
+            <span class="badge badge-muted">{$t("setup.alignment.badge.notAligned")}</span>
           {/if}
         </div>
 
         {#if $melodySourcePath === null}
           <p class="alignment-hint">
-            目前 melody 來源與練唱伴奏視為同源，若時間對不上可用下方的 fine-tune 微調。
+            {$t("setup.alignment.hint.sameSource")}
           </p>
         {:else if $alignmentResult}
           <p class="alignment-hint">
-            自動偵測到偏移：<strong>{describeAlignmentOffset($alignmentResult)}</strong>
-            （peak/mean = {$alignmentResult.peak_to_mean_ratio.toFixed(1)}）
+            {$t("setup.alignment.hint.offset", {
+              offset: describeAlignmentOffset($alignmentResult),
+              ratio: $alignmentResult.peak_to_mean_ratio.toFixed(1),
+            })}
           </p>
         {:else}
           <p class="alignment-hint">
-            對齊結果尚未計算。若已載入練唱伴奏與人聲軌兩個不同檔，
-            系統會自動跑 cross-correlation。
+            {$t("setup.alignment.hint.pending")}
           </p>
         {/if}
 
         <div class="fine-tune-row">
-          <label for="fine_tune">手動微調：</label>
+          <label for="fine_tune">{$t("setup.alignment.fineTune.label")}</label>
           <input
             id="fine_tune"
             type="range"
@@ -698,9 +786,9 @@
             <button
               class="btn ghost tiny"
               onclick={() => alignmentFineTuneMs.set(0)}
-              title="重置微調"
+              title={$t("setup.alignment.fineTune.reset.title")}
             >
-              歸零
+              {$t("setup.alignment.fineTune.reset.text")}
             </button>
           {/if}
         </div>
@@ -713,42 +801,42 @@
   <!-- 裝置選擇 -->
   <div class="card">
     <button class="section-header" onclick={() => sections.device = !sections.device}>
-      <h2>裝置選擇</h2>
+      <h2>{$t("setup.section.device")}</h2>
       <span class="chevron" class:open={sections.device}>▸</span>
     </button>
     {#if sections.device}
       <div class="section-body">
         <div class="device-selectors">
           <div class="selector-item">
-            <label for="input_dev">麥克風 (Input):</label>
+            <label for="input_dev">{$t("setup.device.input.label")}</label>
             <select id="input_dev" bind:value={$inputDeviceIndex}>
               {#if devices}
                 {#each devices.input_devices as d}
                   <option value={d.index}>{d.name}</option>
                 {/each}
               {:else}
-                <option>載入中...</option>
+                <option>{$t("setup.device.loading")}</option>
               {/if}
             </select>
           </div>
           <div class="selector-item">
-            <label for="output_dev">耳機 (Output):</label>
+            <label for="output_dev">{$t("setup.device.output.label")}</label>
             <select id="output_dev" bind:value={$outputDeviceIndex}>
               {#if devices}
                 {#each devices.output_devices as d}
                   <option value={d.index}>{d.name}</option>
                 {/each}
               {:else}
-                <option>載入中...</option>
+                <option>{$t("setup.device.loading")}</option>
               {/if}
             </select>
           </div>
           <div class="selector-item">
-            <label for="pitch_engine">音高偵測引擎:</label>
+            <label for="pitch_engine">{$t("setup.device.pitch.label")}</label>
             <select id="pitch_engine" bind:value={$pitchEngine}>
-              <option value="auto">自動（有 CREPE 模型則用 CREPE）</option>
-              <option value="crepe">CREPE AI（推薦，較準確）</option>
-              <option value="yin">YIN（輕量，低延遲）</option>
+              <option value="auto">{$t("setup.device.pitchEngine.auto")}</option>
+              <option value="crepe">{$t("setup.device.pitchEngine.crepe")}</option>
+              <option value="yin">{$t("setup.device.pitchEngine.yin")}</option>
             </select>
           </div>
         </div>
@@ -759,12 +847,12 @@
   <!-- 延遲校準 -->
   <div class="card">
     <button class="section-header" onclick={() => sections.calibration = !sections.calibration}>
-      <h2>延遲校準</h2>
+      <h2>{$t("setup.section.calibration")}</h2>
       <span class="chevron" class:open={sections.calibration}>▸</span>
     </button>
     {#if sections.calibration}
       <div class="section-body">
-        <p class="hint">補償錄音時的軟硬體延遲（重啟後會自動載入上次校準值）</p>
+        <p class="hint">{$t("setup.calibration.hint")}</p>
 
         <div class="slider-row">
           <span>{$latencyMs} ms</span>
@@ -772,11 +860,11 @@
         </div>
 
         <div class="calibrate-box">
-          <h4>自動打拍子校準</h4>
-          <p class="hint">戴上耳機後點擊下方按鈕。系統會發出 8 次木魚聲（前 2 次暖身、後 6 次量測），請跟著節奏對著麥克風拍手或發出短促音。</p>
+          <h4>{$t("setup.calibration.auto.title")}</h4>
+          <p class="hint">{$t("setup.calibration.auto.hint")}</p>
           <div class="actions">
             <button class="btn primary calibrate-btn" onclick={startCalibration} disabled={$calibrationStatus.isRunning}>
-              {$calibrationStatus.isRunning ? "校準進行中..." : "開始互動式校準"}
+              {$calibrationStatus.isRunning ? $t("setup.calibration.action.running") : $t("setup.calibration.action.start")}
             </button>
           </div>
           {#if calibrationResultText}

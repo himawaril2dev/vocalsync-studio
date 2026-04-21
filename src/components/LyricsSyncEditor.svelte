@@ -3,8 +3,9 @@
   import { invoke } from "@tauri-apps/api/core";
   import { save } from "@tauri-apps/plugin-dialog";
   import { lyricsLines, lyricsFileName } from "../stores/lyrics";
-  import { elapsed, transportState } from "../stores/transport";
+  import { elapsed } from "../stores/transport";
   import type { LyricLine } from "../stores/lyrics";
+  import { t, tSync } from "../i18n";
 
   /** 編輯中的歌詞行（帶有可修改的時間戳） */
   interface SyncLine {
@@ -55,7 +56,7 @@
   function startSync() {
     // 若已有同步過的時間戳，先確認再清除
     const hasSynced = lines.some((l) => l.synced);
-    if (hasSynced && !confirm("這會清除所有已標記的時間，確定要重新開始嗎？")) {
+    if (hasSynced && !confirm(tSync("lyricsSync.confirm.resetSync"))) {
       return;
     }
 
@@ -138,7 +139,7 @@
       translation: l.translation,
     }));
     lyricsLines.set(result);
-    saveMsg = "已套用到播放器";
+    saveMsg = tSync("lyricsSync.status.applied");
     setTimeout(() => (saveMsg = ""), 2000);
   }
 
@@ -157,16 +158,16 @@
 
     try {
       const filePath = await save({
-        title: "匯出 LRC 歌詞",
+        title: tSync("lyricsSync.export.dialog.title"),
         filters: [{ name: "LRC", extensions: ["lrc"] }],
         defaultPath: `${baseName}_synced.lrc`,
       });
       if (!filePath) return;
 
       await invoke("save_lyrics_as_lrc", { lines: result, outputPath: filePath });
-      saveMsg = `已儲存：${filePath}`;
+      saveMsg = tSync("lyricsSync.status.saved", { path: filePath });
     } catch (e) {
-      saveMsg = `儲存失敗：${e}`;
+      saveMsg = tSync("lyricsSync.status.saveFailed", { error: String(e) });
     }
     setTimeout(() => (saveMsg = ""), 3000);
   }
@@ -195,32 +196,32 @@
 <div class="sync-editor" bind:this={containerEl}>
   {#if lines.length === 0}
     <div class="sync-empty">
-      <p>尚未載入歌詞</p>
-      <p class="hint">請先在設定頁載入歌詞檔案</p>
+      <p>{$t("lyricsSync.empty.title")}</p>
+      <p class="hint">{$t("lyricsSync.empty.hint")}</p>
     </div>
   {:else}
     <!-- 工具列 -->
     <div class="sync-toolbar">
       {#if !isSyncing}
         <button class="sync-btn primary" onclick={startSync}>
-          開始同步
+          {$t("lyricsSync.action.start")}
         </button>
       {:else}
         <button class="sync-btn" onclick={stopSync}>
-          停止
+          {$t("lyricsSync.action.stop")}
         </button>
         <button class="sync-btn" onclick={undo} disabled={undoStack.length === 0}>
-          復原
+          {$t("lyricsSync.action.undo")}
         </button>
-        <span class="sync-hint">按空白鍵標記時間</span>
+        <span class="sync-hint">{$t("lyricsSync.hint.spaceToMark")}</span>
       {/if}
 
       <div class="sync-toolbar-right">
         <button class="sync-btn" onclick={applyToStore} disabled={isSyncing}>
-          套用
+          {$t("lyricsSync.action.apply")}
         </button>
         <button class="sync-btn" onclick={exportLrc} disabled={isSyncing}>
-          匯出 LRC
+          {$t("lyricsSync.action.export")}
         </button>
       </div>
     </div>

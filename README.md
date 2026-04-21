@@ -1,5 +1,7 @@
 # VocalSync Studio
 
+**繁體中文** | [English](README.en.md) | [日本語](README.ja.md)
+
 練唱輔助工具，讓每一次練習都聽得見進步。
 
 VocalSync Studio 是一款桌面應用程式，結合伴奏播放、即時錄音、AI 音高偵測與歌詞同步顯示，幫助歌唱練習者視覺化自己的演唱表現。

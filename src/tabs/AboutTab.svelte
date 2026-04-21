@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { showToast } from "../stores/toast";
+  import { t, tSync } from "../i18n";
 
   const VERSION = "0.2.3";
   const KOFI_URL = "https://ko-fi.com/himawari168";
@@ -33,9 +34,9 @@
   async function copyEmail() {
     try {
       await navigator.clipboard.writeText(SUPPORT_EMAIL);
-      showToast("已複製電子信箱到剪貼簿", "success");
+      showToast(tSync("about.toast.emailCopied"), "success");
     } catch (e) {
-      showToast(`複製失敗：${e}`, "error");
+      showToast(tSync("about.toast.emailCopyFailed", { error: String(e) }), "error");
     }
   }
 
@@ -47,12 +48,12 @@
       const info = await invoke<ReleaseInfo>("check_latest_release");
       const cmp = compareVersions(VERSION, info.tag_name);
       if (cmp > 0) {
-        showToast(`有新版本 ${info.tag_name} 可用，點選 GitHub 連結前往下載`, "info");
+        showToast(tSync("about.toast.updateAvailable", { version: info.tag_name }), "info");
       } else {
-        showToast(`目前已是最新版本 v${VERSION}`, "success");
+        showToast(tSync("about.toast.upToDate", { version: VERSION }), "success");
       }
     } catch (e) {
-      showToast(`檢查更新失敗：${e}`, "error");
+      showToast(tSync("about.toast.updateCheckFailed", { error: String(e) }), "error");
     } finally {
       checking = false;
     }
@@ -63,105 +64,91 @@
   <div class="hero">
     <h1 class="app-name">VocalSync Studio</h1>
     <span class="version">v{VERSION}</span>
-    <p class="tagline">練唱輔助工具，讓每一次練習都聽得見進步</p>
-    <p class="ai-badge">100% AI-Crafted — 從架構設計、前後端程式碼到 UI，全程由 AI 生成</p>
+    <p class="tagline">{$t("about.tagline")}</p>
+    <p class="ai-badge">{$t("about.aiBadge")}</p>
   </div>
 
   <div class="card">
-    <h2>使用須知</h2>
+    <h2>{$t("about.notes.title")}</h2>
     <div class="notes">
       <div class="note-item">
         <span class="note-num">1</span>
         <div>
-          <strong>準備伴奏</strong>
-          <p>載入 off vocal / 伴奏版音檔（MP3、WAV、M4A 等皆可），或直接從 YouTube 下載。避免使用含原唱的版本，以免干擾錄音。</p>
+          <strong>{$t("about.notes.1.title")}</strong>
+          <p>{$t("about.notes.1.body")}</p>
         </div>
       </div>
       <div class="note-item">
         <span class="note-num">2</span>
         <div>
-          <strong>目標旋律（選用）</strong>
-          <p>若想在音高曲線上看到「正確音高」參考線，可透過以下方式取得：</p>
+          <strong>{$t("about.notes.2.title")}</strong>
+          <p>{$t("about.notes.2.body")}</p>
           <ul>
-            <li>使用 <a href="https://github.com/Anjok07/ultimatevocalremovergui" target="_blank" rel="noopener">UVR5</a> 或 <a href="https://moises.ai" target="_blank" rel="noopener">Moises</a> 等工具，從原曲分離出乾淨人聲軌再匯入</li>
-            <li>載入 MIDI 檔作為旋律參考</li>
-            <li>使用內建的「快速消人聲」功能（適用立體聲 center-panned 音源）</li>
+            <li>{$t("about.notes.2.li1.before")}<a href="https://github.com/Anjok07/ultimatevocalremovergui" target="_blank" rel="noopener">UVR5</a>{$t("about.notes.2.li1.middle")}<a href="https://moises.ai" target="_blank" rel="noopener">Moises</a>{$t("about.notes.2.li1.after")}</li>
+            <li>{$t("about.notes.2.li2")}</li>
+            <li>{$t("about.notes.2.li3")}</li>
           </ul>
         </div>
       </div>
       <div class="note-item">
         <span class="note-num">3</span>
         <div>
-          <strong>延遲校準</strong>
-          <p>首次使用建議進行延遲校準（準備頁底部），讓錄音的時間軸與伴奏精確對齊。校準值會自動儲存。</p>
+          <strong>{$t("about.notes.3.title")}</strong>
+          <p>{$t("about.notes.3.body")}</p>
         </div>
       </div>
       <div class="note-item">
         <span class="note-num">4</span>
         <div>
-          <strong>歌詞同步</strong>
-          <p>支援 LRC / SRT / VTT 格式。下載 YouTube 字幕後可直接載入為歌詞，也可在同步編輯器中手動標記時間戳。</p>
+          <strong>{$t("about.notes.4.title")}</strong>
+          <p>{$t("about.notes.4.body")}</p>
         </div>
       </div>
     </div>
   </div>
 
   <div class="card">
-    <h2>快捷鍵</h2>
+    <h2>{$t("about.shortcuts.title")}</h2>
     <div class="shortcuts">
-      <div class="shortcut"><kbd>Space</kbd><span>播放 / 暫停</span></div>
-      <div class="shortcut"><kbd>R</kbd><span>開始錄音</span></div>
-      <div class="shortcut"><kbd>Esc</kbd><span>停止</span></div>
-      <div class="shortcut"><kbd>A</kbd><span>設定循環 A 點</span></div>
-      <div class="shortcut"><kbd>B</kbd><span>設定循環 B 點</span></div>
-      <div class="shortcut"><kbd>+</kbd><span>升半音</span></div>
-      <div class="shortcut"><kbd>-</kbd><span>降半音</span></div>
+      <div class="shortcut"><kbd>Space</kbd><span>{$t("about.shortcuts.playPause")}</span></div>
+      <div class="shortcut"><kbd>R</kbd><span>{$t("about.shortcuts.record")}</span></div>
+      <div class="shortcut"><kbd>Esc</kbd><span>{$t("about.shortcuts.stop")}</span></div>
+      <div class="shortcut"><kbd>A</kbd><span>{$t("about.shortcuts.loopA")}</span></div>
+      <div class="shortcut"><kbd>B</kbd><span>{$t("about.shortcuts.loopB")}</span></div>
+      <div class="shortcut"><kbd>+</kbd><span>{$t("about.shortcuts.pitchUp")}</span></div>
+      <div class="shortcut"><kbd>-</kbd><span>{$t("about.shortcuts.pitchDown")}</span></div>
     </div>
   </div>
 
   <div class="card">
-    <h2>授權</h2>
+    <h2>{$t("about.license.title")}</h2>
     <p class="license-text">
-      VocalSync Studio 以 <strong>MIT License</strong> 開源發佈。
-      你可以自由使用、修改及散佈本軟體，但不提供任何擔保。
+      {$t("about.license.main.body1")}<strong>{$t("about.license.main.mit")}</strong>{$t("about.license.main.body2")}
     </p>
     <p class="license-note">
-      本軟體使用的 CREPE 音高偵測模型由 NYU MARL 開發，同樣以 MIT License 授權。
-      Tauri、Svelte、Symphonia、cpal、rustfft 等主要框架與函式庫皆為 MIT / Apache-2.0。
+      {$t("about.license.main.note")}
     </p>
 
-    <h3 class="license-subheading">yt-dlp（Unlicense）</h3>
+    <h3 class="license-subheading">{$t("about.license.ytdlp.heading")}</h3>
     <p class="license-note">
-      <a href="https://github.com/yt-dlp/yt-dlp" target="_blank" rel="noopener">yt-dlp</a>
-      以 <a href="https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE" target="_blank" rel="noopener">The Unlicense</a>
-      釋出（等同公有領域）。本程式以 CLI subprocess 方式呼叫未修改的
-      <code>yt-dlp.exe</code>，不做靜態連結。透過 yt-dlp 下載的內容是否
-      符合當地著作權與 YouTube 服務條款，由使用者自行負責。
+      {$t("about.license.ytdlp.body.before")}<a href="https://github.com/yt-dlp/yt-dlp" target="_blank" rel="noopener">yt-dlp</a>{$t("about.license.ytdlp.body.middle")}<a href="https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE" target="_blank" rel="noopener">The Unlicense</a>{$t("about.license.ytdlp.body.after")}
     </p>
 
-    <h3 class="license-subheading">FFmpeg（LGPL 2.1+ / 可能為 GPL）</h3>
+    <h3 class="license-subheading">{$t("about.license.ffmpeg.heading")}</h3>
     <p class="license-note">
-      <a href="https://ffmpeg.org/" target="_blank" rel="noopener">FFmpeg</a>
-      預設以
-      <a href="https://ffmpeg.org/legal.html" target="_blank" rel="noopener">LGPL-2.1-or-later</a>
-      授權；若啟用 libx264 / libx265 等特定編碼器則改為 GPL-2.0-or-later。
-      本程式以 CLI subprocess 方式呼叫 <code>ffmpeg</code> / <code>ffprobe</code>，
-      不靜態連結 libav* 函式庫；本倉庫內未附帶 FFmpeg binaries。
-      請自行留意所用 build 的具體授權版本（essentials build 通常為 LGPL；
-      full build 含 GPL 組件）。
+      {$t("about.license.ffmpeg.body.before")}<a href="https://ffmpeg.org/" target="_blank" rel="noopener">FFmpeg</a>{$t("about.license.ffmpeg.body.middle")}<a href="https://ffmpeg.org/legal.html" target="_blank" rel="noopener">LGPL-2.1-or-later</a>{$t("about.license.ffmpeg.body.after")}
     </p>
 
     <p class="license-disclaimer">
-      免責聲明：本工具僅為本地練唱輔助。透過本工具處理、下載的音訊內容，
-      其著作權與合法使用責任均歸使用者本人，開發者不對任何不當使用負責。
+      {$t("about.license.disclaimer")}
     </p>
   </div>
 
   <div class="card creator-card">
-    <h2>製作者</h2>
+    <h2>{$t("about.creator.title")}</h2>
     <p class="creator-name">himawari</p>
     <p class="creator-desc">
-      如果這個工具對你的練唱有幫助，歡迎請我喝杯咖啡，讓開發可以持續下去。
+      {$t("about.creator.desc")}
     </p>
     <a
       class="donate-btn"
@@ -176,14 +163,14 @@
         <line x1="10" y1="1" x2="10" y2="4" />
         <line x1="14" y1="1" x2="14" y2="4" />
       </svg>
-      Support on Ko-fi
+      {$t("about.creator.donate")}
     </a>
   </div>
 
   <div class="card feedback-card">
-    <h2>問題回報</h2>
+    <h2>{$t("about.feedback.title")}</h2>
     <p class="feedback-desc">
-      使用遇到問題、想回報 bug 或有功能建議都很歡迎，可以透過以下兩種方式聯絡我：
+      {$t("about.feedback.desc")}
     </p>
     <div class="feedback-row">
       <a
@@ -197,26 +184,26 @@
           <line x1="12" y1="8" x2="12" y2="12" />
           <line x1="12" y1="16" x2="12.01" y2="16" />
         </svg>
-        GitHub Issues
+        {$t("about.feedback.githubIssues")}
       </a>
       <a
         class="link-btn feedback-btn"
-        href="mailto:{SUPPORT_EMAIL}?subject=[VocalSync%20Studio%20v{VERSION}]%20問題回報"
+        href="mailto:{SUPPORT_EMAIL}?subject={encodeURIComponent($t('about.feedback.mailSubject', { version: VERSION }))}"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
           <polyline points="22,6 12,13 2,6" />
         </svg>
-        寄信回報
+        {$t("about.feedback.email")}
       </a>
     </div>
     <button
       type="button"
       class="email-chip"
       onclick={copyEmail}
-      title="點一下複製"
+      title={$t("about.feedback.emailCopyTitle")}
     >
-      <span class="email-label">信箱</span>
+      <span class="email-label">{$t("about.feedback.emailLabel")}</span>
       <span class="email-value">{SUPPORT_EMAIL}</span>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
@@ -226,20 +213,20 @@
   </div>
 
   <div class="card links-card">
-    <h2>連結與更新</h2>
+    <h2>{$t("about.links.title")}</h2>
     <div class="link-row">
       <a class="link-btn" href={GITHUB_URL} target="_blank" rel="noopener">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
           <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
         </svg>
-        GitHub
+        {$t("about.links.github")}
       </a>
       <button class="link-btn update-btn" onclick={checkForUpdates} disabled={checking}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="23 4 23 10 17 10" />
           <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
         </svg>
-        {checking ? "檢查中..." : "檢查更新"}
+        {checking ? $t("about.links.checking") : $t("about.links.checkUpdate")}
       </button>
     </div>
   </div>

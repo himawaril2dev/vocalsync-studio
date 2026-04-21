@@ -3,6 +3,7 @@
   import { lyricsLines, currentLyricIndex } from "../stores/lyrics";
   import { setLoopRange, clearLoop, loopA, loopB } from "../stores/transport";
   import { showToast } from "../stores/toast";
+  import { t, tSync } from "../i18n";
 
   let containerEl = $state<HTMLDivElement | null>(null);
   let lineEls = $state<HTMLDivElement[]>([]);
@@ -43,11 +44,11 @@
 
     if (isLineLooping(index)) {
       await clearLoop();
-      showToast("已取消循環", "info");
+      showToast(tSync("lyricsPanel.toast.loopCancelled"), "info");
     } else {
       await setLoopRange(line.start_ms / 1000, line.end_ms / 1000);
       invoke("seek", { seconds: line.start_ms / 1000 });
-      showToast("循環播放此句", "success");
+      showToast(tSync("lyricsPanel.toast.loopStarted"), "success");
     }
   }
 </script>
@@ -55,8 +56,8 @@
 <div class="lyrics-panel" bind:this={containerEl}>
   {#if $lyricsLines.length === 0}
     <div class="lyrics-empty">
-      <p>尚未載入歌詞</p>
-      <p class="hint">在設定頁載入 .lrc 或 .srt 檔案</p>
+      <p>{$t("lyricsPanel.empty.title")}</p>
+      <p class="hint">{$t("lyricsPanel.empty.hint")}</p>
     </div>
   {:else}
     <div class="lyrics-spacer"></div>
@@ -85,7 +86,7 @@
             <button
               class="loop-btn"
               class:loop-active={isLineLooping(i)}
-              title={isLineLooping(i) ? "取消循環" : "循環播放此句"}
+              title={isLineLooping(i) ? $t("lyricsPanel.loop.cancel") : $t("lyricsPanel.loop.set")}
               onclick={(e) => toggleLineLoop(i, e)}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">

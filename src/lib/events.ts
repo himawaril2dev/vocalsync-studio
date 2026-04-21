@@ -33,6 +33,7 @@ import {
 import { calibrationStatus } from "../stores/settings";
 import { showToast } from "../stores/toast";
 import { get } from "svelte/store";
+import { tSync } from "../i18n";
 
 interface CalibrationStartedPayload {
   bpm: number;
@@ -171,7 +172,7 @@ export async function setupEventListeners(): Promise<void> {
           console.warn("[backing_pitch] 旋律軌跡載入失敗，降級為自由模式", err);
           backingPitchTrack.set(null);
           freeMode.set(true);
-          freeModeReason.set("旋律軌跡載入失敗，已切換為自由模式");
+          freeModeReason.set(tSync("pitchTimeline.banner.freeMode.loadFailed"));
         }
       },
     ),

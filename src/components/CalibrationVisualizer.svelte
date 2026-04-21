@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { calibrationStatus } from "../stores/settings";
+  import { tSync } from "../i18n";
 
   let { onFinish }: { onFinish: () => void } = $props();
 
@@ -75,20 +76,20 @@
     ctx.fillStyle = "#fff";
     ctx.font = "bold 22px sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText("當球碰到準線時，對麥克風拍手！", W / 2, 38);
+    ctx.fillText(tSync("calibration.canvas.title"), W / 2, 38);
 
     // 第一段為「暖身」提示
     ctx.fillStyle = "rgba(255, 255, 255, 0.55)";
     ctx.font = "14px sans-serif";
     if (t < prepMs + warmupBeats * beatIntervalMs) {
       ctx.fillText(
-        `前 ${warmupBeats} 拍是暖身，幫你抓節奏，不會納入計算`,
+        tSync("calibration.canvas.warmup", { beats: warmupBeats }),
         W / 2,
         62,
       );
     } else if (t < lastHitTime + 200) {
       ctx.fillText(
-        `量測中（共 ${measurementBeats} 拍）`,
+        tSync("calibration.canvas.measuring", { beats: measurementBeats }),
         W / 2,
         62,
       );
@@ -128,7 +129,7 @@
       ctx.fillStyle = `rgba(255, 255, 255, ${hitAlpha})`;
       ctx.font = "bold 64px sans-serif";
       const display = isWarmup
-        ? `暖${lastHitIdx + 1}`
+        ? tSync("calibration.canvas.warmupBadge", { n: lastHitIdx + 1 })
         : (lastHitIdx - warmupBeats + 1).toString();
       ctx.fillText(display, W / 2, groundY - 80);
     }
@@ -155,7 +156,7 @@
       if (errorMsg) {
         ctx.fillStyle = "rgba(255, 120, 120, 0.95)";
         ctx.font = "bold 22px sans-serif";
-        ctx.fillText("校準失敗", W / 2, groundY - 40);
+        ctx.fillText(tSync("calibration.canvas.failed"), W / 2, groundY - 40);
         ctx.font = "14px sans-serif";
         ctx.fillStyle = "rgba(255, 200, 200, 0.85)";
         // 自動換行（簡單處理）
@@ -177,12 +178,12 @@
       } else if (finalLatency !== null) {
         ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
         ctx.font = "bold 32px sans-serif";
-        ctx.fillText(`延遲 ${finalLatency} ms`, W / 2, groundY - 40);
+        ctx.fillText(tSync("calibration.canvas.latency", { ms: finalLatency }), W / 2, groundY - 40);
         if (stdDev !== null) {
           ctx.font = "14px sans-serif";
           ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
           ctx.fillText(
-            `標準差 ${stdDev.toFixed(1)} ms（越小越穩）`,
+            tSync("calibration.canvas.stdDev", { std: stdDev.toFixed(1) }),
             W / 2,
             groundY - 14,
           );
@@ -190,7 +191,7 @@
       } else {
         ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
         ctx.font = "bold 22px sans-serif";
-        ctx.fillText("分析中…", W / 2, groundY - 40);
+        ctx.fillText(tSync("calibration.canvas.analyzing"), W / 2, groundY - 40);
       }
     }
 
@@ -241,7 +242,7 @@
         ctx.fillStyle = "rgba(180, 180, 180, 0.7)";
         ctx.font = "10px sans-serif";
         ctx.textAlign = "center";
-        ctx.fillText("暖身", cx, numY);
+        ctx.fillText(tSync("calibration.canvas.warmupLabel"), cx, numY);
       }
     }
 

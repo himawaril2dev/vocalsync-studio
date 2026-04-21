@@ -17,6 +17,7 @@
     keyDetectionStatus,
     type KeyResult,
   } from "../stores/pitch";
+  import { t, tSync } from "../i18n";
 
   /** 是否正在播放（從 transport state 推導） */
   let isPlaying = $derived($transportState === "playing_back");
@@ -131,34 +132,47 @@
     // Pearson r 範圍 -1~1，通常調性偵測 r > 0.5 就算有信心
     return Math.round(Math.max(0, r) * 100) + "%";
   }
+
+  /** melody 狀態訊息渲染（支援 locale 切換即時刷新） */
+  let melodyStatusText = $derived.by(() => {
+    const translate = $t;
+    const m = $melodyStatus;
+    if (!m) return translate("setup.melody.status.empty");
+    const base = translate(m.key, m.vars);
+    if (m.appendKey) {
+      return translate(m.appendKey, { ...(m.appendVars ?? {}), status: base });
+    }
+    return base;
+  });
 </script>
 
 <div class="pitch-page">
   <div class="header-row">
-    <h2>音高曲線</h2>
+    <h2>{$t("pitch.header.title")}</h2>
     <div class="header-meta">
       {#if $currentMelody}
-        <span class="meta-text">{$melodyStatus}</span>
+        <span class="meta-text">{melodyStatusText}</span>
         {#if $alignmentResult}
           <span class="meta-sep">·</span>
           <span class="meta-text">
-            對齊 {$alignmentResult.offset_secs >= 0
-              ? "+"
-              : ""}{$alignmentResult.offset_secs.toFixed(3)}s
+            {$t("pitch.header.alignment", {
+              sign: $alignmentResult.offset_secs >= 0 ? "+" : "",
+              offset: $alignmentResult.offset_secs.toFixed(3),
+            })}
           </span>
         {/if}
         {#if $detectedKey}
           <span class="meta-sep">·</span>
-          <span class="key-badge" title="相關係數 {$detectedKey.correlation.toFixed(3)}，樣本數 {$detectedKey.sample_count}">
+          <span class="key-badge" title={$t("pitch.header.keyTooltip", { r: $detectedKey.correlation.toFixed(3), samples: $detectedKey.sample_count })}>
             {$detectedKey.key} ({correlationToPercent($detectedKey.correlation)})
           </span>
         {:else if $keyDetectionStatus === "detecting"}
           <span class="meta-sep">·</span>
-          <span class="meta-text muted">偵測調性中…</span>
+          <span class="meta-text muted">{$t("pitch.header.keyDetecting")}</span>
         {/if}
       {:else}
         <span class="meta-text muted">
-          請到「設定」頁載入練唱伴奏與人聲音軌
+          {$t("pitch.header.noMelody")}
         </span>
       {/if}
     </div>
@@ -175,10 +189,10 @@
       disabled={!playEnabled}
       title={playEnabled
         ? isPlaying
-          ? "暫停"
-          : "播放"
-        : "需先載入練唱伴奏才能播放"}
-      aria-label={isPlaying ? "暫停" : "播放"}
+          ? $t("pitch.transport.pause")
+          : $t("pitch.transport.play")
+        : $t("pitch.transport.needBacking")}
+      aria-label={isPlaying ? $t("pitch.transport.pause") : $t("pitch.transport.play")}
     >
       {#if isPlaying}
         ❚❚

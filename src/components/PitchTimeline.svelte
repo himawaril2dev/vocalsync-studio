@@ -12,6 +12,7 @@
     type BackingPitchAnalyzing,
     type PitchTrackSample,
   } from "../stores/pitch";
+  import { t } from "../i18n";
 
   let canvasEl = $state<HTMLCanvasElement | null>(null);
   let containerEl = $state<HTMLDivElement | null>(null);
@@ -323,12 +324,12 @@
     {#if !isFreeMode}
       <span class="legend-item">
         <span class="legend-line backing"></span>
-        目標旋律
+        {$t("pitchTimeline.legend.melody")}
       </span>
     {/if}
     <span class="legend-item">
       <span class="legend-line vocal"></span>
-      你的音高
+      {$t("pitchTimeline.legend.yourPitch")}
     </span>
   </div>
 
@@ -336,19 +337,19 @@
   {#if analyzing}
     <div class="analyzing-banner" role="status">
       <span class="spinner"></span>
-      <span class="banner-tag analyzing-tag">分析中</span>
+      <span class="banner-tag analyzing-tag">{$t("pitchTimeline.banner.analyzing.tag")}</span>
       <span class="banner-text">
-        伴奏旋律分析中… 已 {analyzingSeconds}s
+        {$t("pitchTimeline.banner.analyzing.text", { seconds: analyzingSeconds })}
         {#if analyzing.duration > 0}
-          （音訊長度 {analyzing.duration.toFixed(1)}s）
+          {$t("pitchTimeline.banner.analyzing.duration", { duration: analyzing.duration.toFixed(1) })}
         {/if}
       </span>
     </div>
   {:else if isFreeMode}
     <!-- 自由模式提示橫幅 -->
     <div class="free-mode-banner" role="status">
-      <span class="banner-tag">自由模式</span>
-      <span class="banner-text">{freeReason || "未偵測到主旋律"}</span>
+      <span class="banner-tag">{$t("pitchTimeline.banner.freeMode.tag")}</span>
+      <span class="banner-text">{freeReason || $t("pitchTimeline.banner.freeMode.defaultReason")}</span>
     </div>
   {/if}
 </div>

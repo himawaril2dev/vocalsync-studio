@@ -51,6 +51,7 @@
   import LyricsPanel from "../components/LyricsPanel.svelte";
   import LyricsSyncEditor from "../components/LyricsSyncEditor.svelte";
   import PitchTimeline from "../components/PitchTimeline.svelte";
+  import { t, tSync } from "../i18n";
 
   type PanelView = "lyrics" | "sync";
 
@@ -206,7 +207,7 @@
       pausedResumeMode.set(null);
       pausedAtElapsed.set(null);
     } catch (e) {
-      showToast(`試聽失敗：${e}`, "error");
+      showToast(tSync("recording.toast.previewFailed", { error: String(e) }), "error");
     }
   }
 
@@ -225,7 +226,7 @@
       pausedResumeMode.set(null);
       pausedAtElapsed.set(null);
     } catch (e) {
-      showToast(`回放失敗：${e}`, "error");
+      showToast(tSync("recording.toast.playbackFailed", { error: String(e) }), "error");
     }
   }
 
@@ -249,9 +250,11 @@
       const now = $elapsed;
       if (now + 0.05 < baseline) {
         const confirmed = await ask(
-          `目前播放位置（${now.toFixed(1)} 秒）比暫停時（${baseline.toFixed(1)} 秒）更前，` +
-            `繼續錄音會捨棄 ${now.toFixed(1)} 秒之後已錄的內容，確定要繼續嗎？`,
-          { title: "向前錄音確認", kind: "warning" },
+          tSync("recording.dialog.forwardRecord.message", {
+            now: now.toFixed(1),
+            baseline: baseline.toFixed(1),
+          }),
+          { title: tSync("recording.dialog.forwardRecord.title"), kind: "warning" },
         );
         if (!confirmed) return;
       }
@@ -272,7 +275,7 @@
       pausedResumeMode.set(null);
       pausedAtElapsed.set(null);
     } catch (e) {
-      showToast(`錄音失敗：${e}`, "error");
+      showToast(tSync("recording.toast.recordingFailed", { error: String(e) }), "error");
     }
   }
 
@@ -289,7 +292,7 @@
       pausedAtElapsed.set(get(elapsed));
       transportState.set("paused");
     } catch (e) {
-      showToast(`暫停失敗：${e}`, "error");
+      showToast(tSync("recording.toast.pauseFailed", { error: String(e) }), "error");
     }
   }
 
@@ -316,7 +319,7 @@
         videoEl.pause();
       }
     } catch (e) {
-      showToast(`停止失敗：${e}`, "error");
+      showToast(tSync("recording.toast.stopFailed", { error: String(e) }), "error");
     }
   }
 
@@ -324,8 +327,8 @@
    *  供使用者在續錄不想要時「重新開始」。*/
   async function clearRecording(): Promise<void> {
     const confirmed = await ask(
-      "清除後目前這段錄音將無法恢復，確定要清除嗎？",
-      { title: "清除錄音", kind: "warning" },
+      tSync("recording.dialog.clearRecord.message"),
+      { title: tSync("recording.dialog.clearRecord.title"), kind: "warning" },
     );
     if (!confirmed) return;
 
@@ -334,17 +337,17 @@
       hasRecording.set(false);
       clearLiveVocalSamples();
       resetVideo();
-      showToast("已清除錄音，可從頭重錄", "success", 2500);
+      showToast(tSync("recording.toast.clearedCanRerecord"), "success", 2500);
     } catch (e) {
-      showToast(`清除失敗：${e}`, "error");
+      showToast(tSync("recording.toast.clearFailed", { error: String(e) }), "error");
     }
   }
 
   async function exportAudio() {
     try {
       const filePath = await save({
-        title: "選擇導出位置",
-        filters: [{ name: "WAV", extensions: ["wav"] }],
+        title: tSync("recording.export.dialog.title"),
+        filters: [{ name: tSync("recording.export.dialog.filter"), extensions: ["wav"] }],
         defaultPath: "vocalsync_recording",
       });
       if (!filePath) return;
@@ -366,32 +369,31 @@
           latencyMs: $latencyMs,
         },
       );
-      showToast(`導出成功\n人聲：${result.vocal_path}\n混音：${result.mix_path}`, "success", 5000);
+      showToast(tSync("recording.toast.exportSuccess", { vocal: result.vocal_path, mix: result.mix_path }), "success", 5000);
     } catch (e) {
-      showToast(`導出失敗：${e}`, "error");
+      showToast(tSync("recording.toast.exportFailed", { error: String(e) }), "error");
     }
   }
 
-  const transportStateLabel: Record<import("../stores/transport").TransportState, string> = {
-    idle: "待命",
-    previewing: "試聽中",
-    recording: "錄音中",
-    playing_back: "回放中",
-    paused: "已暫停",
-  };
-
-  const resumeModeSuffix: Record<ResumeMode, string> = {
-    previewing: "（試聽）",
-    recording: "（錄音）",
-    playing_back: "（回放）",
-  };
-
   let stateLabelText = $derived.by(() => {
+    const translate = $t;
     const s = $transportState;
+    const stateMap: Record<import("../stores/transport").TransportState, string> = {
+      idle: translate("recording.transport.state.idle"),
+      previewing: translate("recording.transport.state.previewing"),
+      recording: translate("recording.transport.state.recording"),
+      playing_back: translate("recording.transport.state.playingBack"),
+      paused: translate("recording.transport.state.paused"),
+    };
     if (s === "paused" && $pausedResumeMode) {
-      return `${transportStateLabel.paused}${resumeModeSuffix[$pausedResumeMode]}`;
+      const suffixMap: Record<ResumeMode, string> = {
+        previewing: translate("recording.transport.resume.previewing"),
+        recording: translate("recording.transport.resume.recording"),
+        playing_back: translate("recording.transport.resume.playingBack"),
+      };
+      return `${stateMap.paused}${suffixMap[$pausedResumeMode]}`;
     }
-    return transportStateLabel[s];
+    return stateMap[s];
   });
 
   function rmsToWidth(rms: number, boost: number = 3.0): number {
@@ -526,12 +528,12 @@
           ></video>
         {:else if $loadedMedia}
           <div class="video-placeholder">
-            <p>純音訊模式</p>
-            <p class="hint">{($loadedMedia.duration / 60).toFixed(1)} 分鐘 · {$loadedMedia.sample_rate} Hz</p>
+            <p>{$t("recording.video.audioOnly")}</p>
+            <p class="hint">{$t("recording.video.audioInfo", { minutes: ($loadedMedia.duration / 60).toFixed(1), sampleRate: $loadedMedia.sample_rate })}</p>
           </div>
         {:else}
           <div class="video-placeholder">
-            <p>請先載入伴奏</p>
+            <p>{$t("recording.video.noBacking")}</p>
           </div>
         {/if}
       </div>
@@ -546,7 +548,7 @@
             onclick={() => (panelView = "lyrics")}
             aria-pressed={panelView === "lyrics"}
           >
-            歌詞
+            {$t("recording.panel.lyrics")}
           </button>
           <button
             class="toggle-btn"
@@ -554,7 +556,7 @@
             onclick={() => (panelView = "sync")}
             aria-pressed={panelView === "sync"}
           >
-            同步
+            {$t("recording.panel.sync")}
           </button>
         </div>
         <div class="panel-content">
@@ -587,8 +589,8 @@
           class="t-btn play"
           onclick={$isTransportPaused ? resumeFromPause : startPreview}
           disabled={!$loadedMedia || $isTransportRunning}
-          title={$isTransportPaused ? "繼續播放 (Space)" : "試聽 (Space)"}
-          aria-label={$isTransportPaused ? "繼續播放" : "試聽"}
+          title={$isTransportPaused ? $t("recording.action.resume.title") : $t("recording.action.play.title")}
+          aria-label={$isTransportPaused ? $t("recording.action.resume.aria") : $t("recording.action.play.aria")}
         ><Icon name="play" size={14} /></button>
 
         <!-- 暫停：running 時可按暫停；paused 時保持 II 圖示且 disabled（由試聽/錄音鍵繼續）-->
@@ -596,8 +598,8 @@
           class="t-btn pause"
           onclick={pauseCurrent}
           disabled={!$isTransportRunning}
-          title="暫停 (Space)"
-          aria-label="暫停"
+          title={$t("recording.action.pause.title")}
+          aria-label={$t("recording.action.pause.aria")}
         ><Icon name="pause" size={14} /></button>
 
         <!-- 停止：回到最開頭。running 或 paused 時可按 -->
@@ -605,8 +607,8 @@
           class="t-btn stop"
           onclick={stopAll}
           disabled={$transportState === "idle"}
-          title="停止 (Esc)"
-          aria-label="停止並回到開頭"
+          title={$t("recording.action.stop.title")}
+          aria-label={$t("recording.action.stop.aria")}
         ><Icon name="stop" size={14} /></button>
 
         <!-- 錄音：idle → 新錄/續錄，paused(recording) → 續錄，paused(其他) → 從當前位置開錄 -->
@@ -614,26 +616,26 @@
           class="t-btn rec"
           onclick={startRecording}
           disabled={!$loadedMedia || $isTransportRunning}
-          title="錄音 (R)"
-          aria-label="錄音"
+          title={$t("recording.action.record.title")}
+          aria-label={$t("recording.action.record.aria")}
         ><Icon name="record" size={14} /></button>
       </div>
 
       <div class="state-chip">
         {#if $transportState === "recording"}
-          <span class="rec-dot" aria-label="錄音中"></span>
+          <span class="rec-dot" aria-label={$t("recording.action.record.dot.aria")}></span>
         {/if}
         <strong>{stateLabelText}</strong>
         {#if $loadedMedia}
           <span class="track-name" title={$loadedMedia.file_path}>{$loadedMedia.file_name}</span>
         {/if}
         {#if $loopActive}
-          <span class="loop-badge">循環</span>
+          <span class="loop-badge">{$t("recording.loop.badge")}</span>
         {/if}
         {#if $detectedKey}
-          <span class="key-badge" title="相關係數 {$detectedKey.correlation.toFixed(3)}">{$detectedKey.key}</span>
+          <span class="key-badge" title={$t("recording.key.tooltip", { r: $detectedKey.correlation.toFixed(3) })}>{$detectedKey.key}</span>
         {:else if $keyDetectionStatus === "detecting"}
-          <span class="key-detecting">偵測調性…</span>
+          <span class="key-detecting">{$t("recording.key.detecting")}</span>
         {/if}
       </div>
     </div>
@@ -667,29 +669,29 @@
   <div class="control-row">
     <div class="vu-compact">
       <div class="vu-item">
-        <span class="vu-label">伴奏</span>
+        <span class="vu-label">{$t("recording.volume.backing")}</span>
         <div class="vu-bar"><div class="vu-fill" style="width: {rmsToWidth($backingRms, 3.0)}%"></div></div>
-        <input type="range" class="vol-slider" min="0" max="1" step="0.01" bind:value={$backingVolume} title="伴奏音量 {Math.round($backingVolume * 100)}%">
+        <input type="range" class="vol-slider" min="0" max="1" step="0.01" bind:value={$backingVolume} title={$t("recording.volume.backing.title", { pct: Math.round($backingVolume * 100) })}>
         <span class="vu-value">{Math.round($backingVolume * 100)}%</span>
         <button
           class="vu-reset"
           onclick={resetBackingVolume}
           disabled={!hasNonDefaultBacking}
-          aria-label="重設伴奏音量為預設值 {Math.round(DEFAULT_BACKING_VOLUME * 100)}%"
-          title="重設伴奏為 {Math.round(DEFAULT_BACKING_VOLUME * 100)}%"
+          aria-label={$t("recording.volume.backing.reset.aria", { pct: Math.round(DEFAULT_BACKING_VOLUME * 100) })}
+          title={$t("recording.volume.backing.reset.title", { pct: Math.round(DEFAULT_BACKING_VOLUME * 100) })}
         >↺</button>
       </div>
       <div class="vu-item">
-        <span class="vu-label">人聲</span>
+        <span class="vu-label">{$t("recording.volume.mic")}</span>
         <div class="vu-bar"><div class="vu-fill" style="width: {rmsToWidth($micRms, 5.0)}%"></div></div>
-        <input type="range" class="vol-slider" min="0" max="3" step="0.01" bind:value={$micGain} title="麥克風增益 {Math.round($micGain * 100)}%">
+        <input type="range" class="vol-slider" min="0" max="3" step="0.01" bind:value={$micGain} title={$t("recording.volume.mic.title", { pct: Math.round($micGain * 100) })}>
         <span class="vu-value">{Math.round($micGain * 100)}%</span>
         <button
           class="vu-reset"
           onclick={resetMicGain}
           disabled={!hasNonDefaultMic}
-          aria-label="重設人聲音量為預設值 {Math.round(DEFAULT_MIC_GAIN * 100)}%"
-          title="重設人聲為 {Math.round(DEFAULT_MIC_GAIN * 100)}%"
+          aria-label={$t("recording.volume.mic.reset.aria", { pct: Math.round(DEFAULT_MIC_GAIN * 100) })}
+          title={$t("recording.volume.mic.reset.title", { pct: Math.round(DEFAULT_MIC_GAIN * 100) })}
         >↺</button>
       </div>
     </div>
@@ -697,40 +699,40 @@
     <div class="divider"></div>
 
     <div class="sp-control">
-      <span class="sp-label">速度</span>
+      <span class="sp-label">{$t("recording.speed.label")}</span>
       <button
         class="sp-btn"
         onclick={decrementSpeedStep}
         disabled={atMinSpeed}
-        title="降低速度檔位"
+        title={$t("recording.speed.decrease.title")}
       >-</button>
       <span class="sp-value">{$speed.toFixed(2)}x</span>
       <button
         class="sp-btn"
         onclick={incrementSpeedStep}
         disabled={atMaxSpeed}
-        title="提高速度檔位"
+        title={$t("recording.speed.increase.title")}
       >+</button>
       <button
         class="vu-reset"
         onclick={resetSpeed}
         disabled={!$hasNonDefaultSpeed}
-        aria-label="重設速度為預設值 1.00x"
-        title="重設速度為 1.00x"
+        aria-label={$t("recording.speed.reset.aria")}
+        title={$t("recording.speed.reset.title")}
       >↺</button>
     </div>
 
     <div class="sp-control">
-      <span class="sp-label">移調</span>
-      <button class="sp-btn" onclick={() => setPitchSemitones($pitchSemitones - 1)} disabled={$pitchSemitones <= PITCH_SEMITONES_MIN} title="降半音 (-)">-</button>
+      <span class="sp-label">{$t("recording.pitch.label")}</span>
+      <button class="sp-btn" onclick={() => setPitchSemitones($pitchSemitones - 1)} disabled={$pitchSemitones <= PITCH_SEMITONES_MIN} title={$t("recording.pitch.decrease.title")}>-</button>
       <span class="sp-value pitch-val">{$pitchSemitones > 0 ? "+" : ""}{$pitchSemitones}</span>
-      <button class="sp-btn" onclick={() => setPitchSemitones($pitchSemitones + 1)} disabled={$pitchSemitones >= PITCH_SEMITONES_MAX} title="升半音 (+)">+</button>
+      <button class="sp-btn" onclick={() => setPitchSemitones($pitchSemitones + 1)} disabled={$pitchSemitones >= PITCH_SEMITONES_MAX} title={$t("recording.pitch.increase.title")}>+</button>
       <button
         class="vu-reset"
         onclick={resetPitch}
         disabled={!$hasNonDefaultPitch}
-        aria-label="重設移調為預設值 0 半音"
-        title="重設移調為 0 半音"
+        aria-label={$t("recording.pitch.reset.aria")}
+        title={$t("recording.pitch.reset.title")}
       >↺</button>
     </div>
 
@@ -741,20 +743,20 @@
         class="t-btn loop-ab"
         class:loop-set={$loopA !== null}
         onclick={setLoopA}
-        title={$loopA !== null ? `A: ${fmtTime($loopA)}` : "設定 A 點 (A)"}
+        title={$loopA !== null ? $t("recording.loop.a.set", { time: fmtTime($loopA) }) : $t("recording.loop.a.default")}
       >A</button>
       <button
         class="t-btn loop-ab"
         class:loop-set={$loopB !== null}
         onclick={async () => {
           const ok = await setLoopB();
-          if (!ok) showToast("B 點必須在 A 點之後", "warning");
+          if (!ok) showToast(tSync("recording.toast.loopBAfterA"), "warning");
         }}
         disabled={$loopA === null}
-        title={$loopB !== null ? `B: ${fmtTime($loopB)}` : "設定 B 點 (B)"}
+        title={$loopB !== null ? $t("recording.loop.b.set", { time: fmtTime($loopB) }) : $t("recording.loop.b.default")}
       >B</button>
       {#if $loopActive}
-        <button class="t-btn loop-clear" onclick={clearLoop} title="清除循環">✕</button>
+        <button class="t-btn loop-clear" onclick={clearLoop} title={$t("recording.loop.clear.title")}>✕</button>
       {/if}
     </div>
 
@@ -765,37 +767,37 @@
       onclick={exportAudio}
       disabled={$isTransportRunning || !$hasRecording}
     >
-      <Icon name="download" size={14} /> 導出
+      <Icon name="download" size={14} /> {$t("recording.export.button")}
     </button>
 
     <button
       class="t-btn playback"
       onclick={startPlayback}
       disabled={!$hasRecording || !$loadedMedia || $isTransportRunning}
-      title="回放錄音"
+      title={$t("recording.playback.title")}
     >
-      回放
+      {$t("recording.playback.button")}
     </button>
 
     <button
       class="t-btn clear-rec"
       onclick={clearRecording}
       disabled={!$hasRecording || $isTransportRunning}
-      title="清除目前錄音，從頭開始錄"
+      title={$t("recording.clearRecord.title")}
     >
-      清除錄音
+      {$t("recording.clearRecord.button")}
     </button>
 
     <div class="auto-balance-group">
       <button
         type="button"
         class="auto-balance-hint"
-        data-tooltip="勾選後，匯出混音時會自動把人聲音量稍微蓋過伴奏（約 +2 dB），讓歌聲清楚主導。關閉則完全依目前的伴奏/人聲滑桿比例輸出。"
-        aria-label="標準化說明"
+        data-tooltip={$t("recording.autoBalance.tooltip")}
+        aria-label={$t("recording.autoBalance.aria")}
       >!</button>
       <label class="auto-balance-label">
         <input type="checkbox" bind:checked={$autoBalanceMixin} />
-        標準化
+        {$t("recording.autoBalance.label")}
       </label>
     </div>
   </div>
