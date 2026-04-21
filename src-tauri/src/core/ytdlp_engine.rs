@@ -247,7 +247,11 @@ pub fn find_ffmpeg() -> Option<PathBuf> {
 /// 取得 yt-dlp 版本字串。
 pub fn get_ytdlp_version() -> Option<String> {
     let ytdlp = find_ytdlp()?;
-    let output = Command::new(ytdlp).arg("--version").output().ok()?;
+    let mut cmd = Command::new(ytdlp);
+    cmd.arg("--version");
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let output = cmd.output().ok()?;
     let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if version.is_empty() {
         None
@@ -259,7 +263,11 @@ pub fn get_ytdlp_version() -> Option<String> {
 /// 取得 FFmpeg 版本字串（第一行）。
 pub fn get_ffmpeg_version() -> Option<String> {
     let ffmpeg = find_ffmpeg()?;
-    let output = Command::new(ffmpeg).arg("-version").output().ok()?;
+    let mut cmd = Command::new(ffmpeg);
+    cmd.arg("-version");
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let output = cmd.output().ok()?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     stdout.lines().next().map(|s| s.to_string())
 }

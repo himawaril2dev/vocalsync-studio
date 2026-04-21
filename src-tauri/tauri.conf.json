@@ -1,6 +1,6 @@
 {
   "productName": "VocalSync Studio",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "identifier": "com.vocalsync.studio",
   "build": {
     "frontendDist": "../dist",
