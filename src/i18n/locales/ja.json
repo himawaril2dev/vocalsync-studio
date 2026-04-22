@@ -310,8 +310,9 @@
   "lyricsSync.status.saved": "保存しました: {path}",
   "lyricsSync.status.saveFailed": "保存に失敗しました: {error}",
 
-  "about.tagline": "練習の積み重ねが耳で確認できる、歌の練習サポートツール",
-  "about.aiBadge": "100% AI 製作 — アーキテクチャ、フロントエンド、バックエンド、UI まですべて AI が生成",
+  "about.tagline": "デスクトップのボーカル練習室——歌を練習したい、自分の声をちゃんと聴きたいあなたのために。練習のたびに、上達を耳で実感できる",
+  "about.disclosure.title": "開示事項",
+  "about.disclosure.body": "作者にはプログラミングの経験がありません。本プロジェクトは AI（Claude / Codex）との協働により開発され、アーキテクチャ・コード・UI まですべて AI によって生成されました。すべての機能は実テストとマルチモデルのコードレビュー（Claude による実装 + Codex による独立監査）を経ています。ご自身の用途に応じてリスクをご判断の上ご利用ください。",
 
   "about.notes.title": "使い方",
   "about.notes.1.title": "伴奏を準備",

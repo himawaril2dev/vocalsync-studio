@@ -3,7 +3,7 @@
   import { showToast } from "../stores/toast";
   import { t, tSync } from "../i18n";
 
-  const VERSION = "0.2.3";
+  const VERSION = "0.2.6";
   const KOFI_URL = "https://ko-fi.com/himawari168";
   const GITHUB_URL = "https://github.com/himawaril2dev/vocalsync-studio";
   const ISSUES_URL = "https://github.com/himawaril2dev/vocalsync-studio/issues";
@@ -65,7 +65,11 @@
     <h1 class="app-name">VocalSync Studio</h1>
     <span class="version">v{VERSION}</span>
     <p class="tagline">{$t("about.tagline")}</p>
-    <p class="ai-badge">{$t("about.aiBadge")}</p>
+  </div>
+
+  <div class="disclosure">
+    <strong class="disclosure-title">📢 {$t("about.disclosure.title")}</strong>
+    <p class="disclosure-body">{$t("about.disclosure.body")}</p>
   </div>
 
   <div class="card">
@@ -281,12 +285,27 @@
     color: var(--color-text-secondary);
   }
 
-  .ai-badge {
-    margin: var(--space-sm) 0 0;
+  .disclosure {
+    padding: var(--space-md) var(--space-lg);
+    background: var(--color-bg-hover);
+    border-left: 3px solid var(--color-info);
+    border-radius: var(--radius-md);
+    text-align: left;
+  }
+
+  .disclosure-title {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--color-text);
+    margin-bottom: var(--space-xs);
+  }
+
+  .disclosure-body {
+    margin: 0;
     font-size: 12px;
-    color: var(--color-brand);
-    font-weight: 500;
-    letter-spacing: 0.3px;
+    color: var(--color-text-secondary);
+    line-height: 1.7;
   }
 
   .card {

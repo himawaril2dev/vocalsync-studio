@@ -310,8 +310,9 @@
   "lyricsSync.status.saved": "已儲存：{path}",
   "lyricsSync.status.saveFailed": "儲存失敗：{error}",
 
-  "about.tagline": "練唱輔助工具，讓每一次練習都聽得見進步",
-  "about.aiBadge": "100% AI-Crafted — 從架構設計、前後端程式碼到 UI，全程由 AI 生成",
+  "about.tagline": "一間桌面練唱室，為想練習唱歌、聽見自己聲音的你打造，每次練習都聽得見進步",
+  "about.disclosure.title": "透明度聲明",
+  "about.disclosure.body": "作者沒有程式開發背景，本專案由 AI（Claude / Codex）協作完成——從架構、程式碼到 UI 全部由 AI 生成。所有功能皆經實測與跨模型 code review（Claude 實作 + Codex 獨立審查）。請依你的使用情境評估風險後採用。",
 
   "about.notes.title": "使用須知",
   "about.notes.1.title": "準備伴奏",
