@@ -40,7 +40,8 @@ VocalSync Studio is a desktop application that combines backing-track playback, 
 2. Unzip it anywhere you like (e.g. the desktop or `D:\Tools\`)
 3. Open the folder and double-click **`vocalsync-studio.exe`** to launch
 
-The other files in the folder are dependencies — keep them next to the exe:
+> ⚠️ **Do not rearrange the folder contents**
+> `DirectML.dll`, `yt-dlp.exe`, and `models/` are runtime dependencies loaded by `vocalsync-studio.exe` at startup. **Do not move them individually.** If you want to relocate the app, move the entire folder as a unit.
 
 | File | Description |
 |---|---|
@@ -48,6 +49,16 @@ The other files in the folder are dependencies — keep them next to the exe:
 | `DirectML.dll` | ONNX Runtime's DirectX ML acceleration DLL (required by CREPE pitch detection) |
 | `yt-dlp.exe` | YouTube backing-track download CLI |
 | `models/crepe-tiny.onnx` | CREPE pitch detection model |
+
+### Tested Environment
+
+| Item | Version |
+|---|---|
+| OS | Windows 11 Pro 23H2 / 24H2 |
+| Architecture | x86_64 |
+| WebView2 | 120+ (preinstalled on Windows 10/11) |
+
+Tauri builds for macOS / Linux are theoretically possible (the source is cross-platform) but **not yet tested**, and no portable releases are provided for those platforms. If you want to build on them, follow the "Build from source" section and please report your results on Issues.
 
 > **First-run Windows SmartScreen warning**
 > The binary is not currently code-signed, so Windows SmartScreen may show a "Windows protected your PC" warning.
@@ -129,7 +140,7 @@ This project is released as open source under the [MIT License](LICENSE) — fee
 
 | Component | License | Usage in this project |
 |---|---|---|
-| [CREPE](https://github.com/marl/crepe) / [onnxcrepe v1.1.0](https://github.com/yqzhishen/onnxcrepe) | MIT | AI pitch detection model (developed by NYU MARL; the ONNX conversion is from onnxcrepe v1.1.0) |
+| [CREPE](https://github.com/marl/crepe) / [onnxcrepe v1.1.0](https://github.com/yqzhishen/onnxcrepe) | MIT | AI pitch detection model (developed by NYU MARL; the ONNX conversion is from onnxcrepe v1.1.0; [BibTeX citation](#crepe-paper-citation)) |
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime) | MIT | Inference engine that executes the CREPE model |
 | [DirectML](https://github.com/microsoft/DirectML) | MIT | ML acceleration layer on Windows (`DirectML.dll`) |
 | [Tauri](https://github.com/tauri-apps/tauri) | MIT / Apache-2.0 | Desktop application framework |
@@ -153,6 +164,23 @@ This project is released as open source under the [MIT License](LICENSE) — fee
 - **Source**: by default it is loaded from [gyan.dev FFmpeg Windows builds](https://www.gyan.dev/ffmpeg/builds/) or an existing system installation. Please check the license of the specific build you download (essentials builds are typically LGPL; full builds include GPL components).
 - **Modification / redistribution**: if you redistribute FFmpeg binaries together with this project, you must comply with FFmpeg's license terms (include the license text, provide a way to obtain the source, etc.). This repository does **not** ship ffmpeg binaries, to avoid license conflicts.
 - Full official license text: <https://ffmpeg.org/legal.html>
+
+### CREPE paper citation
+
+The CREPE pitch detection model used by this project is based on the following paper:
+
+```bibtex
+@inproceedings{kim2018crepe,
+  title={{CREPE}: A Convolutional Representation for Pitch Estimation},
+  author={Kim, Jong Wook and Salamon, Justin and Li, Peter and Bello, Juan Pablo},
+  booktitle={2018 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP)},
+  pages={161--165},
+  year={2018},
+  organization={IEEE}
+}
+```
+
+If you use VocalSync's pitch detection results in academic or commercial research, please also cite the paper above and the [onnxcrepe](https://github.com/yqzhishen/onnxcrepe) ONNX-conversion work.
 
 ### Disclaimer
 

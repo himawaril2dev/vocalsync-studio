@@ -40,7 +40,8 @@ VocalSync Studio は、伴奏再生・リアルタイム録音・AI ピッチ検
 2. 任意の場所（デスクトップや `D:\Tools\` など）に展開します
 3. フォルダを開き、**`vocalsync-studio.exe`** をダブルクリックすると起動します
 
-フォルダ内のその他のファイルは依存関係です。exe と同じフォルダに残しておいてください。
+> ⚠️ **フォルダ構成を変更しないでください**
+> `DirectML.dll`、`yt-dlp.exe`、`models/` は `vocalsync-studio.exe` が起動時に読み込む依存ファイルです。**個別に移動させないでください。** アプリを別の場所に移したい場合は、フォルダごとまとめて移動してください。
 
 | ファイル | 説明 |
 |---|---|
@@ -48,6 +49,16 @@ VocalSync Studio は、伴奏再生・リアルタイム録音・AI ピッチ検
 | `DirectML.dll` | ONNX Runtime の DirectX ML アクセラレーション DLL（CREPE ピッチ検出で必要）|
 | `yt-dlp.exe` | YouTube 伴奏ダウンロード CLI |
 | `models/crepe-tiny.onnx` | CREPE ピッチ検出モデル |
+
+### 動作確認済み環境
+
+| 項目 | バージョン |
+|---|---|
+| OS | Windows 11 Pro 23H2 / 24H2 |
+| アーキテクチャ | x86_64 |
+| WebView2 | 120+（Windows 10/11 にプリインストール）|
+
+macOS / Linux 向けの Tauri ビルドは理論上可能（ソースはクロスプラットフォーム）ですが **未検証** で、portable release も提供していません。これらのプラットフォームでビルドしたい場合は「ソースからビルド」手順に従い、結果は Issues で報告していただけると助かります。
 
 > **初回起動時の Windows SmartScreen 警告について**
 > 現時点ではコード署名（code-signing）を行っていないため、Windows SmartScreen に「WindowsによってPCが保護されました」という警告が表示される場合があります。
@@ -129,7 +140,7 @@ vocalsync-studio-tauri/
 
 | コンポーネント | ライセンス | 本プロジェクトでの用途 |
 |---|---|---|
-| [CREPE](https://github.com/marl/crepe) / [onnxcrepe v1.1.0](https://github.com/yqzhishen/onnxcrepe) | MIT | AI ピッチ検出モデル（NYU MARL により開発。ONNX 変換版は onnxcrepe v1.1.0 より）|
+| [CREPE](https://github.com/marl/crepe) / [onnxcrepe v1.1.0](https://github.com/yqzhishen/onnxcrepe) | MIT | AI ピッチ検出モデル（NYU MARL により開発。ONNX 変換版は onnxcrepe v1.1.0 より。[BibTeX 引用](#crepe-論文引用)）|
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime) | MIT | CREPE モデルを実行する推論エンジン |
 | [DirectML](https://github.com/microsoft/DirectML) | MIT | Windows 上の ML アクセラレーション層（`DirectML.dll`）|
 | [Tauri](https://github.com/tauri-apps/tauri) | MIT / Apache-2.0 | デスクトップアプリケーションフレームワーク |
@@ -153,6 +164,23 @@ vocalsync-studio-tauri/
 - **入手元**：デフォルトでは [gyan.dev FFmpeg Windows builds](https://www.gyan.dev/ffmpeg/builds/) またはシステムの既存インストールから読み込まれます。ダウンロードする build のライセンスはご自身でご確認ください（essentials build は通常 LGPL、full build は GPL コンポーネントを含みます）
 - **改変 / 再配布**：FFmpeg バイナリを本プロジェクトと一緒に配布する場合、FFmpeg のライセンス条項を遵守する必要があります（ライセンステキストの同梱、ソース取得方法の提示など）。本リポジトリにはライセンス衝突を避けるため ffmpeg バイナリを**同梱していません**
 - 公式ライセンス全文：<https://ffmpeg.org/legal.html>
+
+### CREPE 論文引用
+
+本プロジェクトで使用している CREPE ピッチ検出モデルは、以下の論文を基にしています：
+
+```bibtex
+@inproceedings{kim2018crepe,
+  title={{CREPE}: A Convolutional Representation for Pitch Estimation},
+  author={Kim, Jong Wook and Salamon, Justin and Li, Peter and Bello, Juan Pablo},
+  booktitle={2018 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP)},
+  pages={161--165},
+  year={2018},
+  organization={IEEE}
+}
+```
+
+VocalSync のピッチ検出結果を学術研究や商用研究で使用される場合は、上記論文と [onnxcrepe](https://github.com/yqzhishen/onnxcrepe) の ONNX 変換作業も合わせて引用してください。
 
 ### 免責事項
 

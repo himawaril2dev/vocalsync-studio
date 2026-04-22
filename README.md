@@ -40,7 +40,8 @@ VocalSync Studio 是一款桌面應用程式，結合伴奏播放、即時錄音
 2. 解壓縮到任意位置（例如桌面或 `D:\Tools\`）
 3. 進入資料夾，雙擊 **`vocalsync-studio.exe`** 即可啟動
 
-資料夾內其他檔案是依賴，請保留不要移動：
+> ⚠️ **資料夾結構請勿變動**
+> `DirectML.dll`、`yt-dlp.exe`、`models/` 都是 `vocalsync-studio.exe` 執行期會載入的依賴，**不可單獨搬移**到其他位置。若要換目錄，請整個資料夾一起搬。
 
 | 檔案 | 說明 |
 |---|---|
@@ -48,6 +49,16 @@ VocalSync Studio 是一款桌面應用程式，結合伴奏播放、即時錄音
 | `DirectML.dll` | ONNX Runtime 的 DirectX ML 加速 DLL（CREPE 音高偵測需要）|
 | `yt-dlp.exe` | YouTube 伴奏下載 CLI |
 | `models/crepe-tiny.onnx` | CREPE 音高偵測模型 |
+
+### 已測試環境
+
+| 項目 | 版本 |
+|---|---|
+| OS | Windows 11 Pro 23H2 / 24H2 |
+| 架構 | x86_64 |
+| WebView2 | 120+（Windows 10/11 預裝）|
+
+macOS / Linux 的 Tauri build 理論上可行（原始碼多平台），但**尚未實測**，也未提供 portable release。若你想在這些平台建置，請走「從原始碼建置」流程，並歡迎回報成果到 Issues。
 
 > **第一次執行的 Windows SmartScreen 警告**
 > 因為目前還沒有做 code-signing 數位簽章，Windows SmartScreen 可能會跳出「已防止 Windows 保護您的電腦」的警告。
@@ -129,7 +140,7 @@ vocalsync-studio-tauri/
 
 | 元件 | 授權 | 在本專案中的用途 |
 |---|---|---|
-| [CREPE](https://github.com/marl/crepe) / [onnxcrepe v1.1.0](https://github.com/yqzhishen/onnxcrepe) | MIT | AI 音高偵測模型（NYU MARL 開發；ONNX 轉換版本來自 onnxcrepe v1.1.0）|
+| [CREPE](https://github.com/marl/crepe) / [onnxcrepe v1.1.0](https://github.com/yqzhishen/onnxcrepe) | MIT | AI 音高偵測模型（NYU MARL 開發；ONNX 轉換版本來自 onnxcrepe v1.1.0；[BibTeX 引用](#crepe-論文引用)）|
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime) | MIT | 執行 CREPE 模型的推論引擎 |
 | [DirectML](https://github.com/microsoft/DirectML) | MIT | Windows 下的 ML 加速層（`DirectML.dll`）|
 | [Tauri](https://github.com/tauri-apps/tauri) | MIT / Apache-2.0 | 桌面應用框架 |
@@ -153,6 +164,23 @@ vocalsync-studio-tauri/
 - **來源**：預設從 [gyan.dev FFmpeg Windows builds](https://www.gyan.dev/ffmpeg/builds/) 或系統既有安裝載入。請使用者自行留意所下載 build 的具體授權版本（essentials build 通常為 LGPL；full build 含 GPL 組件）
 - **修改 / 再散佈**：若你要把 FFmpeg binaries 連同本專案一起散佈，需遵守 FFmpeg 的授權條款（附上授權文字、提供原始碼取得方式等）。本倉庫內**未**附 ffmpeg binaries，避免授權衝突
 - 官方完整授權文字：<https://ffmpeg.org/legal.html>
+
+### CREPE 論文引用
+
+本專案使用的 CREPE 音高偵測模型源自以下論文：
+
+```bibtex
+@inproceedings{kim2018crepe,
+  title={{CREPE}: A Convolutional Representation for Pitch Estimation},
+  author={Kim, Jong Wook and Salamon, Justin and Li, Peter and Bello, Juan Pablo},
+  booktitle={2018 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP)},
+  pages={161--165},
+  year={2018},
+  organization={IEEE}
+}
+```
+
+如果你在學術或商業研究中使用了 VocalSync 的音高偵測成果，請一併引用上述論文與 [onnxcrepe](https://github.com/yqzhishen/onnxcrepe) 的 ONNX 轉換工作。
 
 ### 免責聲明
 
