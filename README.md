@@ -6,6 +6,8 @@
 
 VocalSync Studio 是一款桌面應用程式，結合伴奏播放、即時錄音、AI 音高偵測與歌詞同步顯示，幫助歌唱練習者視覺化自己的演唱表現。
 
+📖 **使用說明**：[USER_GUIDE.md](docs/USER_GUIDE.md)｜[English](docs/USER_GUIDE.en.md)｜[日本語](docs/USER_GUIDE.ja.md)（portable zip 內另附離線 HTML 版）
+
 > 📢 **透明度聲明**
 > 作者沒有程式開發背景，本專案由 AI（Claude / Codex）協作完成——從架構、程式碼到 UI 全部由 AI 生成。所有功能皆經實測與跨模型 code review（Claude 實作 + Codex 獨立審查）。請依你的使用情境評估風險後採用。
 
@@ -16,8 +18,6 @@ VocalSync Studio 是一款桌面應用程式，結合伴奏播放、即時錄音
 - **AI 音高偵測** — 使用 CREPE 神經網路模型分析演唱音高（離線運作，不需網路）
 - **音高曲線對比** — 將你的演唱與目標旋律並排顯示
 - **歌詞同步** — 支援 LRC / SRT / VTT 格式，含雙語自動偵測
-- **MIDI 旋律載入** — 匯入 MIDI 作為音高參考線
-- **調性偵測** — 自動分析伴奏調性
 - **A-B 循環** — 重複練習特定段落
 - **變速播放** — WSOLA 時間拉伸，不改變音高
 - **快速消人聲** — 立體聲 center-cancel 去除原唱
@@ -83,6 +83,10 @@ npm run tauri dev
 
 # 3. 建置 Release
 npm run tauri build
+
+# 4.（可選）產生離線 USER_GUIDE HTML 並打包進 portable zip
+npm run build:docs          # 輸出到 dist-docs/*.html
+npm run pack:portable-docs  # 複製 HTML 進 portable 資料夾並重新壓縮 zip
 ```
 
 建置產物在 `src-tauri/target/release/bundle/` 中。
@@ -103,9 +107,7 @@ vocalsync-studio-tauri/
 │       │   ├── crepe_engine.rs      # CREPE AI 音高偵測
 │       │   ├── pyin_engine.rs       # PYIN 傳統音高偵測
 │       │   ├── lyrics_parser.rs     # LRC/SRT/VTT 解析
-│       │   ├── midi_parser.rs       # MIDI 解析
 │       │   ├── wsola.rs             # 時間拉伸
-│       │   ├── key_detector.rs      # 調性偵測
 │       │   ├── ytdlp_engine.rs      # YouTube 下載
 │       │   └── ...
 │       └── lib.rs          # Tauri 入口

@@ -6,6 +6,8 @@ A desktop practice room — built for anyone who wants to sing, truly hear their
 
 VocalSync Studio is a desktop application that combines backing-track playback, real-time recording, AI pitch detection, and synchronized lyrics display to help singers visualize their performance.
 
+📖 **User guide**: [English](docs/USER_GUIDE.en.md)｜[繁體中文](docs/USER_GUIDE.md)｜[日本語](docs/USER_GUIDE.ja.md) (an offline HTML copy is also bundled in the portable zip)
+
 > 📢 **Disclosure**
 > The author has no prior programming background. This project was built through AI collaboration (Claude / Codex) — architecture, code, and UI were all AI-generated. All features have been tested and cross-model reviewed (Claude for implementation, Codex for independent audit). Please evaluate the risk against your own use case before adopting.
 
@@ -16,8 +18,6 @@ VocalSync Studio is a desktop application that combines backing-track playback, 
 - **AI pitch detection** — analyze sung pitch with the CREPE neural network model (runs offline, no network required)
 - **Pitch curve comparison** — display your vocal pitch side-by-side with the target melody
 - **Lyrics sync** — supports LRC / SRT / VTT formats, with automatic bilingual detection
-- **MIDI melody import** — load MIDI files as a pitch reference line
-- **Key detection** — automatically analyze the backing track's key
 - **A–B loop** — repeat specific sections for focused practice
 - **Speed change** — WSOLA time-stretching that preserves pitch
 - **Quick vocal removal** — stereo center-cancel to strip the lead vocal
@@ -83,6 +83,10 @@ npm run tauri dev
 
 # 3. Release build
 npm run tauri build
+
+# 4. (Optional) Generate the offline USER_GUIDE HTML and repack it into the portable zip
+npm run build:docs          # emits dist-docs/*.html
+npm run pack:portable-docs  # copies HTML into the portable folder and rebuilds the zip
 ```
 
 Build artifacts land in `src-tauri/target/release/bundle/`.
@@ -103,9 +107,7 @@ vocalsync-studio-tauri/
 │       │   ├── crepe_engine.rs      # CREPE AI pitch detection
 │       │   ├── pyin_engine.rs       # PYIN classical pitch detection
 │       │   ├── lyrics_parser.rs     # LRC/SRT/VTT parser
-│       │   ├── midi_parser.rs       # MIDI parser
 │       │   ├── wsola.rs             # Time-stretching
-│       │   ├── key_detector.rs      # Key detection
 │       │   ├── ytdlp_engine.rs      # YouTube download
 │       │   └── ...
 │       └── lib.rs          # Tauri entry point

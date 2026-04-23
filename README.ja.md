@@ -6,6 +6,8 @@
 
 VocalSync Studio は、伴奏再生・リアルタイム録音・AI ピッチ検出・歌詞同期表示を組み合わせたデスクトップアプリケーションです。歌唱練習者が自分のパフォーマンスを視覚的に確認できるよう支援します。
 
+📖 **ユーザーガイド**：[日本語](docs/USER_GUIDE.ja.md)｜[繁體中文](docs/USER_GUIDE.md)｜[English](docs/USER_GUIDE.en.md)（portable zip にはオフライン HTML 版も同梱）
+
 > 📢 **開示事項**
 > 作者にはプログラミングの経験がありません。本プロジェクトは AI（Claude / Codex）との協働により開発され、アーキテクチャ・コード・UI まですべて AI によって生成されました。すべての機能は実テストとマルチモデルのコードレビュー（Claude による実装 + Codex による独立監査）を経ています。ご自身の用途に応じてリスクをご判断の上ご利用ください。
 
@@ -16,8 +18,6 @@ VocalSync Studio は、伴奏再生・リアルタイム録音・AI ピッチ検
 - **AI ピッチ検出** — CREPE ニューラルネットワークモデルで歌声のピッチを解析（オフライン動作、ネットワーク不要）
 - **ピッチカーブ比較** — 自分の歌唱と目標メロディを並べて表示
 - **歌詞同期** — LRC / SRT / VTT 形式に対応し、バイリンガル字幕の自動判定も可能
-- **MIDI メロディ読込** — MIDI ファイルを目標ピッチラインとして読み込み
-- **キー検出** — 伴奏のキーを自動解析
 - **A-B ループ** — 特定区間を繰り返し練習
 - **速度変更** — WSOLA タイムストレッチでピッチを変えずに再生速度を変更
 - **ボーカル除去** — ステレオ center-cancel で原曲ボーカルを簡易的に除去
@@ -83,6 +83,10 @@ npm run tauri dev
 
 # 3. Release ビルド
 npm run tauri build
+
+# 4.（任意）オフライン USER_GUIDE HTML を生成して portable zip に同梱
+npm run build:docs          # dist-docs/*.html を出力
+npm run pack:portable-docs  # portable フォルダに HTML を入れて zip を作り直し
 ```
 
 ビルド成果物は `src-tauri/target/release/bundle/` に出力されます。
@@ -103,9 +107,7 @@ vocalsync-studio-tauri/
 │       │   ├── crepe_engine.rs      # CREPE AI ピッチ検出
 │       │   ├── pyin_engine.rs       # PYIN 従来型ピッチ検出
 │       │   ├── lyrics_parser.rs     # LRC/SRT/VTT パーサー
-│       │   ├── midi_parser.rs       # MIDI パーサー
 │       │   ├── wsola.rs             # タイムストレッチ
-│       │   ├── key_detector.rs      # キー検出
 │       │   ├── ytdlp_engine.rs      # YouTube ダウンロード
 │       │   └── ...
 │       └── lib.rs          # Tauri エントリポイント
