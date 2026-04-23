@@ -76,37 +76,6 @@ export function clearLiveVocalSamples() {
   liveVocalSamples.set([]);
 }
 
-// ── 調性偵測 ─────────────────────────────────────────────────────
-
-/** 調性偵測結果（對應後端 KeyResult） */
-export interface KeyResult {
-  key: string;
-  tonic: number;
-  mode: string;
-  correlation: number;
-  all_correlations: KeyCorrelation[];
-  chroma: number[];
-  sample_count: number;
-}
-
-export interface KeyCorrelation {
-  key: string;
-  correlation: number;
-}
-
-/** 偵測到的調性（null = 尚未偵測 / 偵測失敗） */
-export const detectedKey = writable<KeyResult | null>(null);
-
-/** 調性偵測狀態 */
-export type KeyDetectionStatus = "idle" | "detecting" | "done" | "error";
-export const keyDetectionStatus = writable<KeyDetectionStatus>("idle");
-
-/** 重置調性偵測狀態 */
-export function resetKeyDetection() {
-  detectedKey.set(null);
-  keyDetectionStatus.set("idle");
-}
-
 /** 重置與伴奏相關的所有 store（載入新伴奏時呼叫）*/
 export function resetBackingState() {
   backingPitchTrack.set(null);
@@ -114,5 +83,4 @@ export function resetBackingState() {
   backingPitchAnalyzing.set(null);
   freeMode.set(false);
   freeModeReason.set(null);
-  resetKeyDetection();
 }

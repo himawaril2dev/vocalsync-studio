@@ -45,7 +45,6 @@
     DEFAULT_BACKING_VOLUME,
     DEFAULT_MIC_GAIN,
   } from "../stores/settings";
-  import { detectedKey, keyDetectionStatus } from "../stores/pitch";
   import { showToast } from "../stores/toast";
   import Icon from "../components/Icon.svelte";
   import LyricsPanel from "../components/LyricsPanel.svelte";
@@ -631,11 +630,6 @@
         {/if}
         {#if $loopActive}
           <span class="loop-badge">{$t("recording.loop.badge")}</span>
-        {/if}
-        {#if $detectedKey}
-          <span class="key-badge" title={$t("recording.key.tooltip", { r: $detectedKey.correlation.toFixed(3) })}>{$detectedKey.key}</span>
-        {:else if $keyDetectionStatus === "detecting"}
-          <span class="key-detecting">{$t("recording.key.detecting")}</span>
         {/if}
       </div>
     </div>
@@ -1284,24 +1278,6 @@
     padding: 1px var(--space-xs);
     border-radius: var(--radius-sm);
     white-space: nowrap;
-  }
-
-  .key-badge {
-    display: inline-block;
-    background: #e8f4e8;
-    color: #2a6e2a;
-    font-size: 10px;
-    font-weight: 600;
-    padding: 1px var(--space-xs);
-    border-radius: var(--radius-sm);
-    white-space: nowrap;
-    cursor: help;
-  }
-
-  .key-detecting {
-    font-size: 10px;
-    color: var(--color-text-muted);
-    font-style: italic;
   }
 
   .auto-balance-group {

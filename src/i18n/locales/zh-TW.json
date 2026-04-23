@@ -263,13 +263,8 @@
   "recording.autoBalance.aria": "標準化說明",
   "recording.autoBalance.label": "標準化",
 
-  "recording.key.detecting": "偵測調性…",
-  "recording.key.tooltip": "相關係數 {r}",
-
   "pitch.header.title": "音高曲線",
   "pitch.header.alignment": "對齊 {sign}{offset}s",
-  "pitch.header.keyTooltip": "相關係數 {r}，樣本數 {samples}",
-  "pitch.header.keyDetecting": "偵測調性中…",
   "pitch.header.noMelody": "請到「設定」頁載入練唱伴奏與人聲音軌",
   "pitch.transport.pause": "暫停",
   "pitch.transport.play": "播放",

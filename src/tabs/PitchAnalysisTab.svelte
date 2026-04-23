@@ -12,11 +12,6 @@
     transportState,
   } from "../stores/transport";
   import { outputDeviceIndex, latencyMs } from "../stores/settings";
-  import {
-    detectedKey,
-    keyDetectionStatus,
-    type KeyResult,
-  } from "../stores/pitch";
   import { t, tSync } from "../i18n";
 
   /** 是否正在播放（從 transport state 推導） */
@@ -89,50 +84,6 @@
     }
   }
 
-  // ── 調性偵測 ─────────────────────────────────────────────────
-  /** 從目前的 melody raw pitch track 偵測調性 */
-  async function detectKeyFromMelody(): Promise<void> {
-    const melody = $currentMelody;
-    if (!melody?.raw_pitch_track || melody.raw_pitch_track.length < 30) return;
-
-    keyDetectionStatus.set("detecting");
-    try {
-      const track = { samples: melody.raw_pitch_track };
-      const result = await invoke<KeyResult | null>(
-        "detect_key_from_pitch_track",
-        { track },
-      );
-      if (result) {
-        detectedKey.set(result);
-        keyDetectionStatus.set("done");
-      } else {
-        detectedKey.set(null);
-        keyDetectionStatus.set("idle");
-      }
-    } catch (err) {
-      console.error("[key detect]", err);
-      keyDetectionStatus.set("error");
-    }
-  }
-
-  // 當 melody 載入時自動偵測調性
-  $effect(() => {
-    const melody = $currentMelody;
-    if (
-      melody?.raw_pitch_track &&
-      melody.raw_pitch_track.length >= 30 &&
-      $keyDetectionStatus === "idle"
-    ) {
-      detectKeyFromMelody();
-    }
-  });
-
-  /** 調性顯示用：將 correlation 轉為百分比信心度 */
-  function correlationToPercent(r: number): string {
-    // Pearson r 範圍 -1~1，通常調性偵測 r > 0.5 就算有信心
-    return Math.round(Math.max(0, r) * 100) + "%";
-  }
-
   /** melody 狀態訊息渲染（支援 locale 切換即時刷新） */
   let melodyStatusText = $derived.by(() => {
     const translate = $t;
@@ -168,15 +119,6 @@
               offset: $alignmentResult.offset_secs.toFixed(3),
             })}
           </span>
-        {/if}
-        {#if $detectedKey}
-          <span class="meta-sep">·</span>
-          <span class="key-badge" title={$t("pitch.header.keyTooltip", { r: $detectedKey.correlation.toFixed(3), samples: $detectedKey.sample_count })}>
-            {$detectedKey.key} ({correlationToPercent($detectedKey.correlation)})
-          </span>
-        {:else if $keyDetectionStatus === "detecting"}
-          <span class="meta-sep">·</span>
-          <span class="meta-text muted">{$t("pitch.header.keyDetecting")}</span>
         {/if}
       {:else}
         <span class="meta-text muted">
@@ -273,18 +215,6 @@
 
   .meta-sep {
     color: #d8d2c4;
-  }
-
-  .key-badge {
-    display: inline-block;
-    background: #e8f4e8;
-    color: #2a6e2a;
-    font-size: 11px;
-    font-weight: 600;
-    padding: 1px 8px;
-    border-radius: 10px;
-    white-space: nowrap;
-    cursor: help;
   }
 
   .timeline-wrapper {

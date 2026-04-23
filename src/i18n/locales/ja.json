@@ -263,13 +263,8 @@
   "recording.autoBalance.aria": "正規化の説明",
   "recording.autoBalance.label": "正規化",
 
-  "recording.key.detecting": "キー検出中...",
-  "recording.key.tooltip": "相関係数 {r}",
-
   "pitch.header.title": "ピッチカーブ",
   "pitch.header.alignment": "整列 {sign}{offset}s",
-  "pitch.header.keyTooltip": "相関係数 {r}、サンプル数 {samples}",
-  "pitch.header.keyDetecting": "キー検出中...",
   "pitch.header.noMelody": "「準備」ページで練習用伴奏とボーカルトラックを読み込んでください",
   "pitch.transport.pause": "一時停止",
   "pitch.transport.play": "再生",

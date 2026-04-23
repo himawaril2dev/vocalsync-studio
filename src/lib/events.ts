@@ -23,12 +23,9 @@ import {
   freeMode,
   freeModeReason,
   liveVocalSamples,
-  detectedKey,
-  keyDetectionStatus,
   type BackingPitchQuality,
   type PitchSample,
   type PitchTrack,
-  type KeyResult,
 } from "../stores/pitch";
 import { calibrationStatus } from "../stores/settings";
 import { showToast } from "../stores/toast";
@@ -203,26 +200,10 @@ export async function setupEventListeners(): Promise<void> {
   );
 
   unlisteners.push(
-    await listen("audio:finished", async () => {
+    await listen("audio:finished", () => {
       transportState.set("idle");
       pausedResumeMode.set(null);
       pausedAtElapsed.set(null);
-
-      // 錄音結束後自動偵測調性：拉取完整 pitch track → 偵測
-      try {
-        const track = await invoke<PitchTrack | null>("get_pitch_track");
-        if (track && track.samples.length >= 30) {
-          keyDetectionStatus.set("detecting");
-          const result = await invoke<KeyResult | null>(
-            "detect_key_from_pitch_track",
-            { track },
-          );
-          detectedKey.set(result);
-          keyDetectionStatus.set(result ? "done" : "idle");
-        }
-      } catch (err) {
-        console.warn("[key_detection] 調性偵測失敗", err);
-      }
     }),
   );
 

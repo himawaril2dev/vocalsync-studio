@@ -72,8 +72,6 @@ pub fn run() {
             commands::melody_commands::load_vocals_and_extract_melody,
             commands::melody_commands::auto_load_melody_for_backing,
             commands::melody_commands::align_audio_files,
-            commands::melody_commands::detect_key_from_pitch_track,
-            commands::melody_commands::detect_key_from_audio,
             commands::melody_commands::extract_melody_center_cancel,
             commands::download_commands::check_download_tools,
             commands::download_commands::detect_download_url_type,

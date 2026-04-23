@@ -2,7 +2,6 @@ pub mod audio_aligner;
 pub mod audio_engine;
 pub mod center_channel_cancel;
 pub mod crepe_engine;
-pub mod key_detector;
 pub mod lyrics_parser;
 pub mod media_loader;
 pub mod melody_extractor;

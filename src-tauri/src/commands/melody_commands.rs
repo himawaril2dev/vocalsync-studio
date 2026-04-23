@@ -9,12 +9,10 @@
 use crate::core::audio_aligner::{self, AlignmentResult};
 use crate::core::center_channel_cancel;
 use crate::core::crepe_engine;
-use crate::core::key_detector::{self, KeyResult};
 use crate::core::melody_extractor;
 use crate::core::melody_source_detector::{detect_melody_source, DetectedSource};
 use crate::core::melody_track::MelodyTrack;
 use crate::core::midi_parser;
-use crate::core::pitch_data::PitchTrack;
 use crate::error::AppError;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -130,14 +128,6 @@ pub fn align_audio_files(
     audio_aligner::align_files(&reference_path, &target_path)
 }
 
-// ── 調性偵測 ─────────────────────────────────────────────────────
-
-/// 從已錄製的 PitchTrack 偵測調性。
-#[tauri::command]
-pub fn detect_key_from_pitch_track(track: PitchTrack) -> Result<Option<KeyResult>, AppError> {
-    Ok(key_detector::detect_key(&track))
-}
-
 // ── 中央聲道消除 ─────────────────────────────────────────────────
 
 /// 對立體聲伴奏進行中央聲道消除（L-R 差分），
@@ -170,15 +160,3 @@ pub fn extract_melody_center_cancel(backing_path: String) -> Result<MelodyTrack,
     }
 }
 
-/// 從音檔提取音高並偵測調性（load → pitch detect → key detect 一條龍）。
-#[tauri::command]
-pub fn detect_key_from_audio(path: String) -> Result<Option<KeyResult>, AppError> {
-    let model_dir = get_model_dir();
-    let melody = melody_extractor::extract_melody_from_vocals(&path, model_dir.as_ref())?;
-
-    if let Some(ref raw_samples) = melody.raw_pitch_track {
-        Ok(key_detector::detect_key_from_samples(raw_samples))
-    } else {
-        Ok(None)
-    }
-}

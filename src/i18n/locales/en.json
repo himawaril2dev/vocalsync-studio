@@ -263,13 +263,8 @@
   "recording.autoBalance.aria": "Normalization info",
   "recording.autoBalance.label": "Normalize",
 
-  "recording.key.detecting": "Detecting key...",
-  "recording.key.tooltip": "Correlation {r}",
-
   "pitch.header.title": "Pitch Curve",
   "pitch.header.alignment": "Align {sign}{offset}s",
-  "pitch.header.keyTooltip": "Correlation {r}, {samples} samples",
-  "pitch.header.keyDetecting": "Detecting key...",
   "pitch.header.noMelody": "Please load a backing track and vocals track on the Setup page",
   "pitch.transport.pause": "Pause",
   "pitch.transport.play": "Play",
