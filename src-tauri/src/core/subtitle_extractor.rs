@@ -160,38 +160,7 @@ pub fn extract_subtitle(
 
 /// 搜尋 ffprobe 執行檔（跟 ffmpeg 放在一起）
 fn find_ffprobe() -> Option<PathBuf> {
-    // 1. app bin 資料夾
-    if let Some(bin_dir) = ytdlp_engine::get_app_bin_dir() {
-        let candidate = bin_dir.join(if cfg!(windows) {
-            "ffprobe.exe"
-        } else {
-            "ffprobe"
-        });
-        if candidate.exists() {
-            return Some(candidate);
-        }
-    }
-
-    // 2. 系統 PATH
-    if let Ok(path) = which::which("ffprobe") {
-        return Some(path);
-    }
-
-    // 3. 跟 ffmpeg 同目錄
-    if let Some(ffmpeg) = ytdlp_engine::find_ffmpeg() {
-        if let Some(dir) = ffmpeg.parent() {
-            let candidate = dir.join(if cfg!(windows) {
-                "ffprobe.exe"
-            } else {
-                "ffprobe"
-            });
-            if candidate.exists() {
-                return Some(candidate);
-            }
-        }
-    }
-
-    None
+    ytdlp_engine::find_ffprobe()
 }
 
 /// 解析 ffprobe JSON 輸出，提取字幕軌資訊。

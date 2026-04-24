@@ -131,7 +131,7 @@
   "download.tool.ytdlp.installing": "インストール中...",
   "download.tool.ffmpeg.hint": "FFmpeg がインストールされていません。動画ダウンロードと音声変換には FFmpeg が必要です。",
   "download.tool.ffmpeg.install": "FFmpeg を自動インストール（約 80 MB）",
-  "download.tool.ytdlp.manualHint": "または手動インストール:",
+  "download.tool.ytdlp.manualHint": "Windows 版は、内蔵インストーラーでダウンロードして検証済みの版のみ信頼します。",
 
   "download.form.url.label": "YouTube URL",
   "download.form.url.placeholder": "https://www.youtube.com/watch?v=...",

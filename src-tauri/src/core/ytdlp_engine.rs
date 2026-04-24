@@ -5,14 +5,14 @@
 //!
 //! # 外部依賴
 //!
-//! - **yt-dlp**：自動下載到 app 資料夾，或使用系統 PATH 上的版本
-//! - **FFmpeg**：影音合併/轉碼需要（yt-dlp 會自動呼叫）
+//! - **yt-dlp**：使用 SHA-256 驗證通過的 managed binary
+//! - **FFmpeg**：使用 install manifest 記錄 hash 的 managed binary
 
-use crate::error::AppError;
+use crate::{error::AppError, security};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::io::{BufRead, BufReader, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -57,6 +57,14 @@ const FFMPEG_DOWNLOAD_URL: &str =
     "https://github.com/GyanD/codexffmpeg/releases/download/2026-03-30-git-e54e117998/ffmpeg-2026-03-30-git-e54e117998-essentials_build.zip";
 #[cfg(windows)]
 const FFMPEG_ZIP_SHA256: &str = "e1872e1eab6a280da863f6336fa719ed13368dc294cf8010c81d3f63144c45b7";
+
+const TOOL_MANIFEST_NAME: &str = "tool-manifest.json";
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct ToolManifest {
+    ffmpeg_sha256: Option<String>,
+    ffprobe_sha256: Option<String>,
+}
 
 // ── 型別定義 ─────────────────────────────────────────────────────
 
@@ -157,6 +165,38 @@ pub fn get_app_bin_dir() -> Option<PathBuf> {
     dirs_next::data_dir().map(|d| d.join("com.vocalsync.studio").join("bin"))
 }
 
+fn tool_manifest_path() -> Option<PathBuf> {
+    get_app_bin_dir().map(|dir| dir.join(TOOL_MANIFEST_NAME))
+}
+
+fn load_tool_manifest() -> Option<ToolManifest> {
+    let path = tool_manifest_path()?;
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(_) => return None,
+    };
+
+    match serde_json::from_str::<ToolManifest>(&content) {
+        Ok(manifest) => Some(manifest),
+        Err(err) => {
+            log::warn!(
+                "[security] 工具 manifest 解析失敗，忽略既有檔案 {:?}: {}",
+                path,
+                err
+            );
+            None
+        }
+    }
+}
+
+fn save_tool_manifest(manifest: &ToolManifest) -> Result<(), AppError> {
+    let path = tool_manifest_path()
+        .ok_or_else(|| AppError::Internal("無法取得工具 manifest 路徑".into()))?;
+    let content = serde_json::to_string_pretty(manifest)
+        .map_err(|e| AppError::Internal(format!("工具 manifest 序列化失敗: {}", e)))?;
+    std::fs::write(path, content).map_err(AppError::Io)
+}
+
 fn find_tool_in_dir(dir: &std::path::Path, exe_name: &str) -> Option<PathBuf> {
     let candidate = dir.join(exe_name);
     if candidate.exists() {
@@ -172,76 +212,80 @@ fn find_tool_next_to_current_exe(exe_name: &str) -> Option<PathBuf> {
     find_tool_in_dir(dir, exe_name)
 }
 
-/// 搜尋 yt-dlp 可執行檔。
-///
-/// 搜尋順序：
-/// 1. app 資料夾（自動下載的版本）
-/// 2. 系統 PATH
-/// 3. 應用程式目錄（portable / 打包模式）
-pub fn find_ytdlp() -> Option<PathBuf> {
-    // 1. app bin 資料夾
-    if let Some(bin_dir) = get_app_bin_dir() {
-        if let Some(candidate) = find_tool_in_dir(&bin_dir, YTDLP_EXE_NAME) {
-            return Some(candidate);
+fn trusted_path_with_hash(path: PathBuf, expected_hash: &str, label: &str) -> Option<PathBuf> {
+    if !path.exists() {
+        return None;
+    }
+
+    match verify_sha256(&path, expected_hash) {
+        Ok(()) => Some(path),
+        Err(err) => {
+            log::warn!(
+                "[security] 忽略未通過驗證的 {}：{} ({:?})",
+                label,
+                err,
+                path
+            );
+            None
         }
     }
-
-    // 2. 系統 PATH
-    if let Ok(path) = which::which("yt-dlp") {
-        return Some(path);
-    }
-
-    // 3. 應用程式目錄（portable / 打包模式）
-    find_tool_next_to_current_exe(YTDLP_EXE_NAME)
 }
 
-/// 搜尋系統上的 FFmpeg 可執行檔。
-pub fn find_ffmpeg() -> Option<PathBuf> {
-    // 1. app bin 資料夾
+fn trusted_app_ffmpeg_path(exe_name: &str) -> Option<PathBuf> {
+    let bin_dir = get_app_bin_dir()?;
+    let candidate = find_tool_in_dir(&bin_dir, exe_name)?;
+    let manifest = load_tool_manifest()?;
+    let expected_hash = match exe_name {
+        "ffmpeg.exe" | "ffmpeg" => manifest.ffmpeg_sha256.as_deref(),
+        "ffprobe.exe" | "ffprobe" => manifest.ffprobe_sha256.as_deref(),
+        _ => None,
+    }?;
+
+    trusted_path_with_hash(candidate, expected_hash, exe_name)
+}
+
+/// 搜尋 yt-dlp 可執行檔。
+///
+/// 只信任 hash 驗證通過的 managed binary。
+pub fn find_ytdlp() -> Option<PathBuf> {
     if let Some(bin_dir) = get_app_bin_dir() {
-        if let Some(candidate) = find_tool_in_dir(
-            &bin_dir,
-            if cfg!(windows) {
-                "ffmpeg.exe"
-            } else {
-                "ffmpeg"
-            },
-        ) {
-            return Some(candidate);
-        }
-    }
-
-    // 2. 系統 PATH
-    if let Ok(path) = which::which("ffmpeg") {
-        return Some(path);
-    }
-
-    // 3. 應用程式目錄（打包模式）
-    if let Some(candidate) = find_tool_next_to_current_exe(if cfg!(windows) {
-        "ffmpeg.exe"
-    } else {
-        "ffmpeg"
-    }) {
-        return Some(candidate);
-    }
-
-    // 4. Windows 常見路徑
-    #[cfg(target_os = "windows")]
-    {
-        let common = [
-            r"C:\ffmpeg\bin\ffmpeg.exe",
-            r"C:\Program Files\ffmpeg\bin\ffmpeg.exe",
-            r"C:\Program Files (x86)\ffmpeg\bin\ffmpeg.exe",
-        ];
-        for p in common {
-            let path = PathBuf::from(p);
-            if path.exists() {
+        if let Some(candidate) = find_tool_in_dir(&bin_dir, YTDLP_EXE_NAME) {
+            if let Some(path) = trusted_path_with_hash(candidate, YTDLP_SHA256, "yt-dlp") {
                 return Some(path);
             }
         }
     }
 
+    if let Some(candidate) = find_tool_next_to_current_exe(YTDLP_EXE_NAME) {
+        return trusted_path_with_hash(candidate, YTDLP_SHA256, "portable yt-dlp");
+    }
+
     None
+}
+
+/// 搜尋受信任的 FFmpeg 可執行檔。
+pub fn find_ffmpeg() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        trusted_app_ffmpeg_path("ffmpeg.exe")
+    }
+
+    #[cfg(not(windows))]
+    {
+        trusted_app_ffmpeg_path("ffmpeg").or_else(|| which::which("ffmpeg").ok())
+    }
+}
+
+pub fn find_ffprobe() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        trusted_app_ffmpeg_path("ffprobe.exe")
+    }
+
+    #[cfg(not(windows))]
+    {
+        trusted_app_ffmpeg_path("ffprobe").or_else(|| which::which("ffprobe").ok())
+    }
 }
 
 /// 取得 yt-dlp 版本字串。
@@ -304,27 +348,7 @@ pub struct InstallProgress {
 }
 
 /// 驗證檔案的 SHA-256 hash。空字串的 expected_hash 表示跳過驗證（首次部署用）。
-fn verify_sha256(path: &std::path::Path, expected_hash: &str) -> Result<(), AppError> {
-    if expected_hash.is_empty() {
-        // hash 尚未設定，記錄實際 hash 供開發者填入
-        let mut file = std::fs::File::open(path).map_err(AppError::Io)?;
-        let mut hasher = Sha256::new();
-        let mut buf = [0u8; 65536];
-        loop {
-            let n = file.read(&mut buf).map_err(AppError::Io)?;
-            if n == 0 {
-                break;
-            }
-            hasher.update(&buf[..n]);
-        }
-        let hash = format!("{:x}", hasher.finalize());
-        log::warn!(
-            "[security] SHA-256 驗證已跳過（hash 未設定）。實際 hash: {} ← 請填入程式碼",
-            hash
-        );
-        return Ok(());
-    }
-
+fn compute_sha256(path: &Path) -> Result<String, AppError> {
     let mut file = std::fs::File::open(path).map_err(AppError::Io)?;
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 65536];
@@ -335,7 +359,21 @@ fn verify_sha256(path: &std::path::Path, expected_hash: &str) -> Result<(), AppE
         }
         hasher.update(&buf[..n]);
     }
-    let actual = format!("{:x}", hasher.finalize());
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn verify_sha256(path: &std::path::Path, expected_hash: &str) -> Result<(), AppError> {
+    if expected_hash.is_empty() {
+        // hash 尚未設定，記錄實際 hash 供開發者填入
+        let hash = compute_sha256(path)?;
+        log::warn!(
+            "[security] SHA-256 驗證已跳過（hash 未設定）。實際 hash: {} ← 請填入程式碼",
+            hash
+        );
+        return Ok(());
+    }
+
+    let actual = compute_sha256(path)?;
     if actual != expected_hash {
         return Err(AppError::Internal(format!(
             "SHA-256 驗證失敗！預期: {}，實際: {}。檔案可能被篡改。",
@@ -426,15 +464,14 @@ pub fn download_ytdlp(app: &AppHandle) -> Result<PathBuf, AppError> {
 
     drop(file);
 
-    // 重命名（成功後解除 guard）
-    if target_path.exists() {
-        std::fs::remove_file(&target_path).map_err(|e| AppError::Io(e))?;
-    }
-    std::fs::rename(&tmp_path, &target_path).map_err(|e| AppError::Io(e))?;
-    _tmp_guard.disarm(); // 重命名成功，不再刪除
+    // 先驗證暫存檔，再覆蓋正式執行檔，避免把未驗證 binary 留在 target。
+    verify_sha256(&tmp_path, YTDLP_SHA256)?;
 
-    // SHA-256 驗證
-    verify_sha256(&target_path, YTDLP_SHA256)?;
+    if target_path.exists() {
+        std::fs::remove_file(&target_path).map_err(AppError::Io)?;
+    }
+    std::fs::rename(&tmp_path, &target_path).map_err(AppError::Io)?;
+    _tmp_guard.disarm();
 
     // Unix: 設定可執行權限
     #[cfg(unix)]
@@ -557,6 +594,10 @@ pub fn download_ffmpeg(app: &AppHandle) -> Result<PathBuf, AppError> {
         .map_err(|e| AppError::Internal(format!("zip 開啟失敗: {}", e)))?;
 
     let targets = ["ffmpeg.exe", "ffprobe.exe"];
+    let ffmpeg_tmp = bin_dir.join("ffmpeg.exe.tmp");
+    let ffprobe_tmp = bin_dir.join("ffprobe.exe.tmp");
+    let mut ffmpeg_guard = TempFileGuard::new(ffmpeg_tmp.clone());
+    let mut ffprobe_guard = TempFileGuard::new(ffprobe_tmp.clone());
     let mut extracted_count = 0;
 
     for i in 0..archive.len() {
@@ -569,9 +610,13 @@ pub fn download_ffmpeg(app: &AppHandle) -> Result<PathBuf, AppError> {
         // zip 內的結構：ffmpeg-<version>-essentials_build/bin/ffmpeg.exe
         for target in &targets {
             if entry_name.ends_with(&format!("bin/{}", target)) {
-                let out_path = bin_dir.join(target);
-                let mut out_file = std::fs::File::create(&out_path).map_err(|e| AppError::Io(e))?;
-                std::io::copy(&mut entry, &mut out_file).map_err(|e| AppError::Io(e))?;
+                let out_path = if *target == "ffmpeg.exe" {
+                    &ffmpeg_tmp
+                } else {
+                    &ffprobe_tmp
+                };
+                let mut out_file = std::fs::File::create(out_path).map_err(AppError::Io)?;
+                std::io::copy(&mut entry, &mut out_file).map_err(AppError::Io)?;
                 log::info!("[ffmpeg] 解壓: {} -> {:?}", entry_name, out_path);
                 extracted_count += 1;
                 break;
@@ -583,13 +628,33 @@ pub fn download_ffmpeg(app: &AppHandle) -> Result<PathBuf, AppError> {
         }
     }
 
-    if extracted_count == 0 {
+    if extracted_count < targets.len() {
         return Err(AppError::Internal(
-            "zip 中找不到 ffmpeg.exe / ffprobe.exe".into(),
+            "zip 中缺少 ffmpeg.exe 或 ffprobe.exe".into(),
         ));
     }
 
     let ffmpeg_path = bin_dir.join("ffmpeg.exe");
+    let ffprobe_path = bin_dir.join("ffprobe.exe");
+    let ffmpeg_sha256 = compute_sha256(&ffmpeg_tmp)?;
+    let ffprobe_sha256 = compute_sha256(&ffprobe_tmp)?;
+
+    if ffmpeg_path.exists() {
+        std::fs::remove_file(&ffmpeg_path).map_err(AppError::Io)?;
+    }
+    if ffprobe_path.exists() {
+        std::fs::remove_file(&ffprobe_path).map_err(AppError::Io)?;
+    }
+
+    std::fs::rename(&ffmpeg_tmp, &ffmpeg_path).map_err(AppError::Io)?;
+    ffmpeg_guard.disarm();
+    std::fs::rename(&ffprobe_tmp, &ffprobe_path).map_err(AppError::Io)?;
+    ffprobe_guard.disarm();
+
+    save_tool_manifest(&ToolManifest {
+        ffmpeg_sha256: Some(ffmpeg_sha256),
+        ffprobe_sha256: Some(ffprobe_sha256),
+    })?;
 
     let _ = app.emit(
         "ffmpeg:install_progress",
@@ -835,9 +900,11 @@ pub fn run_download(
 ) -> Result<DownloadResult, AppError> {
     // 驗證 URL
     validate_url(&req.url)?;
+    security::validate_path_safe(&req.output_dir)?;
+    std::fs::create_dir_all(&req.output_dir).map_err(AppError::Io)?;
 
     let ytdlp = find_ytdlp()
-        .ok_or_else(|| AppError::Audio("找不到 yt-dlp。請點擊「自動安裝」或手動安裝".into()))?;
+        .ok_or_else(|| AppError::Audio("找不到受信任的 yt-dlp。請點擊「自動安裝」重新安裝".into()))?;
 
     let args = build_args(&req);
     log::info!(

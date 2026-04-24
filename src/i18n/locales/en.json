@@ -131,7 +131,7 @@
   "download.tool.ytdlp.installing": "Installing...",
   "download.tool.ffmpeg.hint": "FFmpeg is not installed. Video download and audio conversion require FFmpeg.",
   "download.tool.ffmpeg.install": "Auto-install FFmpeg (~80 MB)",
-  "download.tool.ytdlp.manualHint": "Or install manually:",
+  "download.tool.ytdlp.manualHint": "On Windows, only the built-in installer's verified copy is trusted.",
 
   "download.form.url.label": "YouTube URL",
   "download.form.url.placeholder": "https://www.youtube.com/watch?v=...",

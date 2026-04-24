@@ -14,6 +14,7 @@ use crate::core::melody_source_detector::{detect_melody_source, DetectedSource};
 use crate::core::melody_track::MelodyTrack;
 use crate::core::midi_parser;
 use crate::error::AppError;
+use crate::security;
 use serde::Serialize;
 use std::path::PathBuf;
 
@@ -67,6 +68,7 @@ impl From<DetectedSource> for DetectedSourceDto {
 /// 自動偵測同資料夾的目標旋律來源檔。
 #[tauri::command]
 pub fn auto_detect_melody_source(backing_path: String) -> Result<DetectedSourceDto, AppError> {
+    security::validate_path_safe(&backing_path)?;
     let path = PathBuf::from(&backing_path);
     let detected = detect_melody_source(&path);
     Ok(detected.into())
@@ -79,6 +81,7 @@ pub fn auto_detect_melody_source(backing_path: String) -> Result<DetectedSourceD
 /// - `.wav` / `.mp3` / `.flac` 等音訊 — 視為乾淨人聲軌，跑 CREPE/PYIN 提取旋律
 #[tauri::command]
 pub fn load_melody_from_path(path: String) -> Result<MelodyTrack, AppError> {
+    security::validate_path_safe(&path)?;
     let lowered = path.to_lowercase();
     if is_audio_extension(&lowered) {
         melody_extractor::extract_melody_from_vocals(&path, get_model_dir().as_ref())
@@ -93,6 +96,7 @@ pub fn load_melody_from_path(path: String) -> Result<MelodyTrack, AppError> {
 /// 提取 MelodyTrack。
 #[tauri::command]
 pub fn load_vocals_and_extract_melody(vocals_path: String) -> Result<MelodyTrack, AppError> {
+    security::validate_path_safe(&vocals_path)?;
     melody_extractor::extract_melody_from_vocals(&vocals_path, get_model_dir().as_ref())
 }
 
@@ -108,6 +112,7 @@ fn is_audio_extension(lowered_path: &str) -> bool {
 /// - `Err(_)` — 找到了但載入失敗
 #[tauri::command]
 pub fn auto_load_melody_for_backing(backing_path: String) -> Result<Option<MelodyTrack>, AppError> {
+    security::validate_path_safe(&backing_path)?;
     let path = PathBuf::from(&backing_path);
     match detect_melody_source(&path) {
         DetectedSource::None => Ok(None),
@@ -125,6 +130,8 @@ pub fn align_audio_files(
     reference_path: String,
     target_path: String,
 ) -> Result<AlignmentResult, AppError> {
+    security::validate_path_safe(&reference_path)?;
+    security::validate_path_safe(&target_path)?;
     audio_aligner::align_files(&reference_path, &target_path)
 }
 
@@ -136,6 +143,7 @@ pub fn align_audio_files(
 /// 適用於 center-panned 的流行歌；mono / Live / reverb 重的歌效果不佳。
 #[tauri::command]
 pub fn extract_melody_center_cancel(backing_path: String) -> Result<MelodyTrack, AppError> {
+    security::validate_path_safe(&backing_path)?;
     let (mono_samples, sample_rate) = center_channel_cancel::load_and_cancel_center(&backing_path)?;
 
     if mono_samples.is_empty() {
@@ -159,4 +167,3 @@ pub fn extract_melody_center_cancel(backing_path: String) -> Result<MelodyTrack,
         melody_extractor::extract_melody_from_mono_samples(&mono_samples, sample_rate)
     }
 }
-
