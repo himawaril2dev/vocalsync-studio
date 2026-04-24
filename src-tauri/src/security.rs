@@ -13,13 +13,13 @@ use std::path::{Component, Path};
 /// 檢查檔案路徑是否安全：
 /// - 必須為絕對路徑（避免 cwd-relative 逃逸）
 /// - 不可包含 `..` 組件（擋 parent traversal）
-/// - 不可包含 NUL
+/// - 不可包含 NUL 或控制字元
 /// - 不可以 `-` 開頭（避免被 subprocess 如 ffmpeg 當作 option）
 pub fn validate_path_safe(path: &str) -> Result<(), AppError> {
     if path.is_empty() {
         return Err(AppError::Audio("路徑不可為空".into()));
     }
-    if path.contains('\0') {
+    if path.chars().any(|c| c == '\0' || c.is_control()) {
         return Err(AppError::Audio("路徑含無效字元".into()));
     }
     // subprocess argument injection 防線：-foo.mp4 會被 ffmpeg 當成 option
@@ -90,6 +90,11 @@ mod tests {
     #[test]
     fn rejects_nul() {
         assert!(validate_path_safe("C:\\foo\0bar.mp4").is_err());
+    }
+
+    #[test]
+    fn rejects_control_characters() {
+        assert!(validate_path_safe("C:\\foo\nbar.mp4").is_err());
     }
 
     #[test]

@@ -73,12 +73,16 @@ pub fn run() {
             commands::melody_commands::align_audio_files,
             commands::melody_commands::extract_melody_center_cancel,
             commands::download_commands::check_download_tools,
+            commands::download_commands::detect_local_ffmpeg,
+            commands::download_commands::detect_local_ytdlp,
             commands::download_commands::detect_download_url_type,
             commands::download_commands::start_download,
             commands::download_commands::cancel_download,
             commands::download_commands::get_default_download_dir,
             commands::download_commands::install_ytdlp,
             commands::download_commands::install_ffmpeg,
+            commands::download_commands::trust_local_ffmpeg,
+            commands::download_commands::trust_local_ytdlp,
             commands::updates_commands::check_latest_release,
         ])
         .run(tauri::generate_context!())

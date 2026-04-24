@@ -8,6 +8,19 @@ export interface ToolStatus {
   ytdlp_path: string | null;
   ffmpeg_available: boolean;
   ffmpeg_version: string | null;
+  ffmpeg_path: string | null;
+}
+
+export interface LocalFfmpegCandidate {
+  ffmpeg_path: string;
+  ffprobe_path: string;
+  ffmpeg_sha256: string;
+  ffprobe_sha256: string;
+}
+
+export interface LocalYtdlpCandidate {
+  ytdlp_path: string;
+  ytdlp_sha256: string;
 }
 
 export interface InstallProgress {

@@ -54,7 +54,7 @@ The app runs **fully offline** (except for downloading backing tracks). Your rec
 
 Extract `VocalSync.Studio.Portable.x.y.z.zip` and double-click **`vocalsync-studio.exe`** inside the folder.
 
-> ⚠️ Do not rearrange the folder structure. `DirectML.dll`, `yt-dlp.exe`, and `models/` are runtime dependencies — **never move them separately**. The entire folder is portable as a unit.
+> ⚠️ Do not rearrange the folder structure. `DirectML.dll` and `models/` are bundled runtime dependencies — **never move them separately**. Auto-installed yt-dlp / FFmpeg files prefer the portable root, so the entire folder remains portable as a unit.
 
 ### Step 2｜Prepare a backing track
 
@@ -158,12 +158,14 @@ The app does **not bundle** yt-dlp or FFmpeg. On first use, their status appears
 | 🟢 FFmpeg ✓ | Available on your system | None |
 | 🔴 FFmpeg not installed | Not on your system | Click **Auto Install** |
 
-**What Auto Install does**:
+**What local trust and Auto Install do**:
 
-- **yt-dlp**: Downloads `yt-dlp.exe` from GitHub Releases into the app folder, with SHA-256 supply-chain verification
-- **FFmpeg**: Downloads the gyan.dev essentials build archive and extracts it into the app folder
+- **Use local tools**: Detects yt-dlp / FFmpeg already installed on your computer. After you trust them, VocalSync records their path and SHA-256, then only runs the same verified files.
+- **Auto-install yt-dlp**: Downloads `yt-dlp.exe` from GitHub Releases, verifies SHA-256, and prefers the portable root.
+- **Auto-install FFmpeg**: Downloads a pinned essentials build, verifies SHA-256, extracts `ffmpeg.exe` / `ffprobe.exe`, and prefers the portable root.
+- **Fallback location**: If the portable root is not writable, tools are installed under the user's AppData `com.vocalsync.studio/bin` folder.
 
-If your corporate network blocks outbound connections, you can drop `yt-dlp.exe` into the app root folder manually.
+If your corporate network blocks outbound connections, install yt-dlp / FFmpeg from a trusted source first, then return to the Download tab, detect the local tools, and trust them.
 
 #### Download Options
 

@@ -5,8 +5,8 @@
 //!
 //! # 外部依賴
 //!
-//! - **yt-dlp**：使用 SHA-256 驗證通過的 managed binary
-//! - **FFmpeg**：使用 install manifest 記錄 hash 的 managed binary
+//! - **yt-dlp**：使用 SHA-256 驗證通過的 managed binary 或使用者信任的本機檔案
+//! - **FFmpeg**：使用 install manifest 記錄 hash 的 managed binary 或使用者信任的本機檔案
 
 use crate::{error::AppError, security};
 use serde::{Deserialize, Serialize};
@@ -62,8 +62,26 @@ const TOOL_MANIFEST_NAME: &str = "tool-manifest.json";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct ToolManifest {
+    ytdlp_sha256: Option<String>,
+    ytdlp_path: Option<String>,
     ffmpeg_sha256: Option<String>,
     ffprobe_sha256: Option<String>,
+    ffmpeg_path: Option<String>,
+    ffprobe_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalFfmpegCandidate {
+    pub ffmpeg_path: String,
+    pub ffprobe_path: String,
+    pub ffmpeg_sha256: String,
+    pub ffprobe_sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalYtdlpCandidate {
+    pub ytdlp_path: String,
+    pub ytdlp_sha256: String,
 }
 
 // ── 型別定義 ─────────────────────────────────────────────────────
@@ -165,8 +183,48 @@ pub fn get_app_bin_dir() -> Option<PathBuf> {
     dirs_next::data_dir().map(|d| d.join("com.vocalsync.studio").join("bin"))
 }
 
-fn tool_manifest_path() -> Option<PathBuf> {
+fn app_tool_manifest_path() -> Option<PathBuf> {
     get_app_bin_dir().map(|dir| dir.join(TOOL_MANIFEST_NAME))
+}
+
+fn current_exe_dir() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()?
+        .parent()
+        .map(Path::to_path_buf)
+}
+
+fn dir_is_writable(dir: &Path) -> bool {
+    if std::fs::create_dir_all(dir).is_err() {
+        return false;
+    }
+
+    let probe = dir.join(format!(".vocalsync-write-test-{}", std::process::id()));
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+    {
+        Ok(_) => {
+            let _ = std::fs::remove_file(probe);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+fn get_preferred_tool_dir() -> Option<PathBuf> {
+    if let Some(dir) = current_exe_dir() {
+        if dir_is_writable(&dir) {
+            return Some(dir);
+        }
+    }
+
+    get_app_bin_dir()
+}
+
+fn tool_manifest_path() -> Option<PathBuf> {
+    get_preferred_tool_dir().map(|dir| dir.join(TOOL_MANIFEST_NAME))
 }
 
 fn tool_manifest_path_in_dir(dir: &Path) -> PathBuf {
@@ -178,7 +236,7 @@ fn load_tool_manifest_from_dir(dir: &Path) -> Option<ToolManifest> {
 }
 
 fn load_tool_manifest_from_path(path: &Path) -> Option<ToolManifest> {
-    let content = match std::fs::read_to_string(&path) {
+    let content = match std::fs::read_to_string(path) {
         Ok(content) => content,
         Err(_) => return None,
     };
@@ -196,12 +254,23 @@ fn load_tool_manifest_from_path(path: &Path) -> Option<ToolManifest> {
     }
 }
 
-fn save_tool_manifest(manifest: &ToolManifest) -> Result<(), AppError> {
-    let path = tool_manifest_path()
-        .ok_or_else(|| AppError::Internal("無法取得工具 manifest 路徑".into()))?;
+fn save_tool_manifest_to_path(path: &Path, manifest: &ToolManifest) -> Result<(), AppError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(AppError::Io)?;
+    }
     let content = serde_json::to_string_pretty(manifest)
         .map_err(|e| AppError::Internal(format!("工具 manifest 序列化失敗: {}", e)))?;
     std::fs::write(path, content).map_err(AppError::Io)
+}
+
+fn save_tool_manifest_to_dir(dir: &Path, manifest: &ToolManifest) -> Result<(), AppError> {
+    save_tool_manifest_to_path(&tool_manifest_path_in_dir(dir), manifest)
+}
+
+fn save_tool_manifest(manifest: &ToolManifest) -> Result<(), AppError> {
+    let path = tool_manifest_path()
+        .ok_or_else(|| AppError::Internal("無法取得工具 manifest 路徑".into()))?;
+    save_tool_manifest_to_path(&path, manifest)
 }
 
 fn find_tool_in_dir(dir: &std::path::Path, exe_name: &str) -> Option<PathBuf> {
@@ -213,10 +282,35 @@ fn find_tool_in_dir(dir: &std::path::Path, exe_name: &str) -> Option<PathBuf> {
     }
 }
 
-fn find_tool_next_to_current_exe(exe_name: &str) -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let dir = exe.parent()?;
-    find_tool_in_dir(dir, exe_name)
+fn canonical_existing_tool_file(path: &str, label: &str) -> Result<PathBuf, AppError> {
+    if path.is_empty() {
+        return Err(AppError::Audio(format!("{} 路徑不可為空", label)));
+    }
+    if path.chars().any(|c| c == '\0' || c.is_control()) {
+        return Err(AppError::Audio(format!("{} 路徑含無效字元", label)));
+    }
+
+    let raw_path = Path::new(path);
+    if !raw_path.is_absolute() {
+        return Err(AppError::Audio(format!("{} 路徑必須為絕對路徑", label)));
+    }
+
+    let canonical = raw_path.canonicalize().map_err(AppError::Io)?;
+    if !canonical.is_file() {
+        return Err(AppError::Audio(format!("{} 必須是既有檔案", label)));
+    }
+
+    Ok(canonical)
+}
+
+fn file_name_matches(path: &Path, allowed_names: &[&str]) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            allowed_names
+                .iter()
+                .any(|allowed| name.eq_ignore_ascii_case(allowed))
+        })
 }
 
 fn trusted_path_with_hash(path: PathBuf, expected_hash: &str, label: &str) -> Option<PathBuf> {
@@ -238,21 +332,46 @@ fn trusted_path_with_hash(path: PathBuf, expected_hash: &str, label: &str) -> Op
     }
 }
 
-fn trusted_ffmpeg_path_in_dir(dir: &Path, exe_name: &str) -> Option<PathBuf> {
-    let candidate = find_tool_in_dir(dir, exe_name)?;
-    let manifest = load_tool_manifest_from_dir(dir)?;
-    let expected_hash = match exe_name {
+fn manifest_ffmpeg_path<'a>(manifest: &'a ToolManifest, exe_name: &str) -> Option<&'a str> {
+    match exe_name {
+        "ffmpeg.exe" | "ffmpeg" => manifest.ffmpeg_path.as_deref(),
+        "ffprobe.exe" | "ffprobe" => manifest.ffprobe_path.as_deref(),
+        _ => None,
+    }
+}
+
+fn manifest_ffmpeg_hash<'a>(manifest: &'a ToolManifest, exe_name: &str) -> Option<&'a str> {
+    match exe_name {
         "ffmpeg.exe" | "ffmpeg" => manifest.ffmpeg_sha256.as_deref(),
         "ffprobe.exe" | "ffprobe" => manifest.ffprobe_sha256.as_deref(),
         _ => None,
-    }?;
+    }
+}
+
+fn trusted_ffmpeg_path_from_manifest(
+    manifest: &ToolManifest,
+    base_dir: &Path,
+    exe_name: &str,
+) -> Option<PathBuf> {
+    let candidate = match manifest_ffmpeg_path(manifest, exe_name) {
+        Some(path) => PathBuf::from(path),
+        None => find_tool_in_dir(base_dir, exe_name)?,
+    };
+    let expected_hash = manifest_ffmpeg_hash(manifest, exe_name)?;
 
     trusted_path_with_hash(candidate, expected_hash, exe_name)
 }
 
+fn trusted_ffmpeg_path_in_dir(dir: &Path, exe_name: &str) -> Option<PathBuf> {
+    let manifest = load_tool_manifest_from_dir(dir)?;
+    trusted_ffmpeg_path_from_manifest(&manifest, dir, exe_name)
+}
+
 fn trusted_app_ffmpeg_path(exe_name: &str) -> Option<PathBuf> {
     let bin_dir = get_app_bin_dir()?;
-    trusted_ffmpeg_path_in_dir(&bin_dir, exe_name)
+    let manifest_path = app_tool_manifest_path()?;
+    let manifest = load_tool_manifest_from_path(&manifest_path)?;
+    trusted_ffmpeg_path_from_manifest(&manifest, &bin_dir, exe_name)
 }
 
 fn trusted_portable_ffmpeg_path(exe_name: &str) -> Option<PathBuf> {
@@ -261,20 +380,267 @@ fn trusted_portable_ffmpeg_path(exe_name: &str) -> Option<PathBuf> {
     trusted_ffmpeg_path_in_dir(dir, exe_name)
 }
 
-/// 搜尋 yt-dlp 可執行檔。
-///
-/// 只信任 hash 驗證通過的 managed binary。
-pub fn find_ytdlp() -> Option<PathBuf> {
-    if let Some(bin_dir) = get_app_bin_dir() {
-        if let Some(candidate) = find_tool_in_dir(&bin_dir, YTDLP_EXE_NAME) {
-            if let Some(path) = trusted_path_with_hash(candidate, YTDLP_SHA256, "yt-dlp") {
+fn trusted_ytdlp_path_from_manifest(manifest: &ToolManifest, base_dir: &Path) -> Option<PathBuf> {
+    let candidate = match manifest.ytdlp_path.as_deref() {
+        Some(path) => PathBuf::from(path),
+        None => find_tool_in_dir(base_dir, YTDLP_EXE_NAME)?,
+    };
+    let expected_hash = manifest.ytdlp_sha256.as_deref()?;
+
+    trusted_path_with_hash(candidate, expected_hash, "yt-dlp")
+}
+
+fn trusted_app_ytdlp_path() -> Option<PathBuf> {
+    let bin_dir = get_app_bin_dir()?;
+    if let Some(manifest_path) = app_tool_manifest_path() {
+        if let Some(manifest) = load_tool_manifest_from_path(&manifest_path) {
+            if let Some(path) = trusted_ytdlp_path_from_manifest(&manifest, &bin_dir) {
                 return Some(path);
             }
         }
     }
 
-    if let Some(candidate) = find_tool_next_to_current_exe(YTDLP_EXE_NAME) {
-        return trusted_path_with_hash(candidate, YTDLP_SHA256, "portable yt-dlp");
+    let candidate = find_tool_in_dir(&bin_dir, YTDLP_EXE_NAME)?;
+    trusted_path_with_hash(candidate, YTDLP_SHA256, "yt-dlp")
+}
+
+fn trusted_portable_ytdlp_path() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    if let Some(manifest) = load_tool_manifest_from_dir(dir) {
+        if let Some(path) = trusted_ytdlp_path_from_manifest(&manifest, dir) {
+            return Some(path);
+        }
+    }
+
+    let candidate = find_tool_in_dir(dir, YTDLP_EXE_NAME)?;
+    trusted_path_with_hash(candidate, YTDLP_SHA256, "portable yt-dlp")
+}
+
+fn local_ytdlp_candidate_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+
+    if let Ok(path) = which::which(YTDLP_EXE_NAME) {
+        paths.push(path);
+    }
+    if let Ok(path) = which::which("yt-dlp") {
+        paths.push(path);
+    }
+    if let Ok(path) = which::which("yt-dlp.exe") {
+        paths.push(path);
+    }
+
+    paths
+}
+
+fn find_local_ytdlp_path() -> Option<PathBuf> {
+    for path in local_ytdlp_candidate_paths() {
+        if path.is_file() {
+            return path.canonicalize().ok();
+        }
+    }
+    None
+}
+
+fn ytdlp_candidate_from_path(path: PathBuf) -> Result<LocalYtdlpCandidate, AppError> {
+    let ytdlp_sha256 = compute_sha256(&path)?;
+
+    Ok(LocalYtdlpCandidate {
+        ytdlp_path: path.to_string_lossy().to_string(),
+        ytdlp_sha256,
+    })
+}
+
+fn ytdlp_candidate_from_trust_request(
+    candidate: LocalYtdlpCandidate,
+) -> Result<LocalYtdlpCandidate, AppError> {
+    let path = canonical_existing_tool_file(&candidate.ytdlp_path, "yt-dlp")?;
+    let allowed_names = if cfg!(windows) {
+        [YTDLP_EXE_NAME, "yt-dlp"]
+    } else {
+        [YTDLP_EXE_NAME, YTDLP_EXE_NAME]
+    };
+    if !file_name_matches(&path, &allowed_names) {
+        return Err(AppError::Audio("yt-dlp 路徑必須指向 yt-dlp 執行檔".into()));
+    }
+
+    let refreshed = ytdlp_candidate_from_path(path)?;
+    if refreshed.ytdlp_sha256 != candidate.ytdlp_sha256 {
+        return Err(AppError::Audio(
+            "yt-dlp 檔案已變更，請重新偵測後再信任".into(),
+        ));
+    }
+
+    Ok(refreshed)
+}
+
+pub fn detect_local_ytdlp_candidate() -> Result<Option<LocalYtdlpCandidate>, AppError> {
+    let Some(path) = find_local_ytdlp_path() else {
+        return Ok(None);
+    };
+
+    ytdlp_candidate_from_path(path).map(Some)
+}
+
+pub fn trust_local_ytdlp_candidate(
+    candidate: LocalYtdlpCandidate,
+) -> Result<LocalYtdlpCandidate, AppError> {
+    let trusted_candidate = ytdlp_candidate_from_trust_request(candidate)?;
+
+    let mut manifest = tool_manifest_path()
+        .and_then(|path| load_tool_manifest_from_path(&path))
+        .unwrap_or_default();
+    manifest.ytdlp_sha256 = Some(trusted_candidate.ytdlp_sha256.clone());
+    manifest.ytdlp_path = Some(trusted_candidate.ytdlp_path.clone());
+    save_tool_manifest(&manifest)?;
+
+    Ok(trusted_candidate)
+}
+
+fn ffmpeg_tool_names() -> (&'static str, &'static str) {
+    if cfg!(windows) {
+        ("ffmpeg.exe", "ffprobe.exe")
+    } else {
+        ("ffmpeg", "ffprobe")
+    }
+}
+
+fn local_ffmpeg_candidate_dirs() -> Vec<PathBuf> {
+    let (ffmpeg_name, ffprobe_name) = ffmpeg_tool_names();
+    let mut dirs = Vec::new();
+
+    if let Ok(path) = which::which(ffmpeg_name) {
+        if let Some(parent) = path.parent() {
+            dirs.push(parent.to_path_buf());
+        }
+    }
+    if let Ok(path) = which::which(ffprobe_name) {
+        if let Some(parent) = path.parent() {
+            dirs.push(parent.to_path_buf());
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        dirs.extend(
+            [
+                r"C:\ffmpeg\bin",
+                r"C:\Program Files\ffmpeg\bin",
+                r"C:\Program Files (x86)\ffmpeg\bin",
+            ]
+            .into_iter()
+            .map(PathBuf::from),
+        );
+    }
+
+    dirs
+}
+
+fn canonical_tool_pair(dir: &Path) -> Option<(PathBuf, PathBuf)> {
+    let (ffmpeg_name, ffprobe_name) = ffmpeg_tool_names();
+    let ffmpeg = dir.join(ffmpeg_name);
+    let ffprobe = dir.join(ffprobe_name);
+    if !ffmpeg.is_file() || !ffprobe.is_file() {
+        return None;
+    }
+
+    let ffmpeg = ffmpeg.canonicalize().ok()?;
+    let ffprobe = ffprobe.canonicalize().ok()?;
+    Some((ffmpeg, ffprobe))
+}
+
+fn find_local_ffmpeg_pair() -> Option<(PathBuf, PathBuf)> {
+    for dir in local_ffmpeg_candidate_dirs() {
+        if let Some(pair) = canonical_tool_pair(&dir) {
+            return Some(pair);
+        }
+    }
+    None
+}
+
+fn candidate_from_pair(
+    ffmpeg_path: PathBuf,
+    ffprobe_path: PathBuf,
+) -> Result<LocalFfmpegCandidate, AppError> {
+    let ffmpeg_sha256 = compute_sha256(&ffmpeg_path)?;
+    let ffprobe_sha256 = compute_sha256(&ffprobe_path)?;
+
+    Ok(LocalFfmpegCandidate {
+        ffmpeg_path: ffmpeg_path.to_string_lossy().to_string(),
+        ffprobe_path: ffprobe_path.to_string_lossy().to_string(),
+        ffmpeg_sha256,
+        ffprobe_sha256,
+    })
+}
+
+fn ffmpeg_candidate_from_trust_request(
+    candidate: LocalFfmpegCandidate,
+) -> Result<LocalFfmpegCandidate, AppError> {
+    let ffmpeg_path = canonical_existing_tool_file(&candidate.ffmpeg_path, "FFmpeg")?;
+    let ffprobe_path = canonical_existing_tool_file(&candidate.ffprobe_path, "ffprobe")?;
+    let (ffmpeg_name, ffprobe_name) = ffmpeg_tool_names();
+
+    if !file_name_matches(&ffmpeg_path, &[ffmpeg_name]) {
+        return Err(AppError::Audio("FFmpeg 路徑必須指向 ffmpeg 執行檔".into()));
+    }
+    if !file_name_matches(&ffprobe_path, &[ffprobe_name]) {
+        return Err(AppError::Audio(
+            "ffprobe 路徑必須指向 ffprobe 執行檔".into(),
+        ));
+    }
+    if ffmpeg_path.parent() != ffprobe_path.parent() {
+        return Err(AppError::Audio(
+            "ffmpeg 和 ffprobe 必須位於同一個資料夾".into(),
+        ));
+    }
+
+    let refreshed = candidate_from_pair(ffmpeg_path, ffprobe_path)?;
+    if refreshed.ffmpeg_sha256 != candidate.ffmpeg_sha256
+        || refreshed.ffprobe_sha256 != candidate.ffprobe_sha256
+    {
+        return Err(AppError::Audio(
+            "FFmpeg 檔案已變更，請重新偵測後再信任".into(),
+        ));
+    }
+
+    Ok(refreshed)
+}
+
+pub fn detect_local_ffmpeg_candidate() -> Result<Option<LocalFfmpegCandidate>, AppError> {
+    let Some((ffmpeg_path, ffprobe_path)) = find_local_ffmpeg_pair() else {
+        return Ok(None);
+    };
+
+    candidate_from_pair(ffmpeg_path, ffprobe_path).map(Some)
+}
+
+pub fn trust_local_ffmpeg_candidate(
+    candidate: LocalFfmpegCandidate,
+) -> Result<LocalFfmpegCandidate, AppError> {
+    let trusted_candidate = ffmpeg_candidate_from_trust_request(candidate)?;
+
+    let mut manifest = tool_manifest_path()
+        .and_then(|path| load_tool_manifest_from_path(&path))
+        .unwrap_or_default();
+    manifest.ffmpeg_sha256 = Some(trusted_candidate.ffmpeg_sha256.clone());
+    manifest.ffprobe_sha256 = Some(trusted_candidate.ffprobe_sha256.clone());
+    manifest.ffmpeg_path = Some(trusted_candidate.ffmpeg_path.clone());
+    manifest.ffprobe_path = Some(trusted_candidate.ffprobe_path.clone());
+    save_tool_manifest(&manifest)?;
+
+    Ok(trusted_candidate)
+}
+
+/// 搜尋 yt-dlp 可執行檔。
+///
+/// 只信任 hash 驗證通過的 managed binary。
+pub fn find_ytdlp() -> Option<PathBuf> {
+    if let Some(path) = trusted_portable_ytdlp_path() {
+        return Some(path);
+    }
+
+    if let Some(path) = trusted_app_ytdlp_path() {
+        return Some(path);
     }
 
     None
@@ -284,7 +650,7 @@ pub fn find_ytdlp() -> Option<PathBuf> {
 pub fn find_ffmpeg() -> Option<PathBuf> {
     #[cfg(windows)]
     {
-        trusted_app_ffmpeg_path("ffmpeg.exe").or_else(|| trusted_portable_ffmpeg_path("ffmpeg.exe"))
+        trusted_portable_ffmpeg_path("ffmpeg.exe").or_else(|| trusted_app_ffmpeg_path("ffmpeg.exe"))
     }
 
     #[cfg(not(windows))]
@@ -296,8 +662,8 @@ pub fn find_ffmpeg() -> Option<PathBuf> {
 pub fn find_ffprobe() -> Option<PathBuf> {
     #[cfg(windows)]
     {
-        trusted_app_ffmpeg_path("ffprobe.exe")
-            .or_else(|| trusted_portable_ffmpeg_path("ffprobe.exe"))
+        trusted_portable_ffmpeg_path("ffprobe.exe")
+            .or_else(|| trusted_app_ffmpeg_path("ffprobe.exe"))
     }
 
     #[cfg(not(windows))]
@@ -342,16 +708,19 @@ pub struct ToolStatus {
     pub ytdlp_path: Option<String>,
     pub ffmpeg_available: bool,
     pub ffmpeg_version: Option<String>,
+    pub ffmpeg_path: Option<String>,
 }
 
 pub fn check_tool_status() -> ToolStatus {
     let ytdlp_path = find_ytdlp();
+    let ffmpeg_path = find_ffmpeg();
     ToolStatus {
         ytdlp_available: ytdlp_path.is_some(),
         ytdlp_version: get_ytdlp_version(),
         ytdlp_path: ytdlp_path.map(|p| p.to_string_lossy().to_string()),
-        ffmpeg_available: find_ffmpeg().is_some(),
+        ffmpeg_available: ffmpeg_path.is_some(),
         ffmpeg_version: get_ffmpeg_version(),
+        ffmpeg_path: ffmpeg_path.map(|p| p.to_string_lossy().to_string()),
     }
 }
 
@@ -402,15 +771,15 @@ fn verify_sha256(path: &std::path::Path, expected_hash: &str) -> Result<(), AppE
     Ok(())
 }
 
-/// 從 GitHub Releases 下載 yt-dlp 到 app bin 資料夾。
+/// 從 GitHub Releases 下載 yt-dlp 到偏好的工具資料夾。
 ///
 /// 透過 `ytdlp:install_progress` event 推送進度。
 pub fn download_ytdlp(app: &AppHandle) -> Result<PathBuf, AppError> {
-    let bin_dir =
-        get_app_bin_dir().ok_or_else(|| AppError::Internal("無法取得應用程式資料目錄".into()))?;
+    let bin_dir = get_preferred_tool_dir()
+        .ok_or_else(|| AppError::Internal("無法取得工具安裝目錄".into()))?;
 
     // 建立目錄
-    std::fs::create_dir_all(&bin_dir).map_err(|e| AppError::Io(e))?;
+    std::fs::create_dir_all(&bin_dir).map_err(AppError::Io)?;
 
     let target_path = bin_dir.join(YTDLP_EXE_NAME);
 
@@ -442,7 +811,7 @@ pub fn download_ytdlp(app: &AppHandle) -> Result<PathBuf, AppError> {
     // 寫入暫存檔再改名（避免不完整的檔案）
     let tmp_path = target_path.with_extension("tmp");
     let mut _tmp_guard = TempFileGuard::new(tmp_path.clone());
-    let mut file = std::fs::File::create(&tmp_path).map_err(|e| AppError::Io(e))?;
+    let mut file = std::fs::File::create(&tmp_path).map_err(AppError::Io)?;
 
     let mut reader = resp.into_reader();
     let mut buf = [0u8; 65536];
@@ -456,7 +825,7 @@ pub fn download_ytdlp(app: &AppHandle) -> Result<PathBuf, AppError> {
         if n == 0 {
             break;
         }
-        file.write_all(&buf[..n]).map_err(|e| AppError::Io(e))?;
+        file.write_all(&buf[..n]).map_err(AppError::Io)?;
         downloaded += n as u64;
 
         // 每 5% 報告一次
@@ -499,6 +868,11 @@ pub fn download_ytdlp(app: &AppHandle) -> Result<PathBuf, AppError> {
             .map_err(|e| AppError::Io(e))?;
     }
 
+    let mut manifest = load_tool_manifest_from_dir(&bin_dir).unwrap_or_default();
+    manifest.ytdlp_sha256 = Some(YTDLP_SHA256.into());
+    manifest.ytdlp_path = None;
+    save_tool_manifest_to_dir(&bin_dir, &manifest)?;
+
     let _ = app.emit(
         "ytdlp:install_progress",
         &InstallProgress {
@@ -517,16 +891,16 @@ pub fn download_ytdlp(app: &AppHandle) -> Result<PathBuf, AppError> {
     Ok(target_path)
 }
 
-/// 從 GitHub 下載 FFmpeg 靜態建置並解壓到 app bin 資料夾。
+/// 從 GitHub 下載 FFmpeg 靜態建置並解壓到偏好的工具資料夾。
 ///
 /// 只保留 `ffmpeg.exe` 和 `ffprobe.exe`（Windows），其餘捨棄。
 /// 透過 `ffmpeg:install_progress` event 推送進度。
 #[cfg(windows)]
 pub fn download_ffmpeg(app: &AppHandle) -> Result<PathBuf, AppError> {
-    let bin_dir =
-        get_app_bin_dir().ok_or_else(|| AppError::Internal("無法取得應用程式資料目錄".into()))?;
+    let bin_dir = get_preferred_tool_dir()
+        .ok_or_else(|| AppError::Internal("無法取得工具安裝目錄".into()))?;
 
-    std::fs::create_dir_all(&bin_dir).map_err(|e| AppError::Io(e))?;
+    std::fs::create_dir_all(&bin_dir).map_err(AppError::Io)?;
 
     let _ = app.emit(
         "ffmpeg:install_progress",
@@ -553,7 +927,7 @@ pub fn download_ffmpeg(app: &AppHandle) -> Result<PathBuf, AppError> {
         .unwrap_or(0);
 
     let mut reader = resp.into_reader();
-    let mut file = std::fs::File::create(&tmp_zip).map_err(|e| AppError::Io(e))?;
+    let mut file = std::fs::File::create(&tmp_zip).map_err(AppError::Io)?;
 
     let mut buf = [0u8; 65536];
     let mut downloaded: u64 = 0;
@@ -566,7 +940,7 @@ pub fn download_ffmpeg(app: &AppHandle) -> Result<PathBuf, AppError> {
         if n == 0 {
             break;
         }
-        file.write_all(&buf[..n]).map_err(|e| AppError::Io(e))?;
+        file.write_all(&buf[..n]).map_err(AppError::Io)?;
         downloaded += n as u64;
 
         if content_length > 0 {
@@ -607,7 +981,7 @@ pub fn download_ffmpeg(app: &AppHandle) -> Result<PathBuf, AppError> {
 
     log::info!("[ffmpeg] 解壓: {:?}", tmp_zip);
 
-    let zip_file = std::fs::File::open(&tmp_zip).map_err(|e| AppError::Io(e))?;
+    let zip_file = std::fs::File::open(&tmp_zip).map_err(AppError::Io)?;
     let mut archive = zip::ZipArchive::new(zip_file)
         .map_err(|e| AppError::Internal(format!("zip 開啟失敗: {}", e)))?;
 
@@ -669,10 +1043,12 @@ pub fn download_ffmpeg(app: &AppHandle) -> Result<PathBuf, AppError> {
     std::fs::rename(&ffprobe_tmp, &ffprobe_path).map_err(AppError::Io)?;
     ffprobe_guard.disarm();
 
-    save_tool_manifest(&ToolManifest {
-        ffmpeg_sha256: Some(ffmpeg_sha256),
-        ffprobe_sha256: Some(ffprobe_sha256),
-    })?;
+    let mut manifest = load_tool_manifest_from_dir(&bin_dir).unwrap_or_default();
+    manifest.ffmpeg_sha256 = Some(ffmpeg_sha256);
+    manifest.ffprobe_sha256 = Some(ffprobe_sha256);
+    manifest.ffmpeg_path = None;
+    manifest.ffprobe_path = None;
+    save_tool_manifest_to_dir(&bin_dir, &manifest)?;
 
     let _ = app.emit(
         "ffmpeg:install_progress",
@@ -783,11 +1159,6 @@ fn validate_url(url: &str) -> Result<(), AppError> {
     if url.len() > 2048 {
         return Err(AppError::Audio("URL 過長（上限 2048 字元）".into()));
     }
-    if !url.starts_with("https://") && !url.starts_with("http://") {
-        return Err(AppError::Audio(
-            "URL 必須以 http:// 或 https:// 開頭".into(),
-        ));
-    }
     if url.contains('\0') {
         return Err(AppError::Audio("URL 包含無效字元".into()));
     }
@@ -797,7 +1168,52 @@ fn validate_url(url: &str) -> Result<(), AppError> {
     if url.chars().any(char::is_whitespace) {
         return Err(AppError::Audio("URL 不可包含空白字元".into()));
     }
+
+    let parsed = url::Url::parse(url).map_err(|_| AppError::Audio("URL 格式錯誤".into()))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(AppError::Audio(
+            "URL 必須以 http:// 或 https:// 開頭".into(),
+        ));
+    }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| AppError::Audio("URL 缺少主機名稱".into()))?;
+    if !is_allowed_youtube_host(host) {
+        return Err(AppError::Audio(
+            "目前只支援 YouTube、youtu.be、youtube-nocookie.com URL".into(),
+        ));
+    }
+
     Ok(())
+}
+
+fn is_allowed_youtube_host(host: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    host == "youtu.be"
+        || host == "youtube.com"
+        || host.ends_with(".youtube.com")
+        || host == "youtube-nocookie.com"
+        || host.ends_with(".youtube-nocookie.com")
+}
+
+fn escape_ytdlp_output_template_literal(value: &str) -> String {
+    value.replace('%', "%%")
+}
+
+fn build_output_template(output_dir: &str, url_type: UrlType) -> String {
+    let output_dir = escape_ytdlp_output_template_literal(output_dir);
+    let separator = if output_dir.ends_with('/') || output_dir.ends_with('\\') {
+        ""
+    } else {
+        "/"
+    };
+    let filename_template = if url_type == UrlType::Channel {
+        "%(uploader)s/%(title)s.%(ext)s"
+    } else {
+        "%(title)s.%(ext)s"
+    };
+
+    format!("{output_dir}{separator}{filename_template}")
 }
 
 /// 暫存檔 RAII guard — drop 時自動刪除檔案。
@@ -891,13 +1307,8 @@ fn build_args(req: &DownloadRequest) -> Vec<String> {
 
     // 輸出模板
     let url_type = detect_url_type(&req.url);
-    let outtmpl = if url_type == UrlType::Channel {
-        format!("{}/%(uploader)s/%(title)s.%(ext)s", req.output_dir)
-    } else {
-        format!("{}/%(title)s.%(ext)s", req.output_dir)
-    };
     args.push("-o".into());
-    args.push(outtmpl);
+    args.push(build_output_template(&req.output_dir, url_type));
 
     // 忽略錯誤（播放清單/頻道中的個別影片失敗不中斷整體）
     if url_type != UrlType::Video {
@@ -920,6 +1331,11 @@ pub fn run_download(
     validate_url(&req.url)?;
     security::validate_path_safe(&req.output_dir)?;
     std::fs::create_dir_all(&req.output_dir).map_err(AppError::Io)?;
+    let canonical_output_dir = std::fs::canonicalize(&req.output_dir).map_err(AppError::Io)?;
+    let req = DownloadRequest {
+        output_dir: canonical_output_dir.to_string_lossy().to_string(),
+        ..req
+    };
 
     let ytdlp = find_ytdlp().ok_or_else(|| {
         AppError::Audio("找不到受信任的 yt-dlp。請點擊「自動安裝」重新安裝".into())
@@ -951,7 +1367,7 @@ pub fn run_download(
                 let reader = BufReader::new(s);
                 reader
                     .lines()
-                    .filter_map(|l| l.ok())
+                    .map_while(Result::ok)
                     .collect::<Vec<_>>()
                     .join("\n")
             }
@@ -1233,12 +1649,33 @@ mod tests {
     fn validates_url_accepts_valid() {
         assert!(validate_url("https://www.youtube.com/watch?v=abc123").is_ok());
         assert!(validate_url("http://youtu.be/abc").is_ok());
+        assert!(validate_url("https://www.youtube-nocookie.com/embed/abc").is_ok());
+    }
+
+    #[test]
+    fn validates_url_rejects_non_youtube_hosts() {
+        assert!(validate_url("https://example.com/watch?v=abc123").is_err());
+        assert!(validate_url("https://youtube.com.evil.test/watch?v=abc123").is_err());
+        assert!(validate_url("https://youtube.com@evil.test/watch?v=abc123").is_err());
     }
 
     #[test]
     fn validates_url_rejects_too_long() {
         let long_url = format!("https://example.com/{}", "a".repeat(2100));
         assert!(validate_url(&long_url).is_err());
+    }
+
+    #[test]
+    fn output_template_escapes_literal_percent_in_output_dir() {
+        let template = build_output_template("C:\\Users\\me\\100% Mix", UrlType::Video);
+        assert!(template.contains("100%% Mix"));
+        assert!(template.ends_with("%(title)s.%(ext)s"));
+    }
+
+    #[test]
+    fn channel_output_template_preserves_uploader_folder() {
+        let template = build_output_template("C:\\Users\\me\\Downloads", UrlType::Channel);
+        assert!(template.ends_with("%(uploader)s/%(title)s.%(ext)s"));
     }
 
     #[test]
@@ -1310,8 +1747,12 @@ mod tests {
         std::fs::write(&ffprobe, b"ffprobe-test").unwrap();
 
         let manifest = ToolManifest {
+            ytdlp_sha256: None,
+            ytdlp_path: None,
             ffmpeg_sha256: Some(compute_sha256(&ffmpeg).unwrap()),
             ffprobe_sha256: Some(compute_sha256(&ffprobe).unwrap()),
+            ffmpeg_path: None,
+            ffprobe_path: None,
         };
         std::fs::write(
             tool_manifest_path_in_dir(&dir),
@@ -1329,8 +1770,12 @@ mod tests {
         );
 
         let manifest = ToolManifest {
+            ytdlp_sha256: None,
+            ytdlp_path: None,
             ffmpeg_sha256: Some("wrong".into()),
             ffprobe_sha256: Some(compute_sha256(&ffprobe).unwrap()),
+            ffmpeg_path: None,
+            ffprobe_path: None,
         };
         std::fs::write(
             tool_manifest_path_in_dir(&dir),
@@ -1339,6 +1784,85 @@ mod tests {
         .unwrap();
 
         assert!(trusted_ffmpeg_path_in_dir(&dir, "ffmpeg.exe").is_none());
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn trusted_ytdlp_path_requires_matching_manifest_hash() {
+        let dir =
+            std::env::temp_dir().join(format!("vocalsync-trusted-ytdlp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let ytdlp = dir.join(YTDLP_EXE_NAME);
+        std::fs::write(&ytdlp, b"yt-dlp-test").unwrap();
+
+        let manifest = ToolManifest {
+            ytdlp_sha256: Some(compute_sha256(&ytdlp).unwrap()),
+            ytdlp_path: None,
+            ffmpeg_sha256: None,
+            ffprobe_sha256: None,
+            ffmpeg_path: None,
+            ffprobe_path: None,
+        };
+
+        assert_eq!(
+            trusted_ytdlp_path_from_manifest(&manifest, &dir),
+            Some(ytdlp.clone())
+        );
+
+        let manifest = ToolManifest {
+            ytdlp_sha256: Some("wrong".into()),
+            ytdlp_path: None,
+            ffmpeg_sha256: None,
+            ffprobe_sha256: None,
+            ffmpeg_path: None,
+            ffprobe_path: None,
+        };
+
+        assert!(trusted_ytdlp_path_from_manifest(&manifest, &dir).is_none());
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ytdlp_trust_request_rejects_changed_hash() {
+        let dir = std::env::temp_dir().join(format!(
+            "vocalsync-ytdlp-trust-request-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let ytdlp = dir.join(YTDLP_EXE_NAME);
+        std::fs::write(&ytdlp, b"yt-dlp-before").unwrap();
+        let candidate = ytdlp_candidate_from_path(ytdlp.clone()).unwrap();
+        std::fs::write(&ytdlp, b"yt-dlp-after").unwrap();
+
+        assert!(ytdlp_candidate_from_trust_request(candidate).is_err());
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ffmpeg_trust_request_rejects_changed_hash() {
+        let dir = std::env::temp_dir().join(format!(
+            "vocalsync-ffmpeg-trust-request-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let (ffmpeg_name, ffprobe_name) = ffmpeg_tool_names();
+        let ffmpeg = dir.join(ffmpeg_name);
+        let ffprobe = dir.join(ffprobe_name);
+        std::fs::write(&ffmpeg, b"ffmpeg-before").unwrap();
+        std::fs::write(&ffprobe, b"ffprobe-before").unwrap();
+        let candidate = candidate_from_pair(ffmpeg.clone(), ffprobe.clone()).unwrap();
+        std::fs::write(&ffmpeg, b"ffmpeg-after").unwrap();
+
+        assert!(ffmpeg_candidate_from_trust_request(candidate).is_err());
 
         let _ = std::fs::remove_dir_all(dir);
     }

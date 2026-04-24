@@ -6,7 +6,10 @@
 //! - `start_download`：開始下載（背景執行，透過 event 推送進度）
 //! - `cancel_download`：取消下載
 
-use crate::core::ytdlp_engine::{self, DownloadRequest, DownloadResult, ToolStatus, UrlType};
+use crate::core::ytdlp_engine::{
+    self, DownloadRequest, DownloadResult, LocalFfmpegCandidate, LocalYtdlpCandidate, ToolStatus,
+    UrlType,
+};
 use crate::error::AppError;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -21,6 +24,32 @@ pub struct DownloadCancelFlag(pub Arc<AtomicBool>);
 #[tauri::command]
 pub fn check_download_tools() -> ToolStatus {
     ytdlp_engine::check_tool_status()
+}
+
+/// 偵測本機已安裝的 FFmpeg / ffprobe 候選，不執行外部程式。
+#[tauri::command]
+pub fn detect_local_ffmpeg() -> Result<Option<LocalFfmpegCandidate>, AppError> {
+    ytdlp_engine::detect_local_ffmpeg_candidate()
+}
+
+/// 偵測本機已安裝的 yt-dlp 候選，不執行外部程式。
+#[tauri::command]
+pub fn detect_local_ytdlp() -> Result<Option<LocalYtdlpCandidate>, AppError> {
+    ytdlp_engine::detect_local_ytdlp_candidate()
+}
+
+/// 信任本機 FFmpeg：記錄偵測到的路徑與 SHA-256，之後只使用同一組檔案。
+#[tauri::command]
+pub fn trust_local_ffmpeg(
+    candidate: LocalFfmpegCandidate,
+) -> Result<LocalFfmpegCandidate, AppError> {
+    ytdlp_engine::trust_local_ffmpeg_candidate(candidate)
+}
+
+/// 信任本機 yt-dlp：記錄偵測到的路徑與 SHA-256，之後只使用同一個檔案。
+#[tauri::command]
+pub fn trust_local_ytdlp(candidate: LocalYtdlpCandidate) -> Result<LocalYtdlpCandidate, AppError> {
+    ytdlp_engine::trust_local_ytdlp_candidate(candidate)
 }
 
 /// 偵測 YouTube URL 的類型。

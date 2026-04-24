@@ -23,6 +23,8 @@
     type VideoQuality,
     type SubtitleLang,
     type InstallProgress,
+    type LocalFfmpegCandidate,
+    type LocalYtdlpCandidate,
   } from "../stores/download";
   import { lyricsLines, lyricsFileName, type LyricLine } from "../stores/lyrics";
   import { t, tSync } from "../i18n";
@@ -40,6 +42,14 @@
   let unlistenProgress: UnlistenFn | null = null;
   let unlistenInstall: UnlistenFn | null = null;
   let unlistenFfmpegInstall: UnlistenFn | null = null;
+  let localFfmpegCandidate = $state<LocalFfmpegCandidate | null>(null);
+  let localFfmpegMessage = $state("");
+  let isDetectingLocalFfmpeg = $state(false);
+  let isTrustingLocalFfmpeg = $state(false);
+  let localYtdlpCandidate = $state<LocalYtdlpCandidate | null>(null);
+  let localYtdlpMessage = $state("");
+  let isDetectingLocalYtdlp = $state(false);
+  let isTrustingLocalYtdlp = $state(false);
 
   onMount(async () => {
     try {
@@ -195,6 +205,47 @@
     }
   }
 
+  async function detectLocalYtdlp(): Promise<void> {
+    isDetectingLocalYtdlp = true;
+    localYtdlpMessage = "";
+
+    try {
+      const candidate = await invoke<LocalYtdlpCandidate | null>("detect_local_ytdlp");
+      localYtdlpCandidate = candidate;
+      if (!candidate) {
+        localYtdlpMessage = tSync("download.tool.ytdlp.localNotFound");
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      localYtdlpMessage = tSync("download.tool.ytdlp.localDetectFailed", { error: message });
+    } finally {
+      isDetectingLocalYtdlp = false;
+    }
+  }
+
+  async function trustLocalYtdlp(): Promise<void> {
+    isTrustingLocalYtdlp = true;
+    localYtdlpMessage = "";
+
+    try {
+      if (!localYtdlpCandidate) {
+        localYtdlpMessage = tSync("download.tool.ytdlp.localNotFound");
+        return;
+      }
+      localYtdlpCandidate = await invoke<LocalYtdlpCandidate>("trust_local_ytdlp", {
+        candidate: localYtdlpCandidate,
+      });
+      const status = await invoke<ToolStatus>("check_download_tools");
+      toolStatus.set(status);
+      localYtdlpMessage = tSync("download.tool.ytdlp.localTrusted");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      localYtdlpMessage = tSync("download.tool.ytdlp.localTrustFailed", { error: message });
+    } finally {
+      isTrustingLocalYtdlp = false;
+    }
+  }
+
   // ── 安裝 FFmpeg ───────────────────────────────────────────────
 
   async function installFfmpeg(): Promise<void> {
@@ -215,6 +266,47 @@
       });
     } finally {
       isInstallingFfmpeg.set(false);
+    }
+  }
+
+  async function detectLocalFfmpeg(): Promise<void> {
+    isDetectingLocalFfmpeg = true;
+    localFfmpegMessage = "";
+
+    try {
+      const candidate = await invoke<LocalFfmpegCandidate | null>("detect_local_ffmpeg");
+      localFfmpegCandidate = candidate;
+      if (!candidate) {
+        localFfmpegMessage = tSync("download.tool.ffmpeg.localNotFound");
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      localFfmpegMessage = tSync("download.tool.ffmpeg.localDetectFailed", { error: message });
+    } finally {
+      isDetectingLocalFfmpeg = false;
+    }
+  }
+
+  async function trustLocalFfmpeg(): Promise<void> {
+    isTrustingLocalFfmpeg = true;
+    localFfmpegMessage = "";
+
+    try {
+      if (!localFfmpegCandidate) {
+        localFfmpegMessage = tSync("download.tool.ffmpeg.localNotFound");
+        return;
+      }
+      localFfmpegCandidate = await invoke<LocalFfmpegCandidate>("trust_local_ffmpeg", {
+        candidate: localFfmpegCandidate,
+      });
+      const status = await invoke<ToolStatus>("check_download_tools");
+      toolStatus.set(status);
+      localFfmpegMessage = tSync("download.tool.ffmpeg.localTrusted");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      localFfmpegMessage = tSync("download.tool.ffmpeg.localTrustFailed", { error: message });
+    } finally {
+      isTrustingLocalFfmpeg = false;
     }
   }
 
@@ -273,7 +365,7 @@
       </div>
       <div class="status-item" class:ok={$toolStatus.ffmpeg_available} class:missing={!$toolStatus.ffmpeg_available}>
         <span class="status-dot"></span>
-        <span>FFmpeg {$toolStatus.ffmpeg_available ? $t("download.tool.ffmpeg.installed") : $t("download.tool.ffmpeg.notInstalled")}</span>
+        <span title={$toolStatus.ffmpeg_path ?? ""}>FFmpeg {$toolStatus.ffmpeg_available ? $t("download.tool.ffmpeg.installed") : $t("download.tool.ffmpeg.notInstalled")}</span>
       </div>
     </div>
 
@@ -282,6 +374,33 @@
         {#if !$toolStatus.ytdlp_available}
           <div class="install-section">
             <p>{$t("download.tool.ytdlp.hint")}</p>
+            <p class="hint-text">{$t("download.tool.ytdlp.localHint")}</p>
+            <div class="button-row">
+              <button
+                class="btn btn-secondary"
+                onclick={detectLocalYtdlp}
+                disabled={isDetectingLocalYtdlp || isTrustingLocalYtdlp}
+              >
+                {isDetectingLocalYtdlp ? $t("download.tool.ytdlp.detectingLocal") : $t("download.tool.ytdlp.detectLocal")}
+              </button>
+            </div>
+            {#if localYtdlpCandidate}
+              <div class="local-tool-card">
+                <p class="local-tool-title">{$t("download.tool.ytdlp.localFound")}</p>
+                <code>{localYtdlpCandidate.ytdlp_path}</code>
+                <code class="sha">SHA-256: {localYtdlpCandidate.ytdlp_sha256}</code>
+                <button
+                  class="btn btn-install"
+                  onclick={trustLocalYtdlp}
+                  disabled={isTrustingLocalYtdlp}
+                >
+                  {isTrustingLocalYtdlp ? $t("download.tool.ytdlp.trustingLocal") : $t("download.tool.ytdlp.trustLocal")}
+                </button>
+              </div>
+            {/if}
+            {#if localYtdlpMessage}
+              <p class="install-message">{localYtdlpMessage}</p>
+            {/if}
             <button
               class="btn btn-install"
               onclick={installYtdlp}
@@ -309,6 +428,35 @@
         {#if !$toolStatus.ffmpeg_available}
           <div class="install-section">
             <p>{$t("download.tool.ffmpeg.hint")}</p>
+            <p class="hint-text">{$t("download.tool.ffmpeg.localHint")}</p>
+            <div class="button-row">
+              <button
+                class="btn btn-secondary"
+                onclick={detectLocalFfmpeg}
+                disabled={isDetectingLocalFfmpeg || isTrustingLocalFfmpeg}
+              >
+                {isDetectingLocalFfmpeg ? $t("download.tool.ffmpeg.detectingLocal") : $t("download.tool.ffmpeg.detectLocal")}
+              </button>
+            </div>
+            {#if localFfmpegCandidate}
+              <div class="local-tool-card">
+                <p class="local-tool-title">{$t("download.tool.ffmpeg.localFound")}</p>
+                <code>{localFfmpegCandidate.ffmpeg_path}</code>
+                <code>{localFfmpegCandidate.ffprobe_path}</code>
+                <code class="sha">ffmpeg SHA-256: {localFfmpegCandidate.ffmpeg_sha256}</code>
+                <code class="sha">ffprobe SHA-256: {localFfmpegCandidate.ffprobe_sha256}</code>
+                <button
+                  class="btn btn-install"
+                  onclick={trustLocalFfmpeg}
+                  disabled={isTrustingLocalFfmpeg}
+                >
+                  {isTrustingLocalFfmpeg ? $t("download.tool.ffmpeg.trustingLocal") : $t("download.tool.ffmpeg.trustLocal")}
+                </button>
+              </div>
+            {/if}
+            {#if localFfmpegMessage}
+              <p class="install-message">{localFfmpegMessage}</p>
+            {/if}
             <button
               class="btn btn-install"
               onclick={installFfmpeg}
@@ -606,6 +754,40 @@
     border-bottom: none;
     padding-bottom: 0;
     margin-bottom: 0;
+  }
+
+  .button-row {
+    display: flex;
+    gap: 8px;
+    margin: 8px 0;
+  }
+
+  .local-tool-card {
+    display: grid;
+    gap: 6px;
+    background: #fffaf0;
+    border: 1px solid #f1ddb0;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin: 8px 0;
+  }
+
+  .local-tool-title {
+    font-weight: 600;
+    color: #5a5248;
+  }
+
+  .local-tool-card code {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .local-tool-card code.sha {
+    font-size: 11px;
+    color: var(--color-text-muted);
   }
 
   /* 表單 */

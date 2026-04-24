@@ -537,7 +537,13 @@
         {/if}
       </div>
 
-      <div class="resizer resizer-h" onpointerdown={startDragH}></div>
+      <div
+        class="resizer resizer-h"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize video and lyrics panels"
+        onpointerdown={startDragH}
+      ></div>
 
       <div class="lyrics-area" style="flex: {1 - videoFlex};">
         <div class="panel-toggle">
@@ -569,7 +575,13 @@
     </div>
 
     <!-- 上下拖曳分隔線 -->
-    <div class="resizer resizer-v" onpointerdown={startDragV}></div>
+    <div
+      class="resizer resizer-v"
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="Resize upper and lower panels"
+      onpointerdown={startDragV}
+    ></div>
 
     <!-- 下半：全寬音高曲線 -->
     <div class="pitch-area" style="flex: {1 - topFlex};">
