@@ -169,8 +169,15 @@ fn tool_manifest_path() -> Option<PathBuf> {
     get_app_bin_dir().map(|dir| dir.join(TOOL_MANIFEST_NAME))
 }
 
-fn load_tool_manifest() -> Option<ToolManifest> {
-    let path = tool_manifest_path()?;
+fn tool_manifest_path_in_dir(dir: &Path) -> PathBuf {
+    dir.join(TOOL_MANIFEST_NAME)
+}
+
+fn load_tool_manifest_from_dir(dir: &Path) -> Option<ToolManifest> {
+    load_tool_manifest_from_path(&tool_manifest_path_in_dir(dir))
+}
+
+fn load_tool_manifest_from_path(path: &Path) -> Option<ToolManifest> {
     let content = match std::fs::read_to_string(&path) {
         Ok(content) => content,
         Err(_) => return None,
@@ -231,10 +238,9 @@ fn trusted_path_with_hash(path: PathBuf, expected_hash: &str, label: &str) -> Op
     }
 }
 
-fn trusted_app_ffmpeg_path(exe_name: &str) -> Option<PathBuf> {
-    let bin_dir = get_app_bin_dir()?;
-    let candidate = find_tool_in_dir(&bin_dir, exe_name)?;
-    let manifest = load_tool_manifest()?;
+fn trusted_ffmpeg_path_in_dir(dir: &Path, exe_name: &str) -> Option<PathBuf> {
+    let candidate = find_tool_in_dir(dir, exe_name)?;
+    let manifest = load_tool_manifest_from_dir(dir)?;
     let expected_hash = match exe_name {
         "ffmpeg.exe" | "ffmpeg" => manifest.ffmpeg_sha256.as_deref(),
         "ffprobe.exe" | "ffprobe" => manifest.ffprobe_sha256.as_deref(),
@@ -242,6 +248,17 @@ fn trusted_app_ffmpeg_path(exe_name: &str) -> Option<PathBuf> {
     }?;
 
     trusted_path_with_hash(candidate, expected_hash, exe_name)
+}
+
+fn trusted_app_ffmpeg_path(exe_name: &str) -> Option<PathBuf> {
+    let bin_dir = get_app_bin_dir()?;
+    trusted_ffmpeg_path_in_dir(&bin_dir, exe_name)
+}
+
+fn trusted_portable_ffmpeg_path(exe_name: &str) -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    trusted_ffmpeg_path_in_dir(dir, exe_name)
 }
 
 /// 搜尋 yt-dlp 可執行檔。
@@ -267,7 +284,7 @@ pub fn find_ytdlp() -> Option<PathBuf> {
 pub fn find_ffmpeg() -> Option<PathBuf> {
     #[cfg(windows)]
     {
-        trusted_app_ffmpeg_path("ffmpeg.exe")
+        trusted_app_ffmpeg_path("ffmpeg.exe").or_else(|| trusted_portable_ffmpeg_path("ffmpeg.exe"))
     }
 
     #[cfg(not(windows))]
@@ -280,6 +297,7 @@ pub fn find_ffprobe() -> Option<PathBuf> {
     #[cfg(windows)]
     {
         trusted_app_ffmpeg_path("ffprobe.exe")
+            .or_else(|| trusted_portable_ffmpeg_path("ffprobe.exe"))
     }
 
     #[cfg(not(windows))]
@@ -903,8 +921,9 @@ pub fn run_download(
     security::validate_path_safe(&req.output_dir)?;
     std::fs::create_dir_all(&req.output_dir).map_err(AppError::Io)?;
 
-    let ytdlp = find_ytdlp()
-        .ok_or_else(|| AppError::Audio("找不到受信任的 yt-dlp。請點擊「自動安裝」重新安裝".into()))?;
+    let ytdlp = find_ytdlp().ok_or_else(|| {
+        AppError::Audio("找不到受信任的 yt-dlp。請點擊「自動安裝」重新安裝".into())
+    })?;
 
     let args = build_args(&req);
     log::info!(
@@ -1274,6 +1293,52 @@ mod tests {
 
         let found = find_tool_in_dir(&dir, YTDLP_EXE_NAME);
         assert!(found.is_none());
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn trusted_ffmpeg_path_requires_matching_manifest_hash() {
+        let dir =
+            std::env::temp_dir().join(format!("vocalsync-trusted-ffmpeg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let ffmpeg = dir.join("ffmpeg.exe");
+        let ffprobe = dir.join("ffprobe.exe");
+        std::fs::write(&ffmpeg, b"ffmpeg-test").unwrap();
+        std::fs::write(&ffprobe, b"ffprobe-test").unwrap();
+
+        let manifest = ToolManifest {
+            ffmpeg_sha256: Some(compute_sha256(&ffmpeg).unwrap()),
+            ffprobe_sha256: Some(compute_sha256(&ffprobe).unwrap()),
+        };
+        std::fs::write(
+            tool_manifest_path_in_dir(&dir),
+            serde_json::to_string(&manifest).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            trusted_ffmpeg_path_in_dir(&dir, "ffmpeg.exe"),
+            Some(ffmpeg.clone())
+        );
+        assert_eq!(
+            trusted_ffmpeg_path_in_dir(&dir, "ffprobe.exe"),
+            Some(ffprobe.clone())
+        );
+
+        let manifest = ToolManifest {
+            ffmpeg_sha256: Some("wrong".into()),
+            ffprobe_sha256: Some(compute_sha256(&ffprobe).unwrap()),
+        };
+        std::fs::write(
+            tool_manifest_path_in_dir(&dir),
+            serde_json::to_string(&manifest).unwrap(),
+        )
+        .unwrap();
+
+        assert!(trusted_ffmpeg_path_in_dir(&dir, "ffmpeg.exe").is_none());
 
         let _ = std::fs::remove_dir_all(dir);
     }

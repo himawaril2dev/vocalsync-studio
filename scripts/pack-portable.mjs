@@ -13,6 +13,9 @@
  *        vocalsync-studio.exe   ← src-tauri/target/release/
  *        DirectML.dll           ← src-tauri/target/release/
  *        yt-dlp.exe             ← reused from prior portable folder
+ *        ffmpeg.exe             ← trusted local FFmpeg asset
+ *        ffprobe.exe            ← trusted local FFmpeg asset
+ *        tool-manifest.json     ← SHA-256 hashes for ffmpeg / ffprobe
  *        models/                ← src-tauri/models/
  *        user-guide-{zh,en,ja}.html + 使用說明.html ← dist-docs/
  *   5. Re-zip to VocalSync.Studio.Portable.<ver>.zip via PowerShell
@@ -26,11 +29,15 @@
  * - yt-dlp.exe is sourced from the most recent existing portable folder so
  *   the published SHA-256 stays stable between patch releases. If none
  *   exists (fresh checkout), the script explains where to put one.
- * - All paths stay inside the repo; no external network calls.
+ * - FFmpeg is copied from a known local asset folder or a prior portable
+ *   folder, then recorded in tool-manifest.json for runtime verification.
+ * - No external network calls.
  */
 
+import { createReadStream } from "node:fs";
 import { readFile, writeFile, mkdir, copyFile, rm, readdir, stat, access } from "node:fs/promises";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { dirname, resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -38,6 +45,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
 
 const HTML_FILES = ["user-guide-zh.html", "user-guide-en.html", "user-guide-ja.html"];
+const FFMPEG_TOOL_NAMES = ["ffmpeg.exe", "ffprobe.exe"];
+const LOCAL_FFMPEG_CANDIDATE_DIRS = [
+  resolve(ROOT, "src-tauri", "tools", "ffmpeg"),
+  resolve(ROOT, "..", "vocalsync-studio", "assets", "ffmpeg"),
+];
 
 async function exists(p) {
   try {
@@ -74,6 +86,17 @@ async function copyDir(src, dst) {
     if (entry.isDirectory()) await copyDir(s, d);
     else await copyFile(s, d);
   }
+}
+
+async function sha256File(path) {
+  const hash = createHash("sha256");
+  await new Promise((resolvePromise, rejectPromise) => {
+    const stream = createReadStream(path);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("error", rejectPromise);
+    stream.on("end", resolvePromise);
+  });
+  return hash.digest("hex");
 }
 
 function landingPageHtml() {
@@ -130,6 +153,39 @@ async function pickPriorYtdlp(portableRoot, currentVersion) {
   return null;
 }
 
+async function hasFfmpegPair(dir) {
+  for (const name of FFMPEG_TOOL_NAMES) {
+    if (!(await exists(join(dir, name)))) return false;
+  }
+  return true;
+}
+
+async function pickPriorFfmpegDir(portableRoot, currentVersion) {
+  const entries = await readdir(portableRoot, { withFileTypes: true });
+  const candidates = entries
+    .filter((e) => e.isDirectory() && e.name.startsWith("VocalSync Studio Portable "))
+    .map((e) => e.name)
+    .filter((n) => !n.endsWith(` ${currentVersion}`))
+    .sort()
+    .reverse();
+  for (const name of candidates) {
+    const candidate = join(portableRoot, name);
+    if (await hasFfmpegPair(candidate)) return candidate;
+  }
+  return null;
+}
+
+async function pickFfmpegDir(portableRoot, currentVersion) {
+  const prior = await pickPriorFfmpegDir(portableRoot, currentVersion);
+  if (prior) return prior;
+
+  for (const dir of LOCAL_FFMPEG_CANDIDATE_DIRS) {
+    if (await hasFfmpegPair(dir)) return dir;
+  }
+
+  return null;
+}
+
 async function main() {
   const pkg = JSON.parse(await readFile(resolve(ROOT, "package.json"), "utf8"));
   const version = pkg.version;
@@ -175,6 +231,14 @@ async function main() {
   }
   console.log(`→ Reusing yt-dlp.exe from: ${ytdlpSrc.replace(ROOT + "\\", "")}`);
 
+  const ffmpegSrcDir = await pickFfmpegDir(portableRoot, version);
+  if (!ffmpegSrcDir) {
+    throw new Error(
+      `No ffmpeg.exe / ffprobe.exe pair found.\nExpected to find them in:\n  ${LOCAL_FFMPEG_CANDIDATE_DIRS.join("\n  ")}\nor an existing prior portable folder under:\n  ${portableRoot}`,
+    );
+  }
+  console.log(`→ Using FFmpeg tools from: ${ffmpegSrcDir.replace(ROOT + "\\", "")}`);
+
   // Wipe and recreate target folder.
   const portableDir = join(portableRoot, `VocalSync Studio Portable ${version}`);
   if (await exists(portableDir)) {
@@ -191,6 +255,16 @@ async function main() {
   console.log("  ✓ DirectML.dll");
   await copyFile(ytdlpSrc, join(portableDir, "yt-dlp.exe"));
   console.log("  ✓ yt-dlp.exe");
+  await copyFile(join(ffmpegSrcDir, "ffmpeg.exe"), join(portableDir, "ffmpeg.exe"));
+  console.log("  ✓ ffmpeg.exe");
+  await copyFile(join(ffmpegSrcDir, "ffprobe.exe"), join(portableDir, "ffprobe.exe"));
+  console.log("  ✓ ffprobe.exe");
+  const toolManifest = {
+    ffmpeg_sha256: await sha256File(join(portableDir, "ffmpeg.exe")),
+    ffprobe_sha256: await sha256File(join(portableDir, "ffprobe.exe")),
+  };
+  await writeFile(join(portableDir, "tool-manifest.json"), `${JSON.stringify(toolManifest, null, 2)}\n`, "utf8");
+  console.log("  ✓ tool-manifest.json");
   await copyDir(modelsSrc, join(portableDir, "models"));
   console.log("  ✓ models/");
 
