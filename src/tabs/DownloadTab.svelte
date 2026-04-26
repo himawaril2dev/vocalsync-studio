@@ -367,7 +367,30 @@
         <span class="status-dot"></span>
         <span title={$toolStatus.ffmpeg_path ?? ""}>FFmpeg {$toolStatus.ffmpeg_available ? $t("download.tool.ffmpeg.installed") : $t("download.tool.ffmpeg.notInstalled")}</span>
       </div>
+      {#if $toolStatus.ytdlp_available}
+        <button
+          class="btn btn-secondary btn-tool-update"
+          onclick={installYtdlp}
+          disabled={$isInstalling || $isDownloading}
+        >
+          {$isInstalling ? $t("download.tool.ytdlp.updating") : $t("download.tool.ytdlp.update")}
+        </button>
+      {/if}
     </div>
+
+    {#if $toolStatus.ytdlp_available && $installProgress}
+      <div class="install-status update-status">
+        {#if $installProgress.status === "downloading"}
+          <div class="progress-bar-container" style="margin-top: 8px">
+            <div
+              class="progress-bar-fill"
+              style="width: {Math.min($installProgress.percent, 100)}%"
+            ></div>
+          </div>
+        {/if}
+        <span class="install-message">{$installProgress.message}</span>
+      </div>
+    {/if}
 
     {#if !$toolStatus.ytdlp_available || !$toolStatus.ffmpeg_available}
       <div class="warning-box">
@@ -404,7 +427,7 @@
             <button
               class="btn btn-install"
               onclick={installYtdlp}
-              disabled={$isInstalling}
+              disabled={$isInstalling || $isDownloading}
             >
               {$isInstalling ? $t("download.tool.ytdlp.installing") : $t("download.tool.ytdlp.install")}
             </button>
@@ -667,6 +690,11 @@
     color: #7a7268;
   }
 
+  .btn-tool-update {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+
   .status-dot {
     width: 8px;
     height: 8px;
@@ -729,6 +757,13 @@
 
   .install-status {
     margin-top: 6px;
+  }
+
+  .update-status {
+    background: #fffaf0;
+    border: 1px solid #f1ddb0;
+    border-radius: 8px;
+    padding: 8px 12px;
   }
 
   .install-message {

@@ -26,22 +26,22 @@ use std::os::windows::process::CommandExt;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// yt-dlp 固定版本（避免 supply-chain 攻擊使用 latest）
-const YTDLP_VERSION: &str = "2025.03.31";
+const YTDLP_VERSION: &str = "2026.03.17";
 
 /// yt-dlp GitHub Releases 下載 URL（Windows 獨立執行檔）
 #[cfg(windows)]
 const YTDLP_DOWNLOAD_URL: &str =
-    "https://github.com/yt-dlp/yt-dlp/releases/download/2025.03.31/yt-dlp.exe";
+    "https://github.com/yt-dlp/yt-dlp/releases/download/2026.03.17/yt-dlp.exe";
 /// yt-dlp SHA-256（Windows exe）— 來自官方 SHA2-256SUMS
 #[cfg(windows)]
-const YTDLP_SHA256: &str = "5374c46da65bbe661d3220a23646c785c3e53264485edc31436e8dba3889337c";
+const YTDLP_SHA256: &str = "3db811b366b2da47337d2fcfdfe5bbd9a258dad3f350c54974f005df115a1545";
 
 /// yt-dlp GitHub Releases 下載 URL（Linux / macOS）
 #[cfg(not(windows))]
 const YTDLP_DOWNLOAD_URL: &str =
-    "https://github.com/yt-dlp/yt-dlp/releases/download/2025.03.31/yt-dlp";
+    "https://github.com/yt-dlp/yt-dlp/releases/download/2026.03.17/yt-dlp";
 #[cfg(not(windows))]
-const YTDLP_SHA256: &str = "0e8bc5558efce5ae2a6397710eed72fd8d434e45904e4fe029dd21c610a95d4d";
+const YTDLP_SHA256: &str = "3bda0968a01cde70d26720653003b28553c71be14dcb2e5f4c24e9921fdad745";
 
 /// yt-dlp 執行檔名
 #[cfg(windows)]
@@ -59,6 +59,7 @@ const FFMPEG_DOWNLOAD_URL: &str =
 const FFMPEG_ZIP_SHA256: &str = "e1872e1eab6a280da863f6336fa719ed13368dc294cf8010c81d3f63144c45b7";
 
 const TOOL_MANIFEST_NAME: &str = "tool-manifest.json";
+const SHARED_TOOL_DIR_NAME: &str = "com.vocalsync.tools";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct ToolManifest {
@@ -273,6 +274,36 @@ fn save_tool_manifest(manifest: &ToolManifest) -> Result<(), AppError> {
     save_tool_manifest_to_path(&path, manifest)
 }
 
+fn shared_tool_manifest_path() -> Option<PathBuf> {
+    dirs_next::data_dir().map(|dir| dir.join(SHARED_TOOL_DIR_NAME).join(TOOL_MANIFEST_NAME))
+}
+
+fn load_shared_tool_manifest() -> Option<ToolManifest> {
+    load_tool_manifest_from_path(&shared_tool_manifest_path()?)
+}
+
+fn save_shared_tool_manifest(manifest: &ToolManifest) -> Result<(), AppError> {
+    let path = shared_tool_manifest_path()
+        .ok_or_else(|| AppError::Internal("無法取得共享工具 manifest 路徑".into()))?;
+    save_tool_manifest_to_path(&path, manifest)
+}
+
+fn publish_shared_ytdlp(candidate: &LocalYtdlpCandidate) {
+    let mut manifest = load_shared_tool_manifest().unwrap_or_default();
+    manifest.ytdlp_path = Some(candidate.ytdlp_path.clone());
+    manifest.ytdlp_sha256 = Some(candidate.ytdlp_sha256.clone());
+    let _ = save_shared_tool_manifest(&manifest);
+}
+
+fn publish_shared_ffmpeg(candidate: &LocalFfmpegCandidate) {
+    let mut manifest = load_shared_tool_manifest().unwrap_or_default();
+    manifest.ffmpeg_path = Some(candidate.ffmpeg_path.clone());
+    manifest.ffprobe_path = Some(candidate.ffprobe_path.clone());
+    manifest.ffmpeg_sha256 = Some(candidate.ffmpeg_sha256.clone());
+    manifest.ffprobe_sha256 = Some(candidate.ffprobe_sha256.clone());
+    let _ = save_shared_tool_manifest(&manifest);
+}
+
 fn find_tool_in_dir(dir: &std::path::Path, exe_name: &str) -> Option<PathBuf> {
     let candidate = dir.join(exe_name);
     if candidate.exists() {
@@ -374,6 +405,13 @@ fn trusted_app_ffmpeg_path(exe_name: &str) -> Option<PathBuf> {
     trusted_ffmpeg_path_from_manifest(&manifest, &bin_dir, exe_name)
 }
 
+fn trusted_shared_ffmpeg_path(exe_name: &str) -> Option<PathBuf> {
+    let manifest_path = shared_tool_manifest_path()?;
+    let manifest = load_tool_manifest_from_path(&manifest_path)?;
+    let base_dir = manifest_path.parent()?;
+    trusted_ffmpeg_path_from_manifest(&manifest, base_dir, exe_name)
+}
+
 fn trusted_portable_ffmpeg_path(exe_name: &str) -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
@@ -402,6 +440,13 @@ fn trusted_app_ytdlp_path() -> Option<PathBuf> {
 
     let candidate = find_tool_in_dir(&bin_dir, YTDLP_EXE_NAME)?;
     trusted_path_with_hash(candidate, YTDLP_SHA256, "yt-dlp")
+}
+
+fn trusted_shared_ytdlp_path() -> Option<PathBuf> {
+    let manifest_path = shared_tool_manifest_path()?;
+    let manifest = load_tool_manifest_from_path(&manifest_path)?;
+    let base_dir = manifest_path.parent()?;
+    trusted_ytdlp_path_from_manifest(&manifest, base_dir)
 }
 
 fn trusted_portable_ytdlp_path() -> Option<PathBuf> {
@@ -493,6 +538,7 @@ pub fn trust_local_ytdlp_candidate(
     manifest.ytdlp_sha256 = Some(trusted_candidate.ytdlp_sha256.clone());
     manifest.ytdlp_path = Some(trusted_candidate.ytdlp_path.clone());
     save_tool_manifest(&manifest)?;
+    publish_shared_ytdlp(&trusted_candidate);
 
     Ok(trusted_candidate)
 }
@@ -627,6 +673,7 @@ pub fn trust_local_ffmpeg_candidate(
     manifest.ffmpeg_path = Some(trusted_candidate.ffmpeg_path.clone());
     manifest.ffprobe_path = Some(trusted_candidate.ffprobe_path.clone());
     save_tool_manifest(&manifest)?;
+    publish_shared_ffmpeg(&trusted_candidate);
 
     Ok(trusted_candidate)
 }
@@ -636,6 +683,10 @@ pub fn trust_local_ffmpeg_candidate(
 /// 只信任 hash 驗證通過的 managed binary。
 pub fn find_ytdlp() -> Option<PathBuf> {
     if let Some(path) = trusted_portable_ytdlp_path() {
+        return Some(path);
+    }
+
+    if let Some(path) = trusted_shared_ytdlp_path() {
         return Some(path);
     }
 
@@ -650,7 +701,9 @@ pub fn find_ytdlp() -> Option<PathBuf> {
 pub fn find_ffmpeg() -> Option<PathBuf> {
     #[cfg(windows)]
     {
-        trusted_portable_ffmpeg_path("ffmpeg.exe").or_else(|| trusted_app_ffmpeg_path("ffmpeg.exe"))
+        trusted_portable_ffmpeg_path("ffmpeg.exe")
+            .or_else(|| trusted_shared_ffmpeg_path("ffmpeg.exe"))
+            .or_else(|| trusted_app_ffmpeg_path("ffmpeg.exe"))
     }
 
     #[cfg(not(windows))]
@@ -663,6 +716,7 @@ pub fn find_ffprobe() -> Option<PathBuf> {
     #[cfg(windows)]
     {
         trusted_portable_ffmpeg_path("ffprobe.exe")
+            .or_else(|| trusted_shared_ffmpeg_path("ffprobe.exe"))
             .or_else(|| trusted_app_ffmpeg_path("ffprobe.exe"))
     }
 
@@ -872,6 +926,10 @@ pub fn download_ytdlp(app: &AppHandle) -> Result<PathBuf, AppError> {
     manifest.ytdlp_sha256 = Some(YTDLP_SHA256.into());
     manifest.ytdlp_path = None;
     save_tool_manifest_to_dir(&bin_dir, &manifest)?;
+    publish_shared_ytdlp(&LocalYtdlpCandidate {
+        ytdlp_path: target_path.to_string_lossy().to_string(),
+        ytdlp_sha256: YTDLP_SHA256.into(),
+    });
 
     let _ = app.emit(
         "ytdlp:install_progress",
@@ -1049,6 +1107,12 @@ pub fn download_ffmpeg(app: &AppHandle) -> Result<PathBuf, AppError> {
     manifest.ffmpeg_path = None;
     manifest.ffprobe_path = None;
     save_tool_manifest_to_dir(&bin_dir, &manifest)?;
+    publish_shared_ffmpeg(&LocalFfmpegCandidate {
+        ffmpeg_path: ffmpeg_path.to_string_lossy().to_string(),
+        ffprobe_path: ffprobe_path.to_string_lossy().to_string(),
+        ffmpeg_sha256: manifest.ffmpeg_sha256.clone().unwrap_or_default(),
+        ffprobe_sha256: manifest.ffprobe_sha256.clone().unwrap_or_default(),
+    });
 
     let _ = app.emit(
         "ffmpeg:install_progress",
