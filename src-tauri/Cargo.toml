@@ -39,7 +39,7 @@ which = "7.0"
 # FFmpeg 自動下載：zip 解壓
 zip = "8.5"
 # 下載檔案 SHA-256 驗證
-sha2 = "0.10"
+sha2 = "0.11"
 timestretch = "0.4.0"
 
 [features]
