@@ -371,9 +371,16 @@
         <button
           class="btn btn-secondary btn-tool-update"
           onclick={installYtdlp}
-          disabled={$isInstalling || $isDownloading}
+          disabled={$isInstalling || $isDownloading || !$toolStatus.ytdlp_update_available}
+          title={$toolStatus.ytdlp_update_available
+            ? $t("download.tool.ytdlp.updateHint", { version: $toolStatus.managed_ytdlp_version })
+            : $t("download.tool.ytdlp.upToDateHint", { version: $toolStatus.managed_ytdlp_version })}
         >
-          {$isInstalling ? $t("download.tool.ytdlp.updating") : $t("download.tool.ytdlp.update")}
+          {$isInstalling
+            ? $t("download.tool.ytdlp.updating")
+            : $toolStatus.ytdlp_update_available
+              ? $t("download.tool.ytdlp.update")
+              : $t("download.tool.ytdlp.upToDate")}
         </button>
       {/if}
     </div>

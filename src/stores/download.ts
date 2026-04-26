@@ -6,6 +6,8 @@ export interface ToolStatus {
   ytdlp_available: boolean;
   ytdlp_version: string | null;
   ytdlp_path: string | null;
+  managed_ytdlp_version: string;
+  ytdlp_update_available: boolean;
   ffmpeg_available: boolean;
   ffmpeg_version: string | null;
   ffmpeg_path: string | null;

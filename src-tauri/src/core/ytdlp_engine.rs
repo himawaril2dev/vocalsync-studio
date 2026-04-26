@@ -726,9 +726,12 @@ pub fn find_ffprobe() -> Option<PathBuf> {
     }
 }
 
+fn is_managed_ytdlp_version(version: &str) -> bool {
+    version.trim() == YTDLP_VERSION
+}
+
 /// 取得 yt-dlp 版本字串。
-pub fn get_ytdlp_version() -> Option<String> {
-    let ytdlp = find_ytdlp()?;
+fn get_ytdlp_version_for_path(ytdlp: &Path) -> Option<String> {
     let mut cmd = Command::new(ytdlp);
     cmd.arg("--version");
     #[cfg(windows)]
@@ -740,6 +743,12 @@ pub fn get_ytdlp_version() -> Option<String> {
     } else {
         Some(version)
     }
+}
+
+/// 取得 yt-dlp 版本字串。
+pub fn get_ytdlp_version() -> Option<String> {
+    let ytdlp = find_ytdlp()?;
+    get_ytdlp_version_for_path(&ytdlp)
 }
 
 /// 取得 FFmpeg 版本字串（第一行）。
@@ -760,6 +769,8 @@ pub struct ToolStatus {
     pub ytdlp_available: bool,
     pub ytdlp_version: Option<String>,
     pub ytdlp_path: Option<String>,
+    pub managed_ytdlp_version: String,
+    pub ytdlp_update_available: bool,
     pub ffmpeg_available: bool,
     pub ffmpeg_version: Option<String>,
     pub ffmpeg_path: Option<String>,
@@ -768,10 +779,17 @@ pub struct ToolStatus {
 pub fn check_tool_status() -> ToolStatus {
     let ytdlp_path = find_ytdlp();
     let ffmpeg_path = find_ffmpeg();
+    let ytdlp_version = ytdlp_path.as_deref().and_then(get_ytdlp_version_for_path);
+    let ytdlp_update_available = ytdlp_version
+        .as_deref()
+        .is_some_and(|version| !is_managed_ytdlp_version(version));
+
     ToolStatus {
         ytdlp_available: ytdlp_path.is_some(),
-        ytdlp_version: get_ytdlp_version(),
+        ytdlp_version,
         ytdlp_path: ytdlp_path.map(|p| p.to_string_lossy().to_string()),
+        managed_ytdlp_version: YTDLP_VERSION.to_string(),
+        ytdlp_update_available,
         ffmpeg_available: ffmpeg_path.is_some(),
         ffmpeg_version: get_ffmpeg_version(),
         ffmpeg_path: ffmpeg_path.map(|p| p.to_string_lossy().to_string()),
@@ -836,6 +854,23 @@ pub fn download_ytdlp(app: &AppHandle) -> Result<PathBuf, AppError> {
     std::fs::create_dir_all(&bin_dir).map_err(AppError::Io)?;
 
     let target_path = bin_dir.join(YTDLP_EXE_NAME);
+
+    if let Some(current_path) = find_ytdlp() {
+        if get_ytdlp_version_for_path(&current_path)
+            .as_deref()
+            .is_some_and(is_managed_ytdlp_version)
+        {
+            let _ = app.emit(
+                "ytdlp:install_progress",
+                &InstallProgress {
+                    percent: 100.0,
+                    status: "finished".into(),
+                    message: format!("yt-dlp {} 已是最新", YTDLP_VERSION),
+                },
+            );
+            return Ok(current_path);
+        }
+    }
 
     let _ = app.emit(
         "ytdlp:install_progress",
@@ -1888,6 +1923,13 @@ mod tests {
         assert!(trusted_ytdlp_path_from_manifest(&manifest, &dir).is_none());
 
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn managed_ytdlp_version_accepts_only_current_version() {
+        assert!(is_managed_ytdlp_version(YTDLP_VERSION));
+        assert!(is_managed_ytdlp_version(&format!("{}\n", YTDLP_VERSION)));
+        assert!(!is_managed_ytdlp_version("2025.03.31"));
     }
 
     #[test]
