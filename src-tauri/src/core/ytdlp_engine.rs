@@ -15,7 +15,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter};
 
 #[cfg(windows)]
@@ -60,6 +60,12 @@ const FFMPEG_ZIP_SHA256: &str = "e1872e1eab6a280da863f6336fa719ed13368dc294cf801
 
 const TOOL_MANIFEST_NAME: &str = "tool-manifest.json";
 const SHARED_TOOL_DIR_NAME: &str = "com.vocalsync.tools";
+const MAX_YTDLP_DOWNLOAD_BYTES: u64 = 64 * 1024 * 1024;
+
+#[cfg(windows)]
+const MAX_FFMPEG_DOWNLOAD_BYTES: u64 = 256 * 1024 * 1024;
+
+static TOOL_STATE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct ToolManifest {
@@ -261,7 +267,18 @@ fn save_tool_manifest_to_path(path: &Path, manifest: &ToolManifest) -> Result<()
     }
     let content = serde_json::to_string_pretty(manifest)
         .map_err(|e| AppError::Internal(format!("工具 manifest 序列化失敗: {}", e)))?;
-    std::fs::write(path, content).map_err(AppError::Io)
+    let tmp_path = path.with_extension("json.tmp");
+    let mut tmp_guard = TempFileGuard::new(tmp_path.clone());
+    std::fs::write(&tmp_path, content).map_err(AppError::Io)?;
+
+    #[cfg(windows)]
+    if path.exists() {
+        std::fs::remove_file(path).map_err(AppError::Io)?;
+    }
+
+    std::fs::rename(&tmp_path, path).map_err(AppError::Io)?;
+    tmp_guard.disarm();
+    Ok(())
 }
 
 fn save_tool_manifest_to_dir(dir: &Path, manifest: &ToolManifest) -> Result<(), AppError> {
@@ -311,6 +328,27 @@ fn find_tool_in_dir(dir: &std::path::Path, exe_name: &str) -> Option<PathBuf> {
     } else {
         None
     }
+}
+
+fn acquire_tool_state_lock() -> Result<MutexGuard<'static, ()>, AppError> {
+    TOOL_STATE_LOCK
+        .try_lock()
+        .map_err(|_| AppError::Internal("工具安裝或信任設定正在進行中，請稍候。".into()))
+}
+
+fn ensure_download_within_limit(
+    label: &str,
+    downloaded: u64,
+    max_bytes: u64,
+) -> Result<(), AppError> {
+    if downloaded > max_bytes {
+        return Err(AppError::Internal(format!(
+            "{} 下載超過安全上限 {:.0} MB，已停止",
+            label,
+            max_bytes as f64 / 1_048_576.0
+        )));
+    }
+    Ok(())
 }
 
 fn canonical_existing_tool_file(path: &str, label: &str) -> Result<PathBuf, AppError> {
@@ -500,12 +538,12 @@ fn ytdlp_candidate_from_trust_request(
     candidate: LocalYtdlpCandidate,
 ) -> Result<LocalYtdlpCandidate, AppError> {
     let path = canonical_existing_tool_file(&candidate.ytdlp_path, "yt-dlp")?;
-    let allowed_names = if cfg!(windows) {
-        [YTDLP_EXE_NAME, "yt-dlp"]
+    let allowed_names: &[&str] = if cfg!(windows) {
+        &[YTDLP_EXE_NAME, "yt-dlp"]
     } else {
-        [YTDLP_EXE_NAME, YTDLP_EXE_NAME]
+        &[YTDLP_EXE_NAME]
     };
-    if !file_name_matches(&path, &allowed_names) {
+    if !file_name_matches(&path, allowed_names) {
         return Err(AppError::Audio("yt-dlp 路徑必須指向 yt-dlp 執行檔".into()));
     }
 
@@ -530,6 +568,7 @@ pub fn detect_local_ytdlp_candidate() -> Result<Option<LocalYtdlpCandidate>, App
 pub fn trust_local_ytdlp_candidate(
     candidate: LocalYtdlpCandidate,
 ) -> Result<LocalYtdlpCandidate, AppError> {
+    let _tool_state_guard = acquire_tool_state_lock()?;
     let trusted_candidate = ytdlp_candidate_from_trust_request(candidate)?;
 
     let mut manifest = tool_manifest_path()
@@ -663,6 +702,7 @@ pub fn detect_local_ffmpeg_candidate() -> Result<Option<LocalFfmpegCandidate>, A
 pub fn trust_local_ffmpeg_candidate(
     candidate: LocalFfmpegCandidate,
 ) -> Result<LocalFfmpegCandidate, AppError> {
+    let _tool_state_guard = acquire_tool_state_lock()?;
     let trusted_candidate = ffmpeg_candidate_from_trust_request(candidate)?;
 
     let mut manifest = tool_manifest_path()
@@ -730,6 +770,19 @@ fn is_managed_ytdlp_version(version: &str) -> bool {
     version.trim() == YTDLP_VERSION
 }
 
+fn ytdlp_hash_matches_managed(path: &Path) -> bool {
+    compute_sha256(path)
+        .map(|hash| hash.eq_ignore_ascii_case(YTDLP_SHA256))
+        .unwrap_or(false)
+}
+
+fn is_managed_ytdlp_file(path: &Path) -> bool {
+    get_ytdlp_version_for_path(path)
+        .as_deref()
+        .is_some_and(is_managed_ytdlp_version)
+        && ytdlp_hash_matches_managed(path)
+}
+
 /// 取得 yt-dlp 版本字串。
 fn get_ytdlp_version_for_path(ytdlp: &Path) -> Option<String> {
     let mut cmd = Command::new(ytdlp);
@@ -771,6 +824,7 @@ pub struct ToolStatus {
     pub ytdlp_path: Option<String>,
     pub managed_ytdlp_version: String,
     pub ytdlp_update_available: bool,
+    pub ytdlp_hash_matches_managed: bool,
     pub ffmpeg_available: bool,
     pub ffmpeg_version: Option<String>,
     pub ffmpeg_path: Option<String>,
@@ -780,9 +834,12 @@ pub fn check_tool_status() -> ToolStatus {
     let ytdlp_path = find_ytdlp();
     let ffmpeg_path = find_ffmpeg();
     let ytdlp_version = ytdlp_path.as_deref().and_then(get_ytdlp_version_for_path);
+    let ytdlp_hash_matches_managed = ytdlp_path
+        .as_deref()
+        .is_some_and(ytdlp_hash_matches_managed);
     let ytdlp_update_available = ytdlp_version
         .as_deref()
-        .is_some_and(|version| !is_managed_ytdlp_version(version));
+        .is_some_and(|version| !is_managed_ytdlp_version(version) || !ytdlp_hash_matches_managed);
 
     ToolStatus {
         ytdlp_available: ytdlp_path.is_some(),
@@ -790,6 +847,7 @@ pub fn check_tool_status() -> ToolStatus {
         ytdlp_path: ytdlp_path.map(|p| p.to_string_lossy().to_string()),
         managed_ytdlp_version: YTDLP_VERSION.to_string(),
         ytdlp_update_available,
+        ytdlp_hash_matches_managed,
         ffmpeg_available: ffmpeg_path.is_some(),
         ffmpeg_version: get_ffmpeg_version(),
         ffmpeg_path: ffmpeg_path.map(|p| p.to_string_lossy().to_string()),
@@ -850,16 +908,15 @@ pub fn download_ytdlp(app: &AppHandle) -> Result<PathBuf, AppError> {
     let bin_dir = get_preferred_tool_dir()
         .ok_or_else(|| AppError::Internal("無法取得工具安裝目錄".into()))?;
 
+    let _tool_state_guard = acquire_tool_state_lock()?;
+
     // 建立目錄
     std::fs::create_dir_all(&bin_dir).map_err(AppError::Io)?;
 
     let target_path = bin_dir.join(YTDLP_EXE_NAME);
 
     if let Some(current_path) = find_ytdlp() {
-        if get_ytdlp_version_for_path(&current_path)
-            .as_deref()
-            .is_some_and(is_managed_ytdlp_version)
-        {
+        if is_managed_ytdlp_file(&current_path) {
             let _ = app.emit(
                 "ytdlp:install_progress",
                 &InstallProgress {
@@ -896,6 +953,7 @@ pub fn download_ytdlp(app: &AppHandle) -> Result<PathBuf, AppError> {
         .header("content-length")
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(0);
+    ensure_download_within_limit("yt-dlp", content_length, MAX_YTDLP_DOWNLOAD_BYTES)?;
 
     // 寫入暫存檔再改名（避免不完整的檔案）
     let tmp_path = target_path.with_extension("tmp");
@@ -916,6 +974,7 @@ pub fn download_ytdlp(app: &AppHandle) -> Result<PathBuf, AppError> {
         }
         file.write_all(&buf[..n]).map_err(AppError::Io)?;
         downloaded += n as u64;
+        ensure_download_within_limit("yt-dlp", downloaded, MAX_YTDLP_DOWNLOAD_BYTES)?;
 
         // 每 5% 報告一次
         if content_length > 0 {
@@ -993,6 +1052,8 @@ pub fn download_ffmpeg(app: &AppHandle) -> Result<PathBuf, AppError> {
     let bin_dir = get_preferred_tool_dir()
         .ok_or_else(|| AppError::Internal("無法取得工具安裝目錄".into()))?;
 
+    let _tool_state_guard = acquire_tool_state_lock()?;
+
     std::fs::create_dir_all(&bin_dir).map_err(AppError::Io)?;
 
     let _ = app.emit(
@@ -1018,6 +1079,7 @@ pub fn download_ffmpeg(app: &AppHandle) -> Result<PathBuf, AppError> {
         .header("content-length")
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(0);
+    ensure_download_within_limit("FFmpeg", content_length, MAX_FFMPEG_DOWNLOAD_BYTES)?;
 
     let mut reader = resp.into_reader();
     let mut file = std::fs::File::create(&tmp_zip).map_err(AppError::Io)?;
@@ -1035,6 +1097,7 @@ pub fn download_ffmpeg(app: &AppHandle) -> Result<PathBuf, AppError> {
         }
         file.write_all(&buf[..n]).map_err(AppError::Io)?;
         downloaded += n as u64;
+        ensure_download_within_limit("FFmpeg", downloaded, MAX_FFMPEG_DOWNLOAD_BYTES)?;
 
         if content_length > 0 {
             // 下載佔總進度的 0~80%

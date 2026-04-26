@@ -361,7 +361,13 @@
     <div class="tool-status">
       <div class="status-item" class:ok={$toolStatus.ytdlp_available} class:missing={!$toolStatus.ytdlp_available}>
         <span class="status-dot"></span>
-        <span>yt-dlp {$toolStatus.ytdlp_available ? $toolStatus.ytdlp_version ?? "" : $t("download.tool.ytdlp.notInstalled")}</span>
+        <span title={$toolStatus.ytdlp_path ?? ""}>yt-dlp {$toolStatus.ytdlp_available ? $toolStatus.ytdlp_version ?? "" : $t("download.tool.ytdlp.notInstalled")}</span>
+        {#if $toolStatus.ytdlp_available && !$toolStatus.ytdlp_hash_matches_managed}
+          <span
+            class="trust-badge"
+            title={$t("download.tool.ytdlp.localTrustedHint")}
+          >{$t("download.tool.ytdlp.localTrustedBadge")}</span>
+        {/if}
       </div>
       <div class="status-item" class:ok={$toolStatus.ffmpeg_available} class:missing={!$toolStatus.ffmpeg_available}>
         <span class="status-dot"></span>
@@ -372,7 +378,11 @@
           class="btn btn-secondary btn-tool-update"
           onclick={installYtdlp}
           disabled={$isInstalling || $isDownloading || !$toolStatus.ytdlp_update_available}
-          title={$toolStatus.ytdlp_update_available
+          title={$isDownloading
+            ? $t("download.tool.ytdlp.disabledDuringDownload")
+            : $isInstalling
+              ? $t("download.tool.ytdlp.updating")
+              : $toolStatus.ytdlp_update_available
             ? $t("download.tool.ytdlp.updateHint", { version: $toolStatus.managed_ytdlp_version })
             : $t("download.tool.ytdlp.upToDateHint", { version: $toolStatus.managed_ytdlp_version })}
         >
@@ -695,6 +705,16 @@
     align-items: center;
     gap: 6px;
     color: #7a7268;
+  }
+
+  .trust-badge {
+    border: 1px solid #e5cf96;
+    border-radius: 999px;
+    color: #755700;
+    background: #fff8e1;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 6px;
   }
 
   .btn-tool-update {

@@ -2,7 +2,7 @@
 
 **繁體中文** | [English](USER_GUIDE.en.md) | [日本語](USER_GUIDE.ja.md)
 
-> 適用版本：v0.2.6 以上
+> 適用版本：v0.2.12 以上
 > 最後更新：2026-04
 > 回報文件錯誤：[GitHub Issues](https://github.com/himawaril2dev/vocalsync-studio/issues)
 
@@ -568,4 +568,4 @@ A-B 循環可以與錄音、試聽、回放任一模式並用。
 
 ---
 
-*最後更新：2026-04 · VocalSync Studio v0.2.6*
+*最後更新：2026-04 · VocalSync Studio v0.2.12*
