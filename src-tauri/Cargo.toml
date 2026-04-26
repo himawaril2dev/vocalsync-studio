@@ -35,7 +35,7 @@ midly = "0.5.3"
 # CREPE AI 音高偵測
 ort = { version = "2.0.0-rc.9", default-features = false, features = ["std", "download-binaries", "copy-dylibs", "tls-native"] }
 # yt-dlp CLI 包裝：跨平台可執行檔搜尋
-which = "7.0"
+which = "8.0"
 # FFmpeg 自動下載：zip 解壓
 zip = "8.5"
 # 下載檔案 SHA-256 驗證
