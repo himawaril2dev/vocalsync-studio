@@ -13,20 +13,6 @@ pub fn load_settings(settings: State<'_, Mutex<AppSettings>>) -> Result<AppSetti
     Ok(settings.clone())
 }
 
-#[tauri::command]
-pub fn save_settings(
-    new_settings: AppSettings,
-    settings: State<'_, Mutex<AppSettings>>,
-) -> Result<(), AppError> {
-    let mut current = settings
-        .lock()
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    *current = new_settings;
-    current
-        .save()
-        .map_err(|e| AppError::Settings(e.to_string()))
-}
-
 /// 部分更新：只寫入音高偵測引擎偏好並立即持久化。
 #[tauri::command]
 pub fn update_pitch_engine(

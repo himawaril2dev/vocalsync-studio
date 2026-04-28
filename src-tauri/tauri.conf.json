@@ -1,6 +1,6 @@
 {
   "productName": "VocalSync Studio",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "identifier": "com.vocalsync.studio",
   "build": {
     "frontendDist": "../dist",
@@ -52,10 +52,7 @@
           "$DESKTOP/**",
           "$DOCUMENT/**",
           "$VIDEO/**",
-          "$AUDIO/**",
-          "$APPDATA/**",
-          "$APPLOCALDATA/**",
-          "$TEMP/**"
+          "$AUDIO/**"
         ]
       }
     }

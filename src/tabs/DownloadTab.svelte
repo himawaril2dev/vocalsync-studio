@@ -25,6 +25,7 @@
     type InstallProgress,
     type LocalFfmpegCandidate,
     type LocalYtdlpCandidate,
+    type UrlType,
   } from "../stores/download";
   import { lyricsLines, lyricsFileName, type LyricLine } from "../stores/lyrics";
   import { t, tSync } from "../i18n";
@@ -110,11 +111,37 @@
     }
     try {
       const type = await invoke<string>("detect_download_url_type", { url });
-      detectedUrlType.set(type as "video" | "playlist" | "channel");
+      detectedUrlType.set(type as UrlType);
     } catch (err) {
       console.warn("[download] URL 類型偵測失敗", err);
       detectedUrlType.set(null);
     }
+  }
+
+  async function resolveDownloadUrlType(): Promise<UrlType | null> {
+    if ($detectedUrlType) return $detectedUrlType;
+    try {
+      const type = await invoke<string>("detect_download_url_type", { url });
+      const typed = type as UrlType;
+      detectedUrlType.set(typed);
+      return typed;
+    } catch {
+      return null;
+    }
+  }
+
+  function batchDownloadLimit(): number {
+    return $toolStatus?.batch_download_limit ?? 25;
+  }
+
+  function confirmBatchDownload(type: UrlType): boolean {
+    if (type === "video") return true;
+    return window.confirm(
+      tSync("download.confirm.batch", {
+        type: urlTypeLabel(type),
+        limit: batchDownloadLimit(),
+      }),
+    );
   }
 
   // ── 選擇輸出目錄 ─────────────────────────────────────────────
@@ -142,6 +169,9 @@
       });
       return;
     }
+
+    const urlType = await resolveDownloadUrlType();
+    if (urlType && !confirmBatchDownload(urlType)) return;
 
     resetDownloadState();
     downloadStatus.set("downloading");

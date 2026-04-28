@@ -187,6 +187,7 @@
   "download.action.download": "ダウンロード開始",
   "download.action.downloadSubtitle": "字幕をダウンロード",
   "download.action.cancel": "ダウンロードをキャンセル",
+  "download.confirm.batch": "これは {type} のダウンロードです。大量ダウンロードを防ぐため、VocalSync は先頭 {limit} 件まで取得します。開始しますか？",
 
   "download.urlType.video": "動画",
   "download.urlType.playlist": "プレイリスト",

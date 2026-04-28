@@ -61,6 +61,7 @@ const FFMPEG_ZIP_SHA256: &str = "e1872e1eab6a280da863f6336fa719ed13368dc294cf801
 const TOOL_MANIFEST_NAME: &str = "tool-manifest.json";
 const SHARED_TOOL_DIR_NAME: &str = "com.vocalsync.tools";
 const MAX_YTDLP_DOWNLOAD_BYTES: u64 = 64 * 1024 * 1024;
+pub const MAX_BATCH_DOWNLOAD_ITEMS: u32 = 25;
 
 #[cfg(windows)]
 const MAX_FFMPEG_DOWNLOAD_BYTES: u64 = 256 * 1024 * 1024;
@@ -825,6 +826,7 @@ pub struct ToolStatus {
     pub managed_ytdlp_version: String,
     pub ytdlp_update_available: bool,
     pub ytdlp_hash_matches_managed: bool,
+    pub batch_download_limit: u32,
     pub ffmpeg_available: bool,
     pub ffmpeg_version: Option<String>,
     pub ffmpeg_path: Option<String>,
@@ -848,6 +850,7 @@ pub fn check_tool_status() -> ToolStatus {
         managed_ytdlp_version: YTDLP_VERSION.to_string(),
         ytdlp_update_available,
         ytdlp_hash_matches_managed,
+        batch_download_limit: MAX_BATCH_DOWNLOAD_ITEMS,
         ffmpeg_available: ffmpeg_path.is_some(),
         ffmpeg_version: get_ffmpeg_version(),
         ffmpeg_path: ffmpeg_path.map(|p| p.to_string_lossy().to_string()),
@@ -1316,8 +1319,8 @@ fn subtitle_args(lang: &SubtitleLang) -> Vec<String> {
 
 // ── 輔助工具 ─────────────────────────────────────────────────────
 
-/// 驗證 URL 基本格式（防止 shell injection 和無效輸入）。
-fn validate_url(url: &str) -> Result<(), AppError> {
+/// 解析並驗證 URL 基本格式（防止 shell injection 和無效輸入）。
+fn parse_valid_url(url: &str) -> Result<url::Url, AppError> {
     if url.len() > 2048 {
         return Err(AppError::Audio("URL 過長（上限 2048 字元）".into()));
     }
@@ -1346,7 +1349,18 @@ fn validate_url(url: &str) -> Result<(), AppError> {
         ));
     }
 
-    Ok(())
+    Ok(parsed)
+}
+
+/// 將可接受的 YouTube HTTP URL 升級成 HTTPS，再交給 yt-dlp。
+fn normalize_download_url(url: &str) -> Result<String, AppError> {
+    let mut parsed = parse_valid_url(url)?;
+    if parsed.scheme() == "http" {
+        parsed
+            .set_scheme("https")
+            .map_err(|_| AppError::Audio("URL 無法轉換為 HTTPS".into()))?;
+    }
+    Ok(parsed.to_string())
 }
 
 fn is_allowed_youtube_host(host: &str) -> bool {
@@ -1475,6 +1489,8 @@ fn build_args(req: &DownloadRequest) -> Vec<String> {
     // 忽略錯誤（播放清單/頻道中的個別影片失敗不中斷整體）
     if url_type != UrlType::Video {
         args.push("--ignore-errors".into());
+        args.push("--playlist-end".into());
+        args.push(MAX_BATCH_DOWNLOAD_ITEMS.to_string());
     }
 
     args.push(req.url.clone());
@@ -1489,12 +1505,12 @@ pub fn run_download(
     req: DownloadRequest,
     cancel_flag: Arc<AtomicBool>,
 ) -> Result<DownloadResult, AppError> {
-    // 驗證 URL
-    validate_url(&req.url)?;
+    let normalized_url = normalize_download_url(&req.url)?;
     security::validate_path_safe(&req.output_dir)?;
     std::fs::create_dir_all(&req.output_dir).map_err(AppError::Io)?;
     let canonical_output_dir = std::fs::canonicalize(&req.output_dir).map_err(AppError::Io)?;
     let req = DownloadRequest {
+        url: normalized_url,
         output_dir: canonical_output_dir.to_string_lossy().to_string(),
         ..req
     };
@@ -1802,29 +1818,41 @@ mod tests {
 
     #[test]
     fn validates_url_rejects_invalid() {
-        assert!(validate_url("not-a-url").is_err());
-        assert!(validate_url("ftp://example.com").is_err());
-        assert!(validate_url("https://example.com/\0bad").is_err());
+        assert!(parse_valid_url("not-a-url").is_err());
+        assert!(parse_valid_url("ftp://example.com").is_err());
+        assert!(parse_valid_url("https://example.com/\0bad").is_err());
     }
 
     #[test]
     fn validates_url_accepts_valid() {
-        assert!(validate_url("https://www.youtube.com/watch?v=abc123").is_ok());
-        assert!(validate_url("http://youtu.be/abc").is_ok());
-        assert!(validate_url("https://www.youtube-nocookie.com/embed/abc").is_ok());
+        assert!(parse_valid_url("https://www.youtube.com/watch?v=abc123").is_ok());
+        assert!(parse_valid_url("http://youtu.be/abc").is_ok());
+        assert!(parse_valid_url("https://www.youtube-nocookie.com/embed/abc").is_ok());
+    }
+
+    #[test]
+    fn normalizes_http_youtube_url_to_https() {
+        let normalized = normalize_download_url("http://youtu.be/abc").unwrap();
+        assert_eq!(normalized, "https://youtu.be/abc");
+    }
+
+    #[test]
+    fn keeps_https_youtube_url_as_https() {
+        let normalized = normalize_download_url("https://www.youtube.com/watch?v=abc123").unwrap();
+        assert_eq!(normalized, "https://www.youtube.com/watch?v=abc123");
     }
 
     #[test]
     fn validates_url_rejects_non_youtube_hosts() {
-        assert!(validate_url("https://example.com/watch?v=abc123").is_err());
-        assert!(validate_url("https://youtube.com.evil.test/watch?v=abc123").is_err());
-        assert!(validate_url("https://youtube.com@evil.test/watch?v=abc123").is_err());
+        assert!(parse_valid_url("https://example.com/watch?v=abc123").is_err());
+        assert!(parse_valid_url("https://youtube.com.evil.test/watch?v=abc123").is_err());
+        assert!(parse_valid_url("https://youtube.com@evil.test/watch?v=abc123").is_err());
     }
 
     #[test]
     fn validates_url_rejects_too_long() {
         let long_url = format!("https://example.com/{}", "a".repeat(2100));
-        assert!(validate_url(&long_url).is_err());
+        assert!(parse_valid_url(&long_url).is_err());
     }
 
     #[test]
@@ -1838,6 +1866,36 @@ mod tests {
     fn channel_output_template_preserves_uploader_folder() {
         let template = build_output_template("C:\\Users\\me\\Downloads", UrlType::Channel);
         assert!(template.ends_with("%(uploader)s/%(title)s.%(ext)s"));
+    }
+
+    #[test]
+    fn batch_downloads_are_limited() {
+        let req = DownloadRequest {
+            url: "https://www.youtube.com/playlist?list=PLxyz".into(),
+            format: DownloadFormat::Mp3,
+            quality: VideoQuality::Best,
+            subtitle_lang: SubtitleLang::None,
+            output_dir: "C:/Downloads".into(),
+        };
+
+        let args = build_args(&req);
+        assert!(args
+            .windows(2)
+            .any(|pair| pair[0] == "--playlist-end" && pair[1] == "25"));
+    }
+
+    #[test]
+    fn single_video_downloads_are_not_playlist_limited() {
+        let req = DownloadRequest {
+            url: "https://www.youtube.com/watch?v=abc123".into(),
+            format: DownloadFormat::Mp3,
+            quality: VideoQuality::Best,
+            subtitle_lang: SubtitleLang::None,
+            output_dir: "C:/Downloads".into(),
+        };
+
+        let args = build_args(&req);
+        assert!(!args.iter().any(|arg| arg == "--playlist-end"));
     }
 
     #[test]

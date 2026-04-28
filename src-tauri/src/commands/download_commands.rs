@@ -18,6 +18,27 @@ use tauri::{AppHandle, State};
 /// 全域取消旗標，供前端呼叫 cancel_download 時使用。
 pub struct DownloadCancelFlag(pub Arc<AtomicBool>);
 
+/// 全域下載執行旗標，後端保證同時間只跑一個 yt-dlp 任務。
+pub struct DownloadRunFlag(pub Arc<AtomicBool>);
+
+struct DownloadRunGuard {
+    flag: Arc<AtomicBool>,
+}
+
+impl DownloadRunGuard {
+    fn acquire(flag: Arc<AtomicBool>) -> Result<Self, AppError> {
+        flag.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .map_err(|_| AppError::Internal("已有下載任務正在進行中，請先停止目前任務。".into()))?;
+        Ok(Self { flag })
+    }
+}
+
+impl Drop for DownloadRunGuard {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::Release);
+    }
+}
+
 // ── Tauri Commands ──────────────────────────────────────────────
 
 /// 檢查 yt-dlp 與 FFmpeg 的安裝狀態。
@@ -68,8 +89,11 @@ pub fn detect_download_url_type(url: String) -> String {
 pub async fn start_download(
     app: AppHandle,
     cancel_flag: State<'_, DownloadCancelFlag>,
+    run_flag: State<'_, DownloadRunFlag>,
     request: DownloadRequest,
 ) -> Result<DownloadResult, AppError> {
+    let run_guard = DownloadRunGuard::acquire(run_flag.0.clone())?;
+
     // 重設取消旗標
     cancel_flag.0.store(false, Ordering::Relaxed);
     let flag = cancel_flag.0.clone();
@@ -81,6 +105,7 @@ pub async fn start_download(
     .await
     .map_err(|e| AppError::Internal(format!("下載任務失敗: {}", e)))?;
 
+    drop(run_guard);
     result
 }
 

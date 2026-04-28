@@ -187,6 +187,7 @@
   "download.action.download": "開始下載",
   "download.action.downloadSubtitle": "下載字幕",
   "download.action.cancel": "取消下載",
+  "download.confirm.batch": "這是 {type} 下載。為了避免誤抓大量影片，VocalSync 這次最多會下載前 {limit} 個項目。確認開始？",
 
   "download.urlType.video": "影片",
   "download.urlType.playlist": "播放清單",

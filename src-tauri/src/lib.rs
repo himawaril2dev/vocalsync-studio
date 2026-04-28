@@ -32,6 +32,9 @@ pub fn run() {
             app.manage(commands::download_commands::DownloadCancelFlag(
                 std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             ));
+            app.manage(commands::download_commands::DownloadRunFlag(
+                std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            ));
 
             Ok(())
         })
@@ -63,7 +66,6 @@ pub fn run() {
             commands::lyrics_commands::probe_embedded_subtitles,
             commands::lyrics_commands::extract_embedded_subtitle,
             commands::settings_commands::load_settings,
-            commands::settings_commands::save_settings,
             commands::settings_commands::update_calibrated_latency,
             commands::settings_commands::update_pitch_engine,
             commands::melody_commands::auto_detect_melody_source,

@@ -2,7 +2,7 @@
 
 [繁體中文](USER_GUIDE.md) | **English** | [日本語](USER_GUIDE.ja.md)
 
-> Applies to: v0.2.12 or newer
+> Applies to: v0.2.13 or newer
 > Last updated: 2026-04
 > Report documentation issues: [GitHub Issues](https://github.com/himawaril2dev/vocalsync-studio/issues)
 
@@ -568,4 +568,4 @@ Or give the project a ⭐ on GitHub — that's the most meaningful support of al
 
 ---
 
-*Last updated: 2026-04 · VocalSync Studio v0.2.12*
+*Last updated: 2026-04 · VocalSync Studio v0.2.13*

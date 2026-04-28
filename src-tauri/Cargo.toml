@@ -1,6 +1,6 @@
 [package]
 name = "vocalsync-studio"
-version = "0.2.12"
+version = "0.2.13"
 description = "VocalSync Studio — Karaoke Practice Tool"
 authors = ["himawari168"]
 edition = "2021"

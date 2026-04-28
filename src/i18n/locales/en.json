@@ -187,6 +187,7 @@
   "download.action.download": "Start download",
   "download.action.downloadSubtitle": "Download subtitles",
   "download.action.cancel": "Cancel download",
+  "download.confirm.batch": "This is a {type} download. To prevent accidental bulk downloads, VocalSync will download at most the first {limit} items. Continue?",
 
   "download.urlType.video": "Video",
   "download.urlType.playlist": "Playlist",
