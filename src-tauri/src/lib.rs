@@ -77,6 +77,7 @@ pub fn run() {
             commands::download_commands::check_download_tools,
             commands::download_commands::detect_local_ffmpeg,
             commands::download_commands::detect_local_ytdlp,
+            commands::download_commands::inspect_local_ytdlp_path,
             commands::download_commands::detect_download_url_type,
             commands::download_commands::start_download,
             commands::download_commands::cancel_download,

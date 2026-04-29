@@ -3,7 +3,7 @@
   import { showToast } from "../stores/toast";
   import { t, tSync } from "../i18n";
 
-  const VERSION = "0.2.13";
+  const VERSION = "0.2.14";
   const KOFI_URL = "https://ko-fi.com/himawari168";
   const GITHUB_URL = "https://github.com/himawaril2dev/vocalsync-studio";
   const ISSUES_URL = "https://github.com/himawaril2dev/vocalsync-studio/issues";

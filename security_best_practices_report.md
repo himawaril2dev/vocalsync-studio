@@ -1,7 +1,7 @@
 # VocalSync Studio 安全性檢查報告
 
 檢查日期：2026-04-28  
-專案版本：0.2.13  
+專案版本：0.2.14
 範圍：`src/`、`src-tauri/`、`scripts/`、Tauri capability、npm/Rust 依賴
 
 ## 結論
@@ -127,4 +127,4 @@
 
 狀態：READY
 
-0.2.13 的外部工具安全修復仍有效。本報告列出的 4 個 findings 已完成修復，前端 build 與 Rust tests 已通過。
+0.2.14 的外部工具安全修復仍有效。本報告列出的 4 個 findings 已完成修復，前端 build 與 Rust tests 已通過。

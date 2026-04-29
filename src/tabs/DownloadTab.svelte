@@ -50,6 +50,7 @@
   let localYtdlpCandidate = $state<LocalYtdlpCandidate | null>(null);
   let localYtdlpMessage = $state("");
   let isDetectingLocalYtdlp = $state(false);
+  let isSelectingLocalYtdlp = $state(false);
   let isTrustingLocalYtdlp = $state(false);
 
   onMount(async () => {
@@ -253,6 +254,31 @@
     }
   }
 
+  async function selectLocalYtdlp(): Promise<void> {
+    isSelectingLocalYtdlp = true;
+    localYtdlpMessage = "";
+
+    try {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        title: tSync("download.tool.ytdlp.selectDialog"),
+        filters: [{ name: tSync("download.tool.ytdlp.selectFilter"), extensions: ["exe"] }],
+      });
+      if (!selected || Array.isArray(selected)) return;
+
+      localYtdlpCandidate = await invoke<LocalYtdlpCandidate>("inspect_local_ytdlp_path", {
+        path: selected,
+      });
+      localYtdlpMessage = tSync("download.tool.ytdlp.manualSelected");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      localYtdlpMessage = tSync("download.tool.ytdlp.manualSelectFailed", { error: message });
+    } finally {
+      isSelectingLocalYtdlp = false;
+    }
+  }
+
   async function trustLocalYtdlp(): Promise<void> {
     isTrustingLocalYtdlp = true;
     localYtdlpMessage = "";
@@ -403,26 +429,42 @@
         <span class="status-dot"></span>
         <span title={$toolStatus.ffmpeg_path ?? ""}>FFmpeg {$toolStatus.ffmpeg_available ? $t("download.tool.ffmpeg.installed") : $t("download.tool.ffmpeg.notInstalled")}</span>
       </div>
-      {#if $toolStatus.ytdlp_available}
+      <div class="tool-actions">
         <button
           class="btn btn-secondary btn-tool-update"
-          onclick={installYtdlp}
-          disabled={$isInstalling || $isDownloading || !$toolStatus.ytdlp_update_available}
-          title={$isDownloading
-            ? $t("download.tool.ytdlp.disabledDuringDownload")
-            : $isInstalling
+          onclick={detectLocalYtdlp}
+          disabled={isDetectingLocalYtdlp || isSelectingLocalYtdlp || isTrustingLocalYtdlp || $isDownloading}
+        >
+          {isDetectingLocalYtdlp ? $t("download.tool.ytdlp.detectingLocal") : $t("download.tool.ytdlp.detectLocal")}
+        </button>
+        <button
+          class="btn btn-secondary btn-tool-update"
+          onclick={selectLocalYtdlp}
+          disabled={isDetectingLocalYtdlp || isSelectingLocalYtdlp || isTrustingLocalYtdlp || $isDownloading}
+        >
+          {isSelectingLocalYtdlp ? $t("download.tool.ytdlp.selectingLocal") : $t("download.tool.ytdlp.selectLocal")}
+        </button>
+        {#if $toolStatus.ytdlp_available}
+          <button
+            class="btn btn-secondary btn-tool-update"
+            onclick={installYtdlp}
+            disabled={$isInstalling || $isDownloading || !$toolStatus.ytdlp_update_available}
+            title={$isDownloading
+              ? $t("download.tool.ytdlp.disabledDuringDownload")
+              : $isInstalling
+                ? $t("download.tool.ytdlp.updating")
+                : $toolStatus.ytdlp_update_available
+              ? $t("download.tool.ytdlp.updateHint", { version: $toolStatus.managed_ytdlp_version })
+              : $t("download.tool.ytdlp.upToDateHint", { version: $toolStatus.managed_ytdlp_version })}
+          >
+            {$isInstalling
               ? $t("download.tool.ytdlp.updating")
               : $toolStatus.ytdlp_update_available
-            ? $t("download.tool.ytdlp.updateHint", { version: $toolStatus.managed_ytdlp_version })
-            : $t("download.tool.ytdlp.upToDateHint", { version: $toolStatus.managed_ytdlp_version })}
-        >
-          {$isInstalling
-            ? $t("download.tool.ytdlp.updating")
-            : $toolStatus.ytdlp_update_available
-              ? $t("download.tool.ytdlp.update")
-              : $t("download.tool.ytdlp.upToDate")}
-        </button>
-      {/if}
+                ? $t("download.tool.ytdlp.update")
+                : $t("download.tool.ytdlp.upToDate")}
+          </button>
+        {/if}
+      </div>
     </div>
 
     {#if $toolStatus.ytdlp_available && $installProgress}
@@ -439,38 +481,32 @@
       </div>
     {/if}
 
+    {#if localYtdlpCandidate || localYtdlpMessage}
+      <div class="local-tool-card">
+        {#if localYtdlpCandidate}
+          <p class="local-tool-title">{$t("download.tool.ytdlp.localFound")}</p>
+          <code>{localYtdlpCandidate.ytdlp_path}</code>
+          <code class="sha">SHA-256: {localYtdlpCandidate.ytdlp_sha256}</code>
+          <button
+            class="btn btn-install"
+            onclick={trustLocalYtdlp}
+            disabled={isTrustingLocalYtdlp}
+          >
+            {isTrustingLocalYtdlp ? $t("download.tool.ytdlp.trustingLocal") : $t("download.tool.ytdlp.trustLocal")}
+          </button>
+        {/if}
+        {#if localYtdlpMessage}
+          <p class="install-message">{localYtdlpMessage}</p>
+        {/if}
+      </div>
+    {/if}
+
     {#if !$toolStatus.ytdlp_available || !$toolStatus.ffmpeg_available}
       <div class="warning-box">
         {#if !$toolStatus.ytdlp_available}
           <div class="install-section">
             <p>{$t("download.tool.ytdlp.hint")}</p>
             <p class="hint-text">{$t("download.tool.ytdlp.localHint")}</p>
-            <div class="button-row">
-              <button
-                class="btn btn-secondary"
-                onclick={detectLocalYtdlp}
-                disabled={isDetectingLocalYtdlp || isTrustingLocalYtdlp}
-              >
-                {isDetectingLocalYtdlp ? $t("download.tool.ytdlp.detectingLocal") : $t("download.tool.ytdlp.detectLocal")}
-              </button>
-            </div>
-            {#if localYtdlpCandidate}
-              <div class="local-tool-card">
-                <p class="local-tool-title">{$t("download.tool.ytdlp.localFound")}</p>
-                <code>{localYtdlpCandidate.ytdlp_path}</code>
-                <code class="sha">SHA-256: {localYtdlpCandidate.ytdlp_sha256}</code>
-                <button
-                  class="btn btn-install"
-                  onclick={trustLocalYtdlp}
-                  disabled={isTrustingLocalYtdlp}
-                >
-                  {isTrustingLocalYtdlp ? $t("download.tool.ytdlp.trustingLocal") : $t("download.tool.ytdlp.trustLocal")}
-                </button>
-              </div>
-            {/if}
-            {#if localYtdlpMessage}
-              <p class="install-message">{localYtdlpMessage}</p>
-            {/if}
             <button
               class="btn btn-install"
               onclick={installYtdlp}
@@ -726,8 +762,17 @@
   /* 工具狀態 */
   .tool-status {
     display: flex;
+    align-items: center;
+    flex-wrap: wrap;
     gap: 16px;
     font-size: 13px;
+  }
+
+  .tool-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
   }
 
   .status-item {

@@ -535,16 +535,30 @@ fn ytdlp_candidate_from_path(path: PathBuf) -> Result<LocalYtdlpCandidate, AppEr
     })
 }
 
+fn ytdlp_allowed_file_names() -> &'static [&'static str] {
+    if cfg!(windows) {
+        &[YTDLP_EXE_NAME, "yt-dlp"]
+    } else {
+        &[YTDLP_EXE_NAME]
+    }
+}
+
+fn ytdlp_candidate_from_user_path(path: &str) -> Result<LocalYtdlpCandidate, AppError> {
+    let path = canonical_existing_tool_file(path, "yt-dlp")?;
+    if !file_name_matches(&path, ytdlp_allowed_file_names()) {
+        return Err(AppError::Audio(
+            "yt-dlp 檔名必須是 yt-dlp 或 yt-dlp.exe".into(),
+        ));
+    }
+
+    ytdlp_candidate_from_path(path)
+}
+
 fn ytdlp_candidate_from_trust_request(
     candidate: LocalYtdlpCandidate,
 ) -> Result<LocalYtdlpCandidate, AppError> {
     let path = canonical_existing_tool_file(&candidate.ytdlp_path, "yt-dlp")?;
-    let allowed_names: &[&str] = if cfg!(windows) {
-        &[YTDLP_EXE_NAME, "yt-dlp"]
-    } else {
-        &[YTDLP_EXE_NAME]
-    };
-    if !file_name_matches(&path, allowed_names) {
+    if !file_name_matches(&path, ytdlp_allowed_file_names()) {
         return Err(AppError::Audio("yt-dlp 路徑必須指向 yt-dlp 執行檔".into()));
     }
 
@@ -564,6 +578,10 @@ pub fn detect_local_ytdlp_candidate() -> Result<Option<LocalYtdlpCandidate>, App
     };
 
     ytdlp_candidate_from_path(path).map(Some)
+}
+
+pub fn inspect_local_ytdlp_path(path: String) -> Result<LocalYtdlpCandidate, AppError> {
+    ytdlp_candidate_from_user_path(&path)
 }
 
 pub fn trust_local_ytdlp_candidate(
@@ -2042,6 +2060,43 @@ mod tests {
         };
 
         assert!(trusted_ytdlp_path_from_manifest(&manifest, &dir).is_none());
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn inspect_local_ytdlp_path_returns_hash_without_running() {
+        let dir =
+            std::env::temp_dir().join(format!("vocalsync-inspect-ytdlp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let ytdlp = dir.join(YTDLP_EXE_NAME);
+        std::fs::write(&ytdlp, b"yt-dlp-manual-select").unwrap();
+
+        let candidate = inspect_local_ytdlp_path(ytdlp.to_string_lossy().to_string()).unwrap();
+        assert_eq!(
+            candidate.ytdlp_path,
+            ytdlp.canonicalize().unwrap().to_string_lossy().to_string()
+        );
+        assert_eq!(candidate.ytdlp_sha256, compute_sha256(&ytdlp).unwrap());
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn inspect_local_ytdlp_path_rejects_wrong_filename() {
+        let dir = std::env::temp_dir().join(format!(
+            "vocalsync-inspect-ytdlp-wrong-name-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let tool = dir.join("not-ytdlp.exe");
+        std::fs::write(&tool, b"not yt-dlp").unwrap();
+
+        assert!(inspect_local_ytdlp_path(tool.to_string_lossy().to_string()).is_err());
 
         let _ = std::fs::remove_dir_all(dir);
     }
