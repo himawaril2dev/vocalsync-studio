@@ -13,6 +13,9 @@ export const backingVolume = writable<number>(DEFAULT_BACKING_VOLUME);
 // 麥克風增益 (預設 1.0)
 export const DEFAULT_MIC_GAIN = 1.0;
 export const micGain = writable<number>(DEFAULT_MIC_GAIN);
+export const DEFAULT_GUIDE_VOLUME = 0.25;
+export const guideVolume = writable<number>(DEFAULT_GUIDE_VOLUME);
+export const guideVocalEnabled = writable<boolean>(false);
 
 /** 重設伴奏音量回到預設值 */
 export function resetBackingVolume(): void {
@@ -22,6 +25,10 @@ export function resetBackingVolume(): void {
 /** 重設人聲音量回到預設值 */
 export function resetMicGain(): void {
   micGain.set(DEFAULT_MIC_GAIN);
+}
+
+export function resetGuideVolume(): void {
+  guideVolume.set(DEFAULT_GUIDE_VOLUME);
 }
 
 // 自動標準化混音 (預設 true)

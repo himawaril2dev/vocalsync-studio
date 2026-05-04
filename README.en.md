@@ -17,10 +17,10 @@ VocalSync Studio is a desktop application that combines backing-track playback, 
 - **Real-time recording** — record while listening to the backing track, with latency calibration support
 - **AI pitch detection** — analyze sung pitch with the CREPE neural network model (runs offline, no network required)
 - **Pitch curve comparison** — display your vocal pitch side-by-side with the target melody
+- **Guide vocal monitoring** — use an imported vocals track as a low-volume reference without exporting it
 - **Lyrics sync** — supports LRC / SRT / VTT formats, with automatic bilingual detection
 - **A–B loop** — repeat specific sections for focused practice
 - **Speed change** — WSOLA time-stretching that preserves pitch
-- **Quick vocal removal** — stereo center-cancel to strip the lead vocal
 
 ## Tech Stack
 

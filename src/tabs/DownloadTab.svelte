@@ -46,6 +46,7 @@
   let localFfmpegCandidate = $state<LocalFfmpegCandidate | null>(null);
   let localFfmpegMessage = $state("");
   let isDetectingLocalFfmpeg = $state(false);
+  let isSelectingLocalFfmpeg = $state(false);
   let isTrustingLocalFfmpeg = $state(false);
   let localYtdlpCandidate = $state<LocalYtdlpCandidate | null>(null);
   let localYtdlpMessage = $state("");
@@ -343,6 +344,31 @@
     }
   }
 
+  async function selectLocalFfmpeg(): Promise<void> {
+    isSelectingLocalFfmpeg = true;
+    localFfmpegMessage = "";
+
+    try {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        title: tSync("download.tool.ffmpeg.selectDialog"),
+        filters: [{ name: tSync("download.tool.ffmpeg.selectFilter"), extensions: ["exe"] }],
+      });
+      if (!selected || Array.isArray(selected)) return;
+
+      localFfmpegCandidate = await invoke<LocalFfmpegCandidate>("inspect_local_ffmpeg_path", {
+        path: selected,
+      });
+      localFfmpegMessage = tSync("download.tool.ffmpeg.manualSelected");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      localFfmpegMessage = tSync("download.tool.ffmpeg.manualSelectFailed", { error: message });
+    } finally {
+      isSelectingLocalFfmpeg = false;
+    }
+  }
+
   async function trustLocalFfmpeg(): Promise<void> {
     isTrustingLocalFfmpeg = true;
     localFfmpegMessage = "";
@@ -444,6 +470,20 @@
         >
           {isSelectingLocalYtdlp ? $t("download.tool.ytdlp.selectingLocal") : $t("download.tool.ytdlp.selectLocal")}
         </button>
+        <button
+          class="btn btn-secondary btn-tool-update"
+          onclick={detectLocalFfmpeg}
+          disabled={isDetectingLocalFfmpeg || isSelectingLocalFfmpeg || isTrustingLocalFfmpeg || $isDownloading}
+        >
+          {isDetectingLocalFfmpeg ? $t("download.tool.ffmpeg.detectingLocal") : $t("download.tool.ffmpeg.detectLocal")}
+        </button>
+        <button
+          class="btn btn-secondary btn-tool-update"
+          onclick={selectLocalFfmpeg}
+          disabled={isDetectingLocalFfmpeg || isSelectingLocalFfmpeg || isTrustingLocalFfmpeg || $isDownloading}
+        >
+          {isSelectingLocalFfmpeg ? $t("download.tool.ffmpeg.selectingLocal") : $t("download.tool.ffmpeg.selectLocal")}
+        </button>
         {#if $toolStatus.ytdlp_available}
           <button
             class="btn btn-secondary btn-tool-update"
@@ -501,6 +541,28 @@
       </div>
     {/if}
 
+    {#if localFfmpegCandidate || localFfmpegMessage}
+      <div class="local-tool-card">
+        {#if localFfmpegCandidate}
+          <p class="local-tool-title">{$t("download.tool.ffmpeg.localFound")}</p>
+          <code>{localFfmpegCandidate.ffmpeg_path}</code>
+          <code>{localFfmpegCandidate.ffprobe_path}</code>
+          <code class="sha">ffmpeg SHA-256: {localFfmpegCandidate.ffmpeg_sha256}</code>
+          <code class="sha">ffprobe SHA-256: {localFfmpegCandidate.ffprobe_sha256}</code>
+          <button
+            class="btn btn-install"
+            onclick={trustLocalFfmpeg}
+            disabled={isTrustingLocalFfmpeg}
+          >
+            {isTrustingLocalFfmpeg ? $t("download.tool.ffmpeg.trustingLocal") : $t("download.tool.ffmpeg.trustLocal")}
+          </button>
+        {/if}
+        {#if localFfmpegMessage}
+          <p class="install-message">{localFfmpegMessage}</p>
+        {/if}
+      </div>
+    {/if}
+
     {#if !$toolStatus.ytdlp_available || !$toolStatus.ffmpeg_available}
       <div class="warning-box">
         {#if !$toolStatus.ytdlp_available}
@@ -535,38 +597,10 @@
           <div class="install-section">
             <p>{$t("download.tool.ffmpeg.hint")}</p>
             <p class="hint-text">{$t("download.tool.ffmpeg.localHint")}</p>
-            <div class="button-row">
-              <button
-                class="btn btn-secondary"
-                onclick={detectLocalFfmpeg}
-                disabled={isDetectingLocalFfmpeg || isTrustingLocalFfmpeg}
-              >
-                {isDetectingLocalFfmpeg ? $t("download.tool.ffmpeg.detectingLocal") : $t("download.tool.ffmpeg.detectLocal")}
-              </button>
-            </div>
-            {#if localFfmpegCandidate}
-              <div class="local-tool-card">
-                <p class="local-tool-title">{$t("download.tool.ffmpeg.localFound")}</p>
-                <code>{localFfmpegCandidate.ffmpeg_path}</code>
-                <code>{localFfmpegCandidate.ffprobe_path}</code>
-                <code class="sha">ffmpeg SHA-256: {localFfmpegCandidate.ffmpeg_sha256}</code>
-                <code class="sha">ffprobe SHA-256: {localFfmpegCandidate.ffprobe_sha256}</code>
-                <button
-                  class="btn btn-install"
-                  onclick={trustLocalFfmpeg}
-                  disabled={isTrustingLocalFfmpeg}
-                >
-                  {isTrustingLocalFfmpeg ? $t("download.tool.ffmpeg.trustingLocal") : $t("download.tool.ffmpeg.trustLocal")}
-                </button>
-              </div>
-            {/if}
-            {#if localFfmpegMessage}
-              <p class="install-message">{localFfmpegMessage}</p>
-            {/if}
             <button
               class="btn btn-install"
               onclick={installFfmpeg}
-              disabled={$isInstallingFfmpeg}
+              disabled={$isInstallingFfmpeg || $isDownloading}
             >
               {$isInstallingFfmpeg ? $t("download.tool.ytdlp.installing") : $t("download.tool.ffmpeg.install")}
             </button>
@@ -829,13 +863,6 @@
     margin-bottom: 0;
   }
 
-  .warning-box code {
-    background: #efebe9;
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-size: 12px;
-  }
-
   .btn-install {
     background: #755700;
     color: white;
@@ -891,12 +918,6 @@
     border-bottom: none;
     padding-bottom: 0;
     margin-bottom: 0;
-  }
-
-  .button-row {
-    display: flex;
-    gap: 8px;
-    margin: 8px 0;
   }
 
   .local-tool-card {

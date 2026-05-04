@@ -101,6 +101,7 @@ export function resetMelodyState(): void {
   alignmentResult.set(null);
   alignmentFineTuneMs.set(0);
   melodySourcePath.set(null);
+  guideVocalPath.set(null);
 }
 
 // ── Phase 3-new-a：雙檔對齊狀態 ────────────────────────────────────
@@ -130,6 +131,9 @@ export const alignmentFineTuneMs = writable<number>(0);
 
 /** 目前 melody 來源的檔案路徑（給對齊用，某些情況可能是 null） */
 export const melodySourcePath = writable<string | null>(null);
+
+/** 目前導唱監聽用的人聲軌路徑。只有匯入人聲軌時有值。 */
+export const guideVocalPath = writable<string | null>(null);
 
 /**
  * 計算**最終**的 offset（秒）：自動對齊值 + 使用者微調值。

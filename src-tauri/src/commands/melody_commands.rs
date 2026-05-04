@@ -7,8 +7,6 @@
 //!   目前固定回傳 `None`。
 
 use crate::core::audio_aligner::{self, AlignmentResult};
-use crate::core::center_channel_cancel;
-use crate::core::crepe_engine;
 use crate::core::melody_extractor;
 use crate::core::melody_source_detector::{detect_melody_source, DetectedSource};
 use crate::core::melody_track::MelodyTrack;
@@ -133,37 +131,4 @@ pub fn align_audio_files(
     security::validate_path_safe(&reference_path)?;
     security::validate_path_safe(&target_path)?;
     audio_aligner::align_files(&reference_path, &target_path)
-}
-
-// ── 中央聲道消除 ─────────────────────────────────────────────────
-
-/// 對立體聲伴奏進行中央聲道消除（L-R 差分），
-/// 再對消除後的殘響跑 CREPE/PYIN 提取旋律。
-///
-/// 適用於 center-panned 的流行歌；mono / Live / reverb 重的歌效果不佳。
-#[tauri::command]
-pub fn extract_melody_center_cancel(backing_path: String) -> Result<MelodyTrack, AppError> {
-    security::validate_path_safe(&backing_path)?;
-    let (mono_samples, sample_rate) = center_channel_cancel::load_and_cancel_center(&backing_path)?;
-
-    if mono_samples.is_empty() {
-        return Err(AppError::Audio("中央聲道消除後無有效音訊".to_string()));
-    }
-
-    // 用 CREPE（若有模型）或 PYIN 分析消除後的音訊
-    let model_dir = get_model_dir();
-    if let Some(ref dir) = model_dir {
-        let result = crepe_engine::analyze_offline(
-            &mono_samples,
-            sample_rate,
-            160, // hop = 10ms @16kHz
-            0.0, // 自適應 threshold
-            dir,
-        )?;
-
-        melody_extractor::pitch_samples_to_melody_track(&result.samples, "center_cancel")
-    } else {
-        // CREPE 模型不存在，fallback 到 PYIN
-        melody_extractor::extract_melody_from_mono_samples(&mono_samples, sample_rate)
-    }
 }

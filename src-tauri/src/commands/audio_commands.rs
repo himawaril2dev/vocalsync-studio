@@ -116,12 +116,60 @@ pub fn seek(seconds: f64, engine: State<'_, Mutex<AudioEngine>>) -> Result<(), A
 pub fn set_volume(
     backing: f32,
     mic: f32,
+    guide: Option<f32>,
     engine: State<'_, Mutex<AudioEngine>>,
 ) -> Result<(), AppError> {
     let mut engine = engine
         .lock()
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    engine.set_volume(backing, mic);
+    engine.set_volume(backing, mic, guide);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn load_guide_vocal(
+    path: String,
+    offset_secs: f64,
+    engine: State<'_, Mutex<AudioEngine>>,
+) -> Result<(), AppError> {
+    security::validate_path_safe(&path)?;
+    let engine = engine
+        .lock()
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    engine.load_guide_vocal(&path, offset_secs)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn clear_guide_vocal(engine: State<'_, Mutex<AudioEngine>>) -> Result<(), AppError> {
+    let engine = engine
+        .lock()
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    engine.clear_guide_vocal();
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_guide_vocal_offset(
+    offset_secs: f64,
+    engine: State<'_, Mutex<AudioEngine>>,
+) -> Result<(), AppError> {
+    let engine = engine
+        .lock()
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    engine.set_guide_vocal_offset(offset_secs)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_guide_vocal_enabled(
+    enabled: bool,
+    engine: State<'_, Mutex<AudioEngine>>,
+) -> Result<(), AppError> {
+    let engine = engine
+        .lock()
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    engine.set_guide_vocal_enabled(enabled);
     Ok(())
 }
 

@@ -64,6 +64,11 @@ pub fn inspect_local_ytdlp_path(path: String) -> Result<LocalYtdlpCandidate, App
     ytdlp_engine::inspect_local_ytdlp_path(path)
 }
 
+#[tauri::command]
+pub fn inspect_local_ffmpeg_path(path: String) -> Result<LocalFfmpegCandidate, AppError> {
+    ytdlp_engine::inspect_local_ffmpeg_path(path)
+}
+
 /// 信任本機 FFmpeg：記錄偵測到的路徑與 SHA-256，之後只使用同一組檔案。
 #[tauri::command]
 pub fn trust_local_ffmpeg(

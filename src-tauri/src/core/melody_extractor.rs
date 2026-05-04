@@ -263,67 +263,6 @@ fn fallback_pyin(mono: &[f32], sample_rate: u32) -> (Vec<PitchSample>, f64) {
     (pitch_samples, quality.voiced_ratio)
 }
 
-// ── 公開 helpers（供 center_channel_cancel 等外部模組使用）─────────
-
-/// 從已有的 PitchSample 向量建立 MelodyTrack。
-///
-/// CREPE 模式直接保留原始曲線，不做群聚。
-pub fn pitch_samples_to_melody_track(
-    samples: &[PitchSample],
-    source_label: &str,
-) -> Result<MelodyTrack, AppError> {
-    if samples.is_empty() {
-        return Err(AppError::Audio("音高分析未偵測到任何音高".to_string()));
-    }
-
-    let total_duration = samples.last().map(|s| s.timestamp + 0.01).unwrap_or(0.0);
-
-    let voiced_ratio = 1.0; // 已經過 CREPE 過濾，全都是 voiced
-
-    Ok(MelodyTrack {
-        source: MelodySource::ImportedVocals {
-            vocals_path: source_label.to_string(),
-            note_count: samples.len(),
-            voiced_ratio,
-        },
-        notes: Vec::new(),
-        total_duration_secs: total_duration,
-        raw_pitch_track: Some(samples.to_vec()),
-    })
-}
-
-/// 從已有的 mono f32 樣本用 PYIN 提取 MelodyTrack。
-///
-/// 供 center_channel_cancel fallback 使用（無 CREPE 模型時）。
-pub fn extract_melody_from_mono_samples(
-    mono: &[f32],
-    sample_rate: u32,
-) -> Result<MelodyTrack, AppError> {
-    let (pitch_samples, _quality) = analyze_mono(mono, sample_rate);
-
-    if pitch_samples.is_empty() {
-        return Err(AppError::Audio("PYIN 音高分析未偵測到任何音高".to_string()));
-    }
-
-    let notes = cluster_pitch_samples(&pitch_samples, sample_rate);
-    if notes.is_empty() {
-        return Err(AppError::Audio("群聚後無有效音符".to_string()));
-    }
-
-    let total_duration = mono.len() as f64 / sample_rate as f64;
-
-    Ok(MelodyTrack {
-        source: MelodySource::ImportedVocals {
-            vocals_path: "center_cancel_pyin".to_string(),
-            note_count: notes.len(),
-            voiced_ratio: _quality.voiced_ratio,
-        },
-        notes,
-        total_duration_secs: total_duration,
-        raw_pitch_track: None,
-    })
-}
-
 // ── 內部 helpers ──────────────────────────────────────────────────
 
 fn downmix_to_mono(interleaved: &[f32], channels: usize) -> Vec<f32> {

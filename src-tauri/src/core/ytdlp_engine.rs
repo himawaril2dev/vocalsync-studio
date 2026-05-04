@@ -677,6 +677,29 @@ fn candidate_from_pair(
     })
 }
 
+fn ffmpeg_candidate_from_user_path(path: &str) -> Result<LocalFfmpegCandidate, AppError> {
+    let ffmpeg_path = canonical_existing_tool_file(path, "FFmpeg")?;
+    let (ffmpeg_name, ffprobe_name) = ffmpeg_tool_names();
+    if !file_name_matches(&ffmpeg_path, &[ffmpeg_name]) {
+        return Err(AppError::Audio(
+            "FFmpeg 檔名必須是 ffmpeg 或 ffmpeg.exe".into(),
+        ));
+    }
+
+    let parent = ffmpeg_path
+        .parent()
+        .ok_or_else(|| AppError::Audio("FFmpeg 路徑缺少所在資料夾".into()))?;
+    let ffprobe_path = parent.join(ffprobe_name);
+    let ffprobe_path = canonical_existing_tool_file(
+        ffprobe_path
+            .to_str()
+            .ok_or_else(|| AppError::Audio("ffprobe 路徑不是有效 UTF-8".into()))?,
+        "ffprobe",
+    )?;
+
+    candidate_from_pair(ffmpeg_path, ffprobe_path)
+}
+
 fn ffmpeg_candidate_from_trust_request(
     candidate: LocalFfmpegCandidate,
 ) -> Result<LocalFfmpegCandidate, AppError> {
@@ -716,6 +739,10 @@ pub fn detect_local_ffmpeg_candidate() -> Result<Option<LocalFfmpegCandidate>, A
     };
 
     candidate_from_pair(ffmpeg_path, ffprobe_path).map(Some)
+}
+
+pub fn inspect_local_ffmpeg_path(path: String) -> Result<LocalFfmpegCandidate, AppError> {
+    ffmpeg_candidate_from_user_path(&path)
 }
 
 pub fn trust_local_ffmpeg_candidate(
@@ -2097,6 +2124,56 @@ mod tests {
         std::fs::write(&tool, b"not yt-dlp").unwrap();
 
         assert!(inspect_local_ytdlp_path(tool.to_string_lossy().to_string()).is_err());
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn inspect_local_ffmpeg_path_returns_pair_hashes_without_running() {
+        let dir =
+            std::env::temp_dir().join(format!("vocalsync-inspect-ffmpeg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let (ffmpeg_name, ffprobe_name) = ffmpeg_tool_names();
+        let ffmpeg = dir.join(ffmpeg_name);
+        let ffprobe = dir.join(ffprobe_name);
+        std::fs::write(&ffmpeg, b"ffmpeg-manual-select").unwrap();
+        std::fs::write(&ffprobe, b"ffprobe-manual-select").unwrap();
+
+        let candidate = inspect_local_ffmpeg_path(ffmpeg.to_string_lossy().to_string()).unwrap();
+        assert_eq!(
+            candidate.ffmpeg_path,
+            ffmpeg.canonicalize().unwrap().to_string_lossy().to_string()
+        );
+        assert_eq!(
+            candidate.ffprobe_path,
+            ffprobe
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+        );
+        assert_eq!(candidate.ffmpeg_sha256, compute_sha256(&ffmpeg).unwrap());
+        assert_eq!(candidate.ffprobe_sha256, compute_sha256(&ffprobe).unwrap());
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn inspect_local_ffmpeg_path_requires_matching_ffprobe() {
+        let dir = std::env::temp_dir().join(format!(
+            "vocalsync-inspect-ffmpeg-missing-probe-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let (ffmpeg_name, _) = ffmpeg_tool_names();
+        let ffmpeg = dir.join(ffmpeg_name);
+        std::fs::write(&ffmpeg, b"ffmpeg-only").unwrap();
+
+        assert!(inspect_local_ffmpeg_path(ffmpeg.to_string_lossy().to_string()).is_err());
 
         let _ = std::fs::remove_dir_all(dir);
     }

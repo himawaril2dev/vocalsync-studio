@@ -14,6 +14,7 @@
     alignmentResult,
     alignmentFineTuneMs,
     melodySourcePath,
+    guideVocalPath,
     applyAlignmentToMelody,
     alignmentConfidence,
     finalOffsetSecs,
@@ -30,7 +31,7 @@
     calibrationStatus,
     resetCalibrationStatus,
     pitchEngine,
-    type PitchEngineType,
+    guideVocalEnabled,
   } from "../stores/settings";
   import CalibrationVisualizer from "../components/CalibrationVisualizer.svelte";
   import DownloadTab from "./DownloadTab.svelte";
@@ -226,6 +227,34 @@
     resetCalibrationStatus();
   }
 
+  function currentGuideOffsetSecs(): number {
+    return finalOffsetSecs(get(alignmentResult), get(alignmentFineTuneMs));
+  }
+
+  async function clearGuideVocalTrack(): Promise<void> {
+    guideVocalPath.set(null);
+    guideVocalEnabled.set(false);
+    await invoke("clear_guide_vocal").catch((err) =>
+      console.warn("[guide] clear failed:", err),
+    );
+  }
+
+  async function loadGuideVocalTrack(path: string): Promise<void> {
+    await invoke("load_guide_vocal", {
+      path,
+      offsetSecs: currentGuideOffsetSecs(),
+    });
+    guideVocalPath.set(path);
+    guideVocalEnabled.set(true);
+  }
+
+  async function syncGuideVocalTiming(): Promise<void> {
+    if (!get(guideVocalPath)) return;
+    await invoke("set_guide_vocal_offset", {
+      offsetSecs: currentGuideOffsetSecs(),
+    }).catch((err) => console.warn("[guide] offset sync failed:", err));
+  }
+
   async function loadFile() {
     const path = await open({
       title: tSync("setup.backing.dialog.title"),
@@ -242,6 +271,7 @@
     // 載入新伴奏前先重設旋律相關狀態，避免上一首的灰藍線殘留
     resetBackingState();
     resetMelodyState();
+    await clearGuideVocalTrack();
     clearLoop();
     // 換曲 → 舊錄音也會在後端被清掉（engine.load_backing 內已呼叫 clear_recording），
     // 同步前端 hasRecording，避免「匯出/回放」按鈕誤開。
@@ -343,6 +373,7 @@
         path,
       });
       await commitMelodyTrack(track, path);
+      await clearGuideVocalTrack();
       const sourceDescriptor = describeMelodySource(track);
       melodyStatus.set({
         key: "setup.melody.status.loaded",
@@ -398,34 +429,25 @@
       if (currentBackingPath) {
         await runAutoAlignment(path, currentBackingPath);
       }
+      try {
+        await loadGuideVocalTrack(path);
+        await syncGuideVocalTiming();
+      } catch (guideErr) {
+        guideVocalPath.set(null);
+        guideVocalEnabled.set(false);
+        melodyStatus.update((s) =>
+          s
+            ? {
+                ...s,
+                appendKey: "setup.guide.status.loadFailedAppend",
+                appendVars: { error: String(guideErr) },
+              }
+            : s,
+        );
+      }
     } catch (err) {
       melodyStatus.set({
         key: "setup.melody.status.vocalsFailed",
-        vars: { error: String(err) },
-      });
-    }
-  }
-
-  /**
-   * 中央聲道消除：對練唱伴奏進行 L-R 差分消除人聲，
-   * 再自動提取旋律。適用於 center-panned 的流行歌。
-   */
-  async function centerChannelCancel(): Promise<void> {
-    if (!currentBackingPath) return;
-    melodyStatus.set({ key: "setup.melody.status.cancelling" });
-    try {
-      const track = await invoke<MelodyTrack>("extract_melody_center_cancel", {
-        backingPath: currentBackingPath,
-      });
-      await commitMelodyTrack(track, null); // 同源，不需對齊
-      const count = track.raw_pitch_track?.length ?? track.notes.length;
-      melodyStatus.set({
-        key: "setup.melody.status.cancelDone",
-        vars: { n: count },
-      });
-    } catch (err) {
-      melodyStatus.set({
-        key: "setup.melody.status.cancelFailed",
         vars: { error: String(err) },
       });
     }
@@ -529,6 +551,28 @@
     void $alignmentFineTuneMs;
     void $currentMelody;
     refreshBackingPitchFromMelody();
+  });
+
+  let lastGuideSyncKey = "";
+
+  $effect(() => {
+    const path = $guideVocalPath;
+    const offsetSecs = finalOffsetSecs($alignmentResult, $alignmentFineTuneMs);
+    const enabled = $guideVocalEnabled;
+    const syncKey = `${path ?? ""}|${offsetSecs.toFixed(6)}|${enabled}`;
+    if (syncKey === lastGuideSyncKey) return;
+    lastGuideSyncKey = syncKey;
+
+    if (!path) {
+      void invoke("set_guide_vocal_enabled", { enabled: false }).catch(() => {});
+      return;
+    }
+    void invoke("set_guide_vocal_offset", { offsetSecs }).catch((err) =>
+      console.warn("[guide] offset sync failed:", err),
+    );
+    void invoke("set_guide_vocal_enabled", { enabled }).catch((err) =>
+      console.warn("[guide] enabled sync failed:", err),
+    );
   });
 
   /**
@@ -742,14 +786,6 @@
       >
         {$t("setup.melody.action.loadMidi")}
       </button>
-      <button
-        class="btn secondary"
-        onclick={centerChannelCancel}
-        disabled={!backingLoaded}
-        title={$t("setup.melody.action.centerCancel.title")}
-      >
-        {$t("setup.melody.action.centerCancel")}
-      </button>
       {#if currentBackingPath && $currentMelody === null}
         <button
           class="btn ghost"
@@ -759,6 +795,14 @@
         </button>
       {/if}
     </div>
+
+    {#if $guideVocalPath}
+      <label class="guide-toggle" title={$guideVocalPath}>
+        <input type="checkbox" bind:checked={$guideVocalEnabled} />
+        <span>{$t("setup.guide.toggle", { name: basename($guideVocalPath) })}</span>
+      </label>
+      <p class="sub-hint guide-hint">{$t("setup.guide.hint")}</p>
+    {/if}
 
     {#if $currentMelody}
       <div class="alignment-box">
@@ -984,6 +1028,28 @@
     display: flex;
     gap: 10px;
     flex-wrap: wrap;
+  }
+
+  .guide-toggle {
+    margin-top: 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: #f8f3ea;
+    color: #5c5248;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .guide-toggle input {
+    accent-color: #8a6500;
+  }
+
+  .guide-hint {
+    margin-top: 8px;
   }
 
   .btn {

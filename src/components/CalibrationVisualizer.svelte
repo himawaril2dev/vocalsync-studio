@@ -8,6 +8,7 @@
   let canvasEl = $state<HTMLCanvasElement | null>(null);
   let rafId: number = 0;
   let animationStartTime = 0;
+  let isAnimating = false;
 
   // 從 store 讀後端 emit 的真實時間軸參數，避免前後端不同步
   let isRunning = $derived($calibrationStatus.isRunning);
@@ -34,14 +35,19 @@
   let finalLatency = $derived($calibrationStatus.finalLatencyMs);
   let stdDev = $derived($calibrationStatus.stdDevMs);
   let errorMsg = $derived($calibrationStatus.error);
+  let visualizerVisible = $derived(isRunning || $calibrationStatus.beats.length > 0);
 
   $effect(() => {
-    if (isRunning && canvasEl) {
+    if (visualizerVisible && canvasEl) {
+      if (isAnimating) return;
       animationStartTime = performance.now();
+      isAnimating = true;
       cancelAnimationFrame(rafId);
       animate();
     } else {
+      isAnimating = false;
       cancelAnimationFrame(rafId);
+      rafId = 0;
     }
   });
 
@@ -59,6 +65,9 @@
 
     // 動畫長度結束後通知父元件，但若仍在 isRunning 則繼續顯示等待結果
     if (t > totalDuration && !isRunning) {
+      isAnimating = false;
+      cancelAnimationFrame(rafId);
+      rafId = 0;
       onFinish();
       return;
     }
@@ -254,7 +263,7 @@
   });
 </script>
 
-{#if isRunning || $calibrationStatus.beats.length > 0}
+{#if visualizerVisible}
   <div class="visualizer-overlay">
     <canvas
       bind:this={canvasEl}

@@ -39,12 +39,17 @@
     latencyMs,
     backingVolume,
     micGain,
+    guideVolume,
+    guideVocalEnabled,
     autoBalanceMixin,
     resetBackingVolume,
     resetMicGain,
+    resetGuideVolume,
     DEFAULT_BACKING_VOLUME,
     DEFAULT_MIC_GAIN,
+    DEFAULT_GUIDE_VOLUME,
   } from "../stores/settings";
+  import { guideVocalPath } from "../stores/melody";
   import { showToast } from "../stores/toast";
   import Icon from "../components/Icon.svelte";
   import LyricsPanel from "../components/LyricsPanel.svelte";
@@ -144,7 +149,14 @@
 
   // 音量改變時即時更新後端
   $effect(() => {
-    invoke("set_volume", { backing: $backingVolume, mic: $micGain }).catch(() => {});
+    invoke("set_volume", {
+      backing: $backingVolume,
+      mic: $micGain,
+      guide: $guideVolume,
+    }).catch(() => {});
+    invoke("set_guide_vocal_enabled", {
+      enabled: Boolean($guideVocalPath && $guideVocalEnabled),
+    }).catch(() => {});
   });
 
   function onSeekInput(e: Event) {
@@ -501,6 +513,9 @@
   let hasNonDefaultMic = $derived(
     Math.abs($micGain - DEFAULT_MIC_GAIN) > 0.001,
   );
+  let hasNonDefaultGuide = $derived(
+    Math.abs($guideVolume - DEFAULT_GUIDE_VOLUME) > 0.001,
+  );
 </script>
 
 <svelte:window
@@ -698,6 +713,38 @@
           disabled={!hasNonDefaultMic}
           aria-label={$t("recording.volume.mic.reset.aria", { pct: Math.round(DEFAULT_MIC_GAIN * 100) })}
           title={$t("recording.volume.mic.reset.title", { pct: Math.round(DEFAULT_MIC_GAIN * 100) })}
+        >↺</button>
+      </div>
+      <div class:disabled-guide={!$guideVocalPath} class="vu-item guide-item">
+        <label
+          class="vu-enable"
+          title={$guideVocalPath
+            ? $t("recording.volume.guide.enable.title")
+            : $t("recording.volume.guide.disabledTitle")}
+        >
+          <input type="checkbox" bind:checked={$guideVocalEnabled} disabled={!$guideVocalPath} />
+        </label>
+        <span class="vu-label">{$t("recording.volume.guide")}</span>
+        <div class="vu-bar"><div class="vu-fill guide-fill" style="width: {$guideVocalPath && $guideVocalEnabled ? Math.round($guideVolume * 100) : 0}%"></div></div>
+        <input
+          type="range"
+          class="vol-slider"
+          min="0"
+          max="1"
+          step="0.01"
+          bind:value={$guideVolume}
+          disabled={!$guideVocalPath || !$guideVocalEnabled}
+          title={$guideVocalPath
+            ? $t("recording.volume.guide.title", { pct: Math.round($guideVolume * 100) })
+            : $t("recording.volume.guide.disabledTitle")}
+        >
+        <span class="vu-value">{Math.round($guideVolume * 100)}%</span>
+        <button
+          class="vu-reset"
+          onclick={resetGuideVolume}
+          disabled={!$guideVocalPath || !hasNonDefaultGuide}
+          aria-label={$t("recording.volume.guide.reset.aria", { pct: Math.round(DEFAULT_GUIDE_VOLUME * 100) })}
+          title={$t("recording.volume.guide.reset.title", { pct: Math.round(DEFAULT_GUIDE_VOLUME * 100) })}
         >↺</button>
       </div>
     </div>
@@ -1067,7 +1114,7 @@
     display: flex;
     flex-direction: column;
     gap: 3px;
-    min-width: 250px;
+    min-width: 280px;
   }
 
   .vu-item {
@@ -1077,10 +1124,33 @@
   }
 
   .vu-label {
-    width: 30px;
+    width: 52px;
     font-size: 11px;
     color: var(--color-text-muted);
     flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .guide-item .vu-label {
+    width: 52px;
+  }
+
+  .disabled-guide {
+    opacity: 0.42;
+  }
+
+  .vu-enable {
+    width: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .vu-enable input {
+    width: 13px;
+    height: 13px;
+    accent-color: var(--color-brand);
   }
 
   .vu-bar {
@@ -1096,6 +1166,10 @@
     height: 100%;
     background: linear-gradient(90deg, var(--color-success) 0%, var(--color-success) 60%, #f9a825 80%, #d50000 100%);
     transition: width 0.05s linear;
+  }
+
+  .guide-fill {
+    background: linear-gradient(90deg, #b89a45 0%, #d7bd6d 100%);
   }
 
   .vol-slider {

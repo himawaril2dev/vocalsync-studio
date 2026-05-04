@@ -3,7 +3,7 @@
   import { showToast } from "../stores/toast";
   import { t, tSync } from "../i18n";
 
-  const VERSION = "0.2.14";
+  const VERSION = "0.2.15";
   const KOFI_URL = "https://ko-fi.com/himawari168";
   const GITHUB_URL = "https://github.com/himawaril2dev/vocalsync-studio";
   const ISSUES_URL = "https://github.com/himawaril2dev/vocalsync-studio/issues";
@@ -74,6 +74,17 @@
 
   <div class="card">
     <h2>{$t("about.notes.title")}</h2>
+    <div class="workflow-panel">
+      <strong>{$t("about.workflow.title")}</strong>
+      <ol class="workflow-list">
+        <li>{$t("about.workflow.1")}</li>
+        <li>{$t("about.workflow.2")}</li>
+        <li>{$t("about.workflow.3")}</li>
+        <li>{$t("about.workflow.4")}</li>
+        <li>{$t("about.workflow.5")}</li>
+        <li>{$t("about.workflow.6")}</li>
+      </ol>
+    </div>
     <div class="notes">
       <div class="note-item">
         <span class="note-num">1</span>
@@ -90,7 +101,6 @@
           <ul>
             <li>{$t("about.notes.2.li1.before")}<a href="https://github.com/Anjok07/ultimatevocalremovergui" target="_blank" rel="noopener">UVR5</a>{$t("about.notes.2.li1.middle")}<a href="https://moises.ai" target="_blank" rel="noopener">Moises</a>{$t("about.notes.2.li1.after")}</li>
             <li>{$t("about.notes.2.li2")}</li>
-            <li>{$t("about.notes.2.li3")}</li>
           </ul>
         </div>
       </div>
@@ -106,6 +116,13 @@
         <div>
           <strong>{$t("about.notes.4.title")}</strong>
           <p>{$t("about.notes.4.body")}</p>
+        </div>
+      </div>
+      <div class="note-item">
+        <span class="note-num">5</span>
+        <div>
+          <strong>{$t("about.notes.5.title")}</strong>
+          <p>{$t("about.notes.5.body")}</p>
         </div>
       </div>
     </div>
@@ -322,6 +339,33 @@
   }
 
   /* 使用須知 */
+  .workflow-panel {
+    margin-bottom: var(--space-xl);
+    padding: var(--space-lg);
+    border-radius: var(--radius-lg);
+    background: rgba(142, 108, 0, 0.08);
+    border: 1px solid rgba(142, 108, 0, 0.18);
+  }
+
+  .workflow-panel strong {
+    display: block;
+    font-size: 14px;
+    color: var(--color-text);
+    margin-bottom: var(--space-sm);
+  }
+
+  .workflow-list {
+    margin: 0;
+    padding-left: var(--space-xl);
+    color: var(--color-text-secondary);
+    font-size: 13px;
+    line-height: 1.7;
+  }
+
+  .workflow-list li + li {
+    margin-top: var(--space-xs);
+  }
+
   .notes {
     display: flex;
     flex-direction: column;

@@ -2,8 +2,8 @@
 
 [繁體中文](USER_GUIDE.md) | **English** | [日本語](USER_GUIDE.ja.md)
 
-> Applies to: v0.2.14 or newer
-> Last updated: 2026-04
+> Applies to: v0.2.15 or newer
+> Last updated: 2026-05
 > Report documentation issues: [GitHub Issues](https://github.com/himawaril2dev/vocalsync-studio/issues)
 
 ---
@@ -17,7 +17,7 @@
    - [4.1 YouTube Backing Download](#41-youtube-backing-download)
    - [4.2 Importing a Backing Track](#42-importing-a-backing-track)
    - [4.3 Lyrics and Subtitles](#43-lyrics-and-subtitles)
-   - [4.4 Target Melody (Pitch Reference Line)](#44-target-melody-pitch-reference-line)
+   - [4.4 Pitch Curve Source and Guide Vocal](#44-pitch-curve-source-and-guide-vocal)
    - [4.5 Audio Device Setup](#45-audio-device-setup)
    - [4.6 Latency Calibration](#46-latency-calibration)
    - [4.7 Preview · Record · Playback](#47-preview--record--playback)
@@ -71,20 +71,31 @@ If yt-dlp or FFmpeg is missing on first use, click **Auto Install** and the app 
 
 Expand the **Backing Track** section → click **Import Backing** → choose an MP3 / WAV / M4A (etc.) file.
 
-### Step 3｜Configure input and output devices
+### Step 3｜Add a pitch curve and guide vocal (optional, recommended)
+
+If you have the original song, first separate `vocals.wav` with UVR5 / Moises / Demucs. Then expand **Pitch Curve Source** → click **Import vocals track (vocals.wav)**.
+
+After importing, VocalSync does two things:
+
+1. Creates a grey-blue reference curve on the pitch timeline
+2. Enables the **Guide** volume row on the Recording tab, so the original vocal can play quietly in your headphones while you sing
+
+Start with the guide around **15 to 30%**. For final takes, lower it heavily or turn it off.
+
+### Step 4｜Configure input and output devices
 
 Expand the **Device Selection** section:
 
 - **Input device**: your microphone
 - **Output device**: your headphones (**we strongly recommend headphones** — otherwise the mic picks up the backing and your recording ends up muddy)
 
-### Step 4｜Calibrate latency (recommended on first use)
+### Step 5｜Calibrate latency (recommended on first use)
 
 Expand the **Latency Calibration** section → click **Start Calibration** → put on your headphones and **clap along to the woodblock clicks from the metronome** (tapping the desk or saying "ta" into the mic works too).
 
 The app plays 8 beats (2 warmup + 6 measurement) and measures the delay between your claps and the metronome. It automatically calculates the best offset and remembers it — you won't need to redo this unless your device changes.
 
-### Step 5｜Start recording
+### Step 6｜Start recording
 
 1. Switch to the **Recording** tab
 2. Press the spacebar or the **red record button** to start
@@ -107,7 +118,7 @@ This is where the app opens by default. Everything you should set up **before hi
 - YouTube Download
 - Backing Track
 - Lyrics / Subtitles
-- Target Melody
+- Pitch Curve Source
 - Device Selection
 - Latency Calibration
 
@@ -125,7 +136,7 @@ The bottom half is a **full-width pitch timeline** showing your singing versus t
 Two control rows at the very bottom:
 
 - **Transport row**: Preview / Pause / Stop / Record / progress bar / A-B loop
-- **Control row**: Backing volume / Mic volume / Speed / Pitch / Export / Playback
+- **Control row**: Backing volume / Mic volume / Guide vocal volume / Speed / Pitch / Export / Playback
 
 ### 📊 Pitch
 
@@ -222,11 +233,11 @@ On the Recording tab, switch the top-right panel to **Lyrics** — the current l
 
 If the subtitle file's timing is off (e.g. YouTube auto-captions often lag 1–2 s), switch to the **Lyrics Sync Editor** for a visual batch shift.
 
-### 4.4 Target Melody (Pitch Reference Line)
+### 4.4 Pitch Curve Source and Guide Vocal
 
-**Location**: Setup tab → Target Melody section
+**Location**: Setup tab → Pitch Curve Source section
 
-The target melody appears as a **grey-blue line** on the pitch timeline and is your reference while practicing. Two sources are supported:
+The pitch curve source appears as a **grey-blue line** on the pitch timeline and is your reference while practicing. Two sources are supported:
 
 #### Source A: Import Clean Vocals (**recommended**)
 
@@ -234,18 +245,26 @@ Best when: you have the original song and want to align precisely to the origina
 
 **Prerequisite**: use an **external tool** like UVR5 / Moises / Demucs to separate `vocals.wav` from the original (the app itself does not perform source separation, for legal reasons).
 
-**Steps**: Click **Import Clean Vocals** → pick `vocals.wav`. The backend will:
+**Steps**: Click **Import vocals track (vocals.wav)** → pick `vocals.wav`. The backend will:
 
 1. Run PYIN pitch extraction to produce per-timestep notes
 2. Automatically align with your backing track via cross-correlation to compute the time offset
+3. Load the same vocals track as a guide vocal for low-volume monitoring while recording or playing back
 
-#### Source B: Center-Channel Cancellation (**quick but rough**)
+The guide vocal is monitor-only and is not mixed into exported vocal / mix files. If the vocals and backing come from different sources, the guide uses the same auto-alignment offset; adjusting fine-tune moves the guide along with the pitch curve.
 
-Best when: you don't have separation tools and want a rough reference fast.
+#### Guide vocal monitoring tips
 
-Click **Extract via Vocal Removal** — the app runs L-R difference (center-cancel) on your stereo backing and performs pitch detection on the remaining signal.
+- **Learning a new song**: set Guide to 15 to 30% so you can hear the melody and entry points
+- **Recording a final take**: lower Guide to 0 to 10%, or uncheck guide monitoring
+- **Alignment check**: if the guide and backing feel offset, adjust fine-tune on the Setup tab; the guide and pitch curve move together
+- **Export behavior**: Guide is headphone monitoring only, and exported vocal / mix WAV files do not include the guide vocal
 
-**Limitation**: only works well for "center-panned vocals with left/right-panned accompaniment" pop songs. Mono files and live recordings give poor results.
+#### Source B: Load MIDI (**manual reference**)
+
+Best when: you have a prepared melody MIDI file, or can export the melody line from notation or arrangement software.
+
+Click **Load MIDI** → pick a `.mid` / `.midi` file. The app displays the MIDI melody as the grey-blue reference line.
 
 #### Alignment Fine-Tune
 
@@ -363,7 +382,7 @@ Shown in the lower half of the Recording tab / full-screen on the Pitch tab. It 
 
 | Color | Meaning |
 |---|---|
-| **Grey-blue line** | Target melody (from vocals / center-cancel) |
+| **Grey-blue line** | Target melody (from vocals / MIDI) |
 | **Gold line** | Your live singing pitch |
 | **Beige grid** | Semitone ruler + octave labels (C4, C5, ...) |
 | **Red vertical line** | Current playback cursor |
@@ -568,4 +587,4 @@ Or give the project a ⭐ on GitHub — that's the most meaningful support of al
 
 ---
 
-*Last updated: 2026-04 · VocalSync Studio v0.2.14*
+*Last updated: 2026-05 · VocalSync Studio v0.2.15*

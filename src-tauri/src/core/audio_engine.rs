@@ -83,6 +83,13 @@ pub struct DeviceList {
     pub output_devices: Vec<DeviceInfo>,
 }
 
+#[derive(Debug, Clone)]
+struct GuideVocalTrack {
+    samples: Arc<Vec<f32>>,
+    sample_rate: u32,
+    offset_secs: f64,
+}
+
 /// 🔴 R2 修正：A-B 兩個幀位置打包成一個 u64 原子更新，避免半更新可見性問題。
 /// 高 32 bit = A 幀（u32），低 32 bit = B 幀（u32）。
 /// 全 0xFFFF_FFFF_FFFF_FFFF = 停用。
@@ -114,6 +121,10 @@ struct SharedState {
     backing_volume: Arc<AtomicU32>,
     /// 麥克風增益（f32 bits）
     mic_gain: Arc<AtomicU32>,
+    /// 導唱監聽音量（f32 bits），只進耳機，不進匯出檔。
+    guide_volume: Arc<AtomicU32>,
+    /// 導唱監聽開關。
+    guide_enabled: Arc<AtomicBool>,
     /// 即時 RMS 量測
     backing_rms: Arc<AtomicU32>,
     mic_rms: Arc<AtomicU32>,
@@ -134,6 +145,8 @@ impl SharedState {
             running: Arc::new(AtomicBool::new(false)),
             backing_volume: Arc::new(AtomicU32::new(0.05_f32.to_bits())),
             mic_gain: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
+            guide_volume: Arc::new(AtomicU32::new(0.25_f32.to_bits())),
+            guide_enabled: Arc::new(AtomicBool::new(false)),
             backing_rms: Arc::new(AtomicU32::new(0)),
             mic_rms: Arc::new(AtomicU32::new(0)),
             current_pitch: Arc::new(Mutex::new(None)),
@@ -163,6 +176,9 @@ pub struct AudioEngine {
 
     // 伴奏旋律音高軌跡（載入後背景分析，None 代表尚未準備好）
     backing_pitch_track: Arc<Mutex<Option<PitchTrack>>>,
+
+    // 導唱監聽軌（由匯入人聲載入，錄音與回放時只進耳機）
+    guide_vocal: Arc<Mutex<Option<GuideVocalTrack>>>,
 
     // 跨執行緒共享狀態
     shared: SharedState,
@@ -208,6 +224,7 @@ impl AudioEngine {
             vocal_buffer: Arc::new(Mutex::new(Vec::new())),
             pitch_track: Arc::new(Mutex::new(PitchTrack::new())),
             backing_pitch_track: Arc::new(Mutex::new(None)),
+            guide_vocal: Arc::new(Mutex::new(None)),
             shared: SharedState::new(),
             worker: None,
             export_volume: 0.5,
@@ -239,6 +256,7 @@ impl AudioEngine {
         // 使用者按「回放」或「匯出」時會拿到跨曲錯亂資料，
         // 也算一層隱私防線（不讓前一位使用者的錄音殘留到下一人）。
         self.clear_recording();
+        self.clear_guide_vocal();
 
         // 統一走 symphonia 解碼，輸出固定為交錯立體聲 f32
         let media = crate::core::media_loader::load_media(path)?;
@@ -282,6 +300,50 @@ impl AudioEngine {
             // melody_source 由 command 層填入（audio_engine 不負責檔案系統掃描）
             melody_source: None,
         })
+    }
+
+    pub fn load_guide_vocal(&self, path: &str, offset_secs: f64) -> Result<(), AppError> {
+        let media = crate::core::media_loader::load_media(path)?;
+        let channels = media.channels.max(1) as usize;
+        let samples = downmix_interleaved_to_mono(&media.samples, channels);
+        if samples.is_empty() {
+            return Err(AppError::Audio("導唱音檔沒有可用音訊".to_string()));
+        }
+
+        let guide = GuideVocalTrack {
+            samples: Arc::new(samples),
+            sample_rate: media.sample_rate,
+            offset_secs,
+        };
+        let mut slot = self
+            .guide_vocal
+            .lock()
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        *slot = Some(guide);
+        self.shared.guide_enabled.store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
+    pub fn clear_guide_vocal(&self) {
+        if let Ok(mut slot) = self.guide_vocal.lock() {
+            *slot = None;
+        }
+        self.shared.guide_enabled.store(false, Ordering::Relaxed);
+    }
+
+    pub fn set_guide_vocal_offset(&self, offset_secs: f64) -> Result<(), AppError> {
+        let mut slot = self
+            .guide_vocal
+            .lock()
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        if let Some(guide) = slot.as_mut() {
+            guide.offset_secs = offset_secs;
+        }
+        Ok(())
+    }
+
+    pub fn set_guide_vocal_enabled(&self, enabled: bool) {
+        self.shared.guide_enabled.store(enabled, Ordering::Relaxed);
     }
 
     /// 啟動背景伴奏旋律分析。
@@ -443,13 +505,18 @@ impl AudioEngine {
 
     // ── 設定 ───────────────────────────────────────────────────────
 
-    pub fn set_volume(&mut self, backing: f32, mic: f32) {
+    pub fn set_volume(&mut self, backing: f32, mic: f32, guide: Option<f32>) {
         let backing = backing.clamp(0.0, 2.0);
         let mic = mic.clamp(0.0, 5.0);
         self.shared
             .backing_volume
             .store(backing.to_bits(), Ordering::Relaxed);
         self.shared.mic_gain.store(mic.to_bits(), Ordering::Relaxed);
+        if let Some(guide) = guide {
+            self.shared
+                .guide_volume
+                .store(guide.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+        }
     }
 
     pub fn seek(&mut self, seconds: f64) {
@@ -624,6 +691,7 @@ impl AudioEngine {
 
         let shared = self.shared.clone();
         let vocal_buffer = self.vocal_buffer.clone();
+        let guide_vocal = self.guide_vocal.clone();
 
         if let Some(sf) = start_frame {
             shared.playback_pos.store(sf, Ordering::Relaxed);
@@ -637,6 +705,7 @@ impl AudioEngine {
                 app,
                 backing,
                 vocal_buffer,
+                guide_vocal,
                 backing_channels,
                 source_sr,
                 total_frames,
@@ -678,6 +747,7 @@ impl AudioEngine {
 
         let shared = self.shared.clone();
         let vocal_buffer = self.vocal_buffer.clone();
+        let guide_vocal = self.guide_vocal.clone();
         let pitch_track = self.pitch_track.clone();
 
         // 🔴 R1 修正：錄音模式下強制停用 A-B 循環。
@@ -748,6 +818,7 @@ impl AudioEngine {
                 app,
                 backing,
                 vocal_buffer,
+                guide_vocal,
                 pitch_track,
                 backing_channels,
                 source_sr,
@@ -1054,6 +1125,7 @@ impl AudioEngine {
                 app_thread,
                 Arc::new(click_track),
                 vocal_buffer,
+                Arc::new(Mutex::new(None::<GuideVocalTrack>)),
                 pitch_track,
                 calibration_channels as usize,
                 source_sr,
@@ -1356,6 +1428,8 @@ fn fill_backing_output(
     cur_pos: u64,
     vol: f32,
     vocal_snapshot: Option<&[f32]>,
+    guide_snapshot: Option<&GuideVocalTrack>,
+    guide_volume: f32,
     latency_ms: f64,
     source_sr: u32,
 ) -> (u64, f32) {
@@ -1391,6 +1465,9 @@ fn fill_backing_output(
                 if src_idx >= 0 && src_idx < vocal.len() as isize {
                     s += vocal[src_idx as usize];
                 }
+            }
+            if let Some(guide) = guide_snapshot {
+                s += sample_guide_at_source_frame(guide, src_pos_f, source_sr) * guide_volume;
             }
 
             let s = s.clamp(-1.0, 1.0);
@@ -1455,6 +1532,29 @@ fn sample_linear_mono(samples: &[f32], pos: f64) -> f32 {
     let s_lo = samples[lo];
     let s_hi = samples[hi];
     s_lo + (s_hi - s_lo) * frac
+}
+
+fn downmix_interleaved_to_mono(samples: &[f32], channels: usize) -> Vec<f32> {
+    let channels = channels.max(1);
+    samples
+        .chunks_exact(channels)
+        .map(|frame| frame.iter().sum::<f32>() / channels as f32)
+        .collect()
+}
+
+#[inline]
+fn sample_guide_at_source_frame(guide: &GuideVocalTrack, source_frame: f64, source_sr: u32) -> f32 {
+    let guide_secs = source_frame / source_sr as f64 + guide.offset_secs;
+    if guide_secs < 0.0 {
+        return 0.0;
+    }
+
+    let guide_pos = guide_secs * guide.sample_rate as f64;
+    if guide_pos < 0.0 || guide_pos + 1.0 >= guide.samples.len() as f64 {
+        return 0.0;
+    }
+
+    sample_linear_mono(guide.samples.as_slice(), guide_pos)
 }
 
 /// Lanczos-3 sinc kernel（a=3，頻譜洩漏極低，sidelobe < -26dB）。
@@ -1603,6 +1703,7 @@ fn run_playback(
     app: AppHandle,
     backing: Arc<Vec<f32>>,
     vocal_buffer: Arc<Mutex<Vec<f32>>>,
+    guide_vocal: Arc<Mutex<Option<GuideVocalTrack>>>,
     backing_channels: usize,
     source_sr: u32,
     total_frames: u64,
@@ -1651,10 +1752,13 @@ fn run_playback(
     } else {
         None
     };
+    let guide_snapshot: Option<GuideVocalTrack> = guide_vocal.lock().ok().and_then(|g| g.clone());
 
     let pos = shared.playback_pos.clone();
     let running = shared.running.clone();
     let volume = shared.backing_volume.clone();
+    let guide_volume = shared.guide_volume.clone();
+    let guide_enabled = shared.guide_enabled.clone();
     let backing_rms = shared.backing_rms.clone();
     let loop_range = shared.loop_range.clone();
     let speed_atomic = shared.speed.clone();
@@ -1662,6 +1766,7 @@ fn run_playback(
 
     let backing_cb = backing.clone();
     let vocal_cb = vocal_snapshot.clone();
+    let guide_cb = guide_snapshot.clone();
     let running_cb = running.clone();
 
     // ── Stretch producer/consumer 架構（lock-free ring buffer） ──
@@ -1852,6 +1957,12 @@ fn run_playback(
 
                 // ── Bypass：原始直接讀取路徑（零 WSOLA 開銷）──
                 let vocal_ref = vocal_cb.as_ref().map(|v| v.as_slice());
+                let guide_vol = f32::from_bits(guide_volume.load(Ordering::Relaxed));
+                let guide_ref = if guide_enabled.load(Ordering::Relaxed) && guide_vol > 0.0 {
+                    guide_cb.as_ref()
+                } else {
+                    None
+                };
                 let (mut new_pos, rms) = fill_backing_output(
                     data,
                     &backing_cb,
@@ -1862,6 +1973,8 @@ fn run_playback(
                     cur_pos,
                     vol,
                     vocal_ref,
+                    guide_ref,
+                    guide_vol,
                     latency_ms,
                     source_sr,
                 );
@@ -1946,6 +2059,12 @@ fn run_playback(
                 let available_frames = local_buf.len() / backing_channels.max(1);
                 let vocal_ref = vocal_cb.as_ref().map(|v| v.as_slice());
                 let latency_frames = latency_ms / 1000.0 * source_sr as f64;
+                let guide_vol = f32::from_bits(guide_volume.load(Ordering::Relaxed));
+                let guide_ref = if guide_enabled.load(Ordering::Relaxed) && guide_vol > 0.0 {
+                    guide_cb.as_ref()
+                } else {
+                    None
+                };
 
                 let mut sum_sq = 0.0_f32;
                 let mut sample_count = 0_usize;
@@ -1994,6 +2113,10 @@ fn run_playback(
                             if vocal_pos >= 0.0 && vocal_pos + 1.0 < vocal.len() as f64 {
                                 s += sample_linear_mono(vocal, vocal_pos);
                             }
+                        }
+                        if let Some(guide) = guide_ref {
+                            s += sample_guide_at_source_frame(guide, timeline_pos, source_sr)
+                                * guide_vol;
                         }
 
                         let s = s.clamp(-1.0, 1.0);
@@ -2192,9 +2315,16 @@ fn run_playback(
                 // Resample + 寫入 output（含音量、channel mapping）
                 let mut sum_sq = 0.0_f32;
                 let mut sample_count = 0_usize;
+                let guide_vol = f32::from_bits(guide_volume.load(Ordering::Relaxed));
+                let guide_ref = if guide_enabled.load(Ordering::Relaxed) && guide_vol > 0.0 {
+                    guide_cb.as_ref()
+                } else {
+                    None
+                };
 
                 for frame in 0..frame_count {
                     let src_f = frame as f64 * combined_resample;
+                    let timeline_pos = cur_pos as f64 + frame as f64 * rate_ratio * cur_speed;
 
                     if src_f + 1.0 >= wsola_frames_needed as f64 {
                         for ch in 0..out_channels {
@@ -2208,10 +2338,15 @@ fn run_playback(
                         // 仍用 cubic（Catmull-Rom）：短支撐避免把 WSOLA hop 邊界的
                         // 微小相位跳變擴散成長 ringing。雜音來源是 WSOLA 本身，
                         // 要靠變速+移調以外的路徑（producer path）繞過才有效。
-                        let s =
+                        let mut s =
                             sample_cubic_interleaved(&wsola_buf, backing_channels, src_f, src_ch);
 
-                        let s = (s * vol).clamp(-1.0, 1.0);
+                        s *= vol;
+                        if let Some(guide) = guide_ref {
+                            s += sample_guide_at_source_frame(guide, timeline_pos, source_sr)
+                                * guide_vol;
+                        }
+                        let s = s.clamp(-1.0, 1.0);
                         data[frame * out_channels + ch] = s;
                         sum_sq += s * s;
                         sample_count += 1;
@@ -2782,6 +2917,7 @@ fn run_recording(
     app: AppHandle,
     backing: Arc<Vec<f32>>,
     vocal_buffer: Arc<Mutex<Vec<f32>>>,
+    guide_vocal: Arc<Mutex<Option<GuideVocalTrack>>>,
     pitch_track: Arc<Mutex<PitchTrack>>,
     backing_channels: usize,
     source_sr: u32,
@@ -2896,10 +3032,13 @@ fn run_recording(
     let pos = shared.playback_pos.clone();
     let running = shared.running.clone();
     let volume = shared.backing_volume.clone();
+    let guide_volume = shared.guide_volume.clone();
+    let guide_enabled = shared.guide_enabled.clone();
     let backing_rms = shared.backing_rms.clone();
     let loop_range_rec = shared.loop_range.clone();
 
     let backing_cb = backing.clone();
+    let guide_cb = guide_vocal.lock().ok().and_then(|g| g.clone());
     let running_out = running.clone();
 
     // 🟢 Codex P1 #1：input / output callback 啟動時序對齊。
@@ -2929,6 +3068,12 @@ fn run_recording(
 
             let cur_pos = pos.load(Ordering::Relaxed);
             let vol = f32::from_bits(volume.load(Ordering::Relaxed));
+            let guide_vol = f32::from_bits(guide_volume.load(Ordering::Relaxed));
+            let guide_ref = if guide_enabled.load(Ordering::Relaxed) && guide_vol > 0.0 {
+                guide_cb.as_ref()
+            } else {
+                None
+            };
 
             // 🟡 Y4 修正：使用共用 helper 函式（錄音模式不混入人聲）
             let (mut new_pos, rms) = fill_backing_output(
@@ -2941,6 +3086,8 @@ fn run_recording(
                 cur_pos,
                 vol,
                 None, // 錄音模式：不混入人聲
+                guide_ref,
+                guide_vol,
                 0.0,
                 source_sr,
             );
@@ -3526,6 +3673,25 @@ mod tests {
         let frames = vec![0.0_f32, 1.0];
         let out = sample_linear_mono(&frames, 0.25);
         assert!((out - 0.25).abs() < 1e-6, "got {out}");
+    }
+
+    #[test]
+    fn downmix_interleaved_to_mono_averages_channels() {
+        let frames = vec![1.0_f32, -1.0, 0.25, 0.75];
+        let mono = downmix_interleaved_to_mono(&frames, 2);
+        assert_eq!(mono, vec![0.0, 0.5]);
+    }
+
+    #[test]
+    fn sample_guide_at_source_frame_uses_alignment_offset() {
+        let guide = GuideVocalTrack {
+            samples: Arc::new(vec![0.0, 1.0, 2.0, 3.0]),
+            sample_rate: 4,
+            offset_secs: 0.25,
+        };
+
+        let out = sample_guide_at_source_frame(&guide, 0.0, 4);
+        assert!((out - 1.0).abs() < 1e-6, "got {out}");
     }
 
     #[test]
