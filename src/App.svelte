@@ -11,11 +11,15 @@
   } from "./lib/events";
   import ToastContainer from "./components/ToastContainer.svelte";
   import LanguageSwitcher from "./components/LanguageSwitcher.svelte";
+  import StartupGuideModal from "./components/StartupGuideModal.svelte";
   import { t } from "./i18n";
+  import { invoke } from "@tauri-apps/api/core";
 
   let activeTab = $state<"setup" | "recording" | "pitch" | "about">("setup");
   let boundaryError = $state<Error | null>(null);
   let isMaximized = $state(false);
+  let showStartupGuide = $state(false);
+  let showStartupGuideNextLaunch = $state(true);
 
   const appWindow = getCurrentWindow();
 
@@ -39,12 +43,27 @@
     setupEventListeners();
     updateMaximized();
     unlistenResize = await appWindow.onResized(updateMaximized);
+    try {
+      const settings = await invoke<{ show_startup_guide?: boolean }>("load_settings");
+      showStartupGuideNextLaunch = settings.show_startup_guide !== false;
+      showStartupGuide = settings.show_startup_guide !== false;
+    } catch (err) {
+      console.warn("[startup-guide] load settings failed:", err);
+    }
   });
 
   onDestroy(() => {
     teardownEventListeners();
     unlistenResize?.();
   });
+
+  async function closeStartupGuide(showNextLaunch: boolean): Promise<void> {
+    showStartupGuide = false;
+    showStartupGuideNextLaunch = showNextLaunch;
+    await invoke("update_show_startup_guide", { show: showNextLaunch }).catch((err) =>
+      console.warn("[startup-guide] save preference failed:", err),
+    );
+  }
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -158,6 +177,13 @@
 </div>
 
 <ToastContainer />
+
+{#if showStartupGuide}
+  <StartupGuideModal
+    showNextLaunch={showStartupGuideNextLaunch}
+    onClose={closeStartupGuide}
+  />
+{/if}
 
 <style>
   :global(:root) {

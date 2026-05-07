@@ -28,6 +28,20 @@ pub fn update_pitch_engine(
         .map_err(|e| AppError::Settings(e.to_string()))
 }
 
+#[tauri::command]
+pub fn update_show_startup_guide(
+    show: bool,
+    settings: State<'_, Mutex<AppSettings>>,
+) -> Result<(), AppError> {
+    let mut current = settings
+        .lock()
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    current.show_startup_guide = show;
+    current
+        .save()
+        .map_err(|e| AppError::Settings(e.to_string()))
+}
+
 /// 部分更新：只寫入校準延遲值並立即持久化。
 ///
 /// 用途：校準完成後前端只想更新這一欄位，不想 round-trip 整個 AppSettings。

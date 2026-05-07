@@ -1,6 +1,6 @@
 {
   "productName": "VocalSync Studio",
-  "version": "0.2.15",
+  "version": "0.2.17",
   "identifier": "com.vocalsync.studio",
   "build": {
     "frontendDist": "../dist",
@@ -47,13 +47,7 @@
       "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost; media-src 'self' asset: http://asset.localhost blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
       "assetProtocol": {
         "enable": true,
-        "scope": [
-          "$DOWNLOAD/**",
-          "$DESKTOP/**",
-          "$DOCUMENT/**",
-          "$VIDEO/**",
-          "$AUDIO/**"
-        ]
+        "scope": []
       }
     }
   },

@@ -27,6 +27,10 @@ Thumbs.db
 src-tauri/WixTools/
 src-tauri/gen/
 
+# Local source-separation worker build artifacts
+.worker-build/
+workers/separation/
+
 # Session handoff / audit docs (development only)
 *_HANDOFF.md
 *_AUDIT_*.md

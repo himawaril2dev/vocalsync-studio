@@ -2,8 +2,10 @@
   import { invoke } from "@tauri-apps/api/core";
   import { showToast } from "../stores/toast";
   import { t, tSync } from "../i18n";
+  import GuideContent from "../components/GuideContent.svelte";
+  import UvrGuideModal from "../components/UvrGuideModal.svelte";
 
-  const VERSION = "0.2.15";
+  const VERSION = "0.2.17";
   const KOFI_URL = "https://ko-fi.com/himawari168";
   const GITHUB_URL = "https://github.com/himawaril2dev/vocalsync-studio";
   const ISSUES_URL = "https://github.com/himawaril2dev/vocalsync-studio/issues";
@@ -16,6 +18,7 @@
   }
 
   let checking = $state(false);
+  let showUvrGuide = $state(false);
 
   /**
    * 比對兩個版本號：回傳 > 0 表示 latest 較新、= 0 相同、< 0 current 較新。
@@ -72,61 +75,17 @@
     <p class="disclosure-body">{$t("about.disclosure.body")}</p>
   </div>
 
-  <div class="card">
-    <h2>{$t("about.notes.title")}</h2>
-    <div class="workflow-panel">
-      <strong>{$t("about.workflow.title")}</strong>
-      <ol class="workflow-list">
-        <li>{$t("about.workflow.1")}</li>
-        <li>{$t("about.workflow.2")}</li>
-        <li>{$t("about.workflow.3")}</li>
-        <li>{$t("about.workflow.4")}</li>
-        <li>{$t("about.workflow.5")}</li>
-        <li>{$t("about.workflow.6")}</li>
-      </ol>
-    </div>
-    <div class="notes">
-      <div class="note-item">
-        <span class="note-num">1</span>
-        <div>
-          <strong>{$t("about.notes.1.title")}</strong>
-          <p>{$t("about.notes.1.body")}</p>
-        </div>
-      </div>
-      <div class="note-item">
-        <span class="note-num">2</span>
-        <div>
-          <strong>{$t("about.notes.2.title")}</strong>
-          <p>{$t("about.notes.2.body")}</p>
-          <ul>
-            <li>{$t("about.notes.2.li1.before")}<a href="https://github.com/Anjok07/ultimatevocalremovergui" target="_blank" rel="noopener">UVR5</a>{$t("about.notes.2.li1.middle")}<a href="https://moises.ai" target="_blank" rel="noopener">Moises</a>{$t("about.notes.2.li1.after")}</li>
-            <li>{$t("about.notes.2.li2")}</li>
-          </ul>
-        </div>
-      </div>
-      <div class="note-item">
-        <span class="note-num">3</span>
-        <div>
-          <strong>{$t("about.notes.3.title")}</strong>
-          <p>{$t("about.notes.3.body")}</p>
-        </div>
-      </div>
-      <div class="note-item">
-        <span class="note-num">4</span>
-        <div>
-          <strong>{$t("about.notes.4.title")}</strong>
-          <p>{$t("about.notes.4.body")}</p>
-        </div>
-      </div>
-      <div class="note-item">
-        <span class="note-num">5</span>
-        <div>
-          <strong>{$t("about.notes.5.title")}</strong>
-          <p>{$t("about.notes.5.body")}</p>
-        </div>
-      </div>
-    </div>
+  <div class="card guide-card">
+    <GuideContent />
   </div>
+
+  <button class="card uvr-about-card" type="button" onclick={() => (showUvrGuide = true)}>
+    <div>
+      <h2>{$t("uvrGuide.entry.title")}</h2>
+      <p>{$t("uvrGuide.entry.body")}</p>
+    </div>
+    <span>{$t("uvrGuide.entry.action")}</span>
+  </button>
 
   <div class="card">
     <h2>{$t("about.shortcuts.title")}</h2>
@@ -257,6 +216,10 @@
   </p>
 </div>
 
+{#if showUvrGuide}
+  <UvrGuideModal onClose={() => (showUvrGuide = false)} />
+{/if}
+
 <style>
   .about-page {
     padding: var(--space-xl);
@@ -338,89 +301,56 @@
     color: var(--color-text);
   }
 
-  /* 使用須知 */
-  .workflow-panel {
-    margin-bottom: var(--space-xl);
-    padding: var(--space-lg);
-    border-radius: var(--radius-lg);
-    background: rgba(142, 108, 0, 0.08);
-    border: 1px solid rgba(142, 108, 0, 0.18);
+  .guide-card {
+    max-width: 720px;
   }
 
-  .workflow-panel strong {
-    display: block;
-    font-size: 14px;
-    color: var(--color-text);
-    margin-bottom: var(--space-sm);
+  .uvr-about-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-lg);
+    width: 100%;
+    border: 1px solid rgba(159, 122, 0, 0.26);
+    background:
+      radial-gradient(circle at top left, rgba(253, 192, 3, 0.16), transparent 34%),
+      var(--color-bg-surface);
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition:
+      border-color var(--transition-fast),
+      box-shadow var(--transition-fast),
+      transform var(--transition-fast);
   }
 
-  .workflow-list {
+  .uvr-about-card:hover {
+    border-color: rgba(117, 87, 0, 0.46);
+    box-shadow: 0 12px 28px rgba(117, 87, 0, 0.12);
+    transform: translateY(-1px);
+  }
+
+  .uvr-about-card h2 {
+    margin-bottom: var(--space-xs);
+  }
+
+  .uvr-about-card p {
     margin: 0;
-    padding-left: var(--space-xl);
     color: var(--color-text-secondary);
     font-size: 13px;
     line-height: 1.7;
   }
 
-  .workflow-list li + li {
-    margin-top: var(--space-xs);
-  }
-
-  .notes {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-lg);
-  }
-
-  .note-item {
-    display: flex;
-    gap: var(--space-md);
-  }
-
-  .note-num {
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
+  .uvr-about-card > span {
+    flex: 0 0 auto;
+    padding: var(--space-sm) var(--space-md);
+    border-radius: 999px;
     background: var(--color-brand);
     color: #fff;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    margin-top: 2px;
-  }
-
-  .note-item strong {
-    display: block;
-    font-size: 14px;
-    color: var(--color-text);
-    margin-bottom: var(--space-xs);
-  }
-
-  .note-item p {
-    margin: 0;
-    font-size: 13px;
-    color: var(--color-text-secondary);
-    line-height: 1.6;
-  }
-
-  .note-item ul {
-    margin: var(--space-xs) 0 0;
-    padding-left: var(--space-xl);
-    font-size: 13px;
-    color: var(--color-text-secondary);
-    line-height: 1.6;
-  }
-
-  .note-item a {
-    color: var(--color-info);
-    text-decoration: none;
-  }
-
-  .note-item a:hover {
-    text-decoration: underline;
+    white-space: nowrap;
   }
 
   /* 快捷鍵 */
@@ -639,5 +569,16 @@
     color: var(--color-text-faint);
     padding-bottom: var(--space-lg);
     margin: 0;
+  }
+
+  @media (max-width: 640px) {
+    .uvr-about-card {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .uvr-about-card > span {
+      align-self: flex-start;
+    }
   }
 </style>

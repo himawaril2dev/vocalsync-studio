@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { invoke, convertFileSrc } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
   import { loadedMedia, basename } from "../stores/media";
@@ -34,18 +35,31 @@
     guideVocalEnabled,
   } from "../stores/settings";
   import CalibrationVisualizer from "../components/CalibrationVisualizer.svelte";
+  import UvrGuideModal from "../components/UvrGuideModal.svelte";
   import DownloadTab from "./DownloadTab.svelte";
   import { t, tSync } from "../i18n";
 
-  /** 各區塊收合狀態 */
-  let sections = $state({
+  type SetupSectionKey =
+    | "download"
+    | "lyrics"
+    | "song"
+    | "device"
+    | "calibration";
+  type SetupSections = Record<SetupSectionKey, boolean>;
+
+  const SETUP_SECTIONS_STORAGE_KEY = "vocalsync.setup.sections.v1";
+  const DEFAULT_SECTIONS: SetupSections = {
     download: true,
-    backing: true,
     lyrics: true,
-    melody: false,
-    device: false,
-    calibration: false,
-  });
+    song: true,
+    device: true,
+    calibration: true,
+  };
+
+  /** 各區塊收合狀態 */
+  let sections = $state<SetupSections>({ ...DEFAULT_SECTIONS });
+  let sectionsLoaded = $state(false);
+  let showUvrGuide = $state(false);
 
   interface DeviceInfo {
     name: string;
@@ -155,6 +169,45 @@
   let calibrationResultText = $state("");
 
   let pitchEngineLoaded = false;
+
+  function loadPersistedSections(): void {
+    try {
+      const raw = localStorage.getItem(SETUP_SECTIONS_STORAGE_KEY);
+      if (!raw) {
+        sections = { ...DEFAULT_SECTIONS };
+        return;
+      }
+      const saved = JSON.parse(raw) as Partial<Record<SetupSectionKey, unknown>>;
+      sections = { ...DEFAULT_SECTIONS };
+      for (const key of Object.keys(DEFAULT_SECTIONS) as SetupSectionKey[]) {
+        if (typeof saved[key] === "boolean") {
+          sections[key] = saved[key];
+        }
+      }
+    } catch (err) {
+      console.warn("[setup] section layout restore failed:", err);
+      sections = { ...DEFAULT_SECTIONS };
+    }
+  }
+
+  function toggleSection(key: SetupSectionKey): void {
+    sections[key] = !sections[key];
+  }
+
+  onMount(async () => {
+    loadPersistedSections();
+    sectionsLoaded = true;
+  });
+
+  $effect(() => {
+    const snapshot = JSON.stringify(sections);
+    if (!sectionsLoaded) return;
+    try {
+      localStorage.setItem(SETUP_SECTIONS_STORAGE_KEY, snapshot);
+    } catch (err) {
+      console.warn("[setup] section layout save failed:", err);
+    }
+  });
 
   $effect(() => {
     // Component Mount 時：(1) 載入持久化設定 (2) 列舉硬體裝置
@@ -687,7 +740,7 @@
 <div class="setup-page">
   <!-- YouTube 下載 -->
   <div class="card">
-    <button class="section-header" onclick={() => sections.download = !sections.download}>
+    <button class="section-header" onclick={() => toggleSection("download")}>
       <h2>{$t("setup.section.download")}</h2>
       <span class="chevron" class:open={sections.download}>▸</span>
     </button>
@@ -698,28 +751,189 @@
     {/if}
   </div>
 
-  <!-- 練唱伴奏 -->
+  <!-- 歌曲與音高來源 -->
   <div class="card">
-    <button class="section-header" onclick={() => sections.backing = !sections.backing}>
-      <h2>{$t("setup.section.backing")}</h2>
-      <span class="chevron" class:open={sections.backing}>▸</span>
+    <button class="section-header" onclick={() => toggleSection("song")}>
+      <h2>{$t("setup.section.song")}</h2>
+      <span class="chevron" class:open={sections.song}>▸</span>
     </button>
-    {#if sections.backing}
-      <div class="section-body">
-        <p class="hint">{statusText}</p>
-        <p class="sub-hint">
-          {$t("setup.backing.subHint")}
-        </p>
-        <div class="actions">
-          <button class="btn primary" onclick={loadFile}>{$t("setup.backing.action.import")}</button>
+    {#if sections.song}
+      <div class="section-body song-source-section">
+        <p class="hint">{$t("setup.song.hint")}</p>
+
+        <button class="uvr-info-card" type="button" onclick={() => (showUvrGuide = true)}>
+          <div>
+            <strong>{$t("uvrGuide.entry.title")}</strong>
+            <p>{$t("uvrGuide.entry.body")}</p>
+          </div>
+          <span>{$t("uvrGuide.entry.action")}</span>
+        </button>
+
+        <div class="uvr-flow-grid">
+          <article class="uvr-step-card">
+            <span>1</span>
+            <div>
+              <strong>{$t("setup.separation.external.step1.title")}</strong>
+              <p>{$t("setup.separation.external.step1.body")}</p>
+            </div>
+          </article>
+          <article class="uvr-step-card">
+            <span>2</span>
+            <div>
+              <strong>{$t("setup.separation.external.step2.title")}</strong>
+              <p>{$t("setup.separation.external.step2.body")}</p>
+            </div>
+          </article>
+          <article class="uvr-step-card">
+            <span>3</span>
+            <div>
+              <strong>{$t("setup.separation.external.step3.title")}</strong>
+              <p>{$t("setup.separation.external.step3.body")}</p>
+            </div>
+          </article>
         </div>
+
+        <div class="source-grid">
+          <section class="source-panel">
+            <div class="source-panel-header">
+              <span>1</span>
+              <div>
+                <strong>{$t("setup.song.backing.title")}</strong>
+                <p>{statusText}</p>
+              </div>
+            </div>
+            <p class="sub-hint source-hint">
+              {$t("setup.backing.subHint")}
+            </p>
+            <div class="actions">
+              <button class="btn primary" onclick={loadFile}>{$t("setup.backing.action.import")}</button>
+            </div>
+          </section>
+
+          <section class="source-panel">
+            <div class="source-panel-header">
+              <span>2</span>
+              <div>
+                <strong>{$t("setup.song.melody.title")}</strong>
+                <p>{melodyStatusText}</p>
+              </div>
+            </div>
+
+            {#if $currentMelody === null}
+              <p class="sub-hint source-hint">
+                {$t("setup.melody.hint.empty.prefix")}<strong>{$t("setup.melody.hint.empty.vocals")}</strong>{$t("setup.melody.hint.empty.or")}<strong>{$t("setup.melody.hint.empty.midi")}</strong>{$t("setup.melody.hint.empty.suffix")}
+              </p>
+            {/if}
+
+            <div class="actions">
+              <button
+                class="btn primary"
+                onclick={loadVocalsTrack}
+                disabled={!backingLoaded}
+                title={$t("setup.melody.action.importVocals.title")}
+              >
+                {$t("setup.melody.action.importVocals")}
+              </button>
+              <button
+                class="btn secondary"
+                onclick={loadMelodyFile}
+                disabled={!backingLoaded}
+              >
+                {$t("setup.melody.action.loadMidi")}
+              </button>
+              {#if currentBackingPath && $currentMelody === null}
+                <button
+                  class="btn ghost"
+                  onclick={() => currentBackingPath && autoLoadMelodyForPath(currentBackingPath)}
+                >
+                  {$t("setup.melody.action.rescan")}
+                </button>
+              {/if}
+            </div>
+
+            {#if $guideVocalPath}
+              <label class="guide-toggle" title={$guideVocalPath}>
+                <input type="checkbox" bind:checked={$guideVocalEnabled} />
+                <span>{$t("setup.guide.toggle", { name: basename($guideVocalPath) })}</span>
+              </label>
+              <p class="sub-hint guide-hint">{$t("setup.guide.hint")}</p>
+            {/if}
+
+            {#if $currentMelody}
+              <div class="alignment-box">
+                <div class="alignment-header">
+                  <span class="alignment-title">{$t("setup.alignment.title")}</span>
+                  {#if $melodySourcePath === null}
+                    <span class="badge badge-muted">{$t("setup.alignment.badge.noNeed")}</span>
+                  {:else if $alignmentResult}
+                    {#if alignmentConfidence($alignmentResult) === "high"}
+                      <span class="badge badge-high">{$t("setup.alignment.badge.high")}</span>
+                    {:else if alignmentConfidence($alignmentResult) === "medium"}
+                      <span class="badge badge-medium">{$t("setup.alignment.badge.medium")}</span>
+                    {:else}
+                      <span class="badge badge-low">{$t("setup.alignment.badge.low")}</span>
+                    {/if}
+                  {:else}
+                    <span class="badge badge-muted">{$t("setup.alignment.badge.notAligned")}</span>
+                  {/if}
+                </div>
+
+                {#if $melodySourcePath === null}
+                  <p class="alignment-hint">
+                    {$t("setup.alignment.hint.sameSource")}
+                  </p>
+                {:else if $alignmentResult}
+                  <p class="alignment-hint">
+                    {$t("setup.alignment.hint.offset", {
+                      offset: describeAlignmentOffset($alignmentResult),
+                      ratio: $alignmentResult.peak_to_mean_ratio.toFixed(1),
+                    })}
+                  </p>
+                {:else}
+                  <p class="alignment-hint">
+                    {$t("setup.alignment.hint.pending")}
+                  </p>
+                {/if}
+
+                <div class="fine-tune-row">
+                  <label for="fine_tune">{$t("setup.alignment.fineTune.label")}</label>
+                  <input
+                    id="fine_tune"
+                    type="range"
+                    min="-500"
+                    max="500"
+                    step="1"
+                    bind:value={$alignmentFineTuneMs}
+                  />
+                  <span class="fine-tune-value">
+                    {$alignmentFineTuneMs >= 0 ? "+" : ""}{$alignmentFineTuneMs} ms
+                  </span>
+                  {#if $alignmentFineTuneMs !== 0}
+                    <button
+                      class="btn ghost tiny"
+                      onclick={() => alignmentFineTuneMs.set(0)}
+                      title={$t("setup.alignment.fineTune.reset.title")}
+                    >
+                      {$t("setup.alignment.fineTune.reset.text")}
+                    </button>
+                  {/if}
+                </div>
+              </div>
+            {/if}
+          </section>
+        </div>
+
+        <div class="uvr-note">
+          <strong>{$t("setup.separation.external.recommendTitle")}</strong>
+          <p>{$t("setup.separation.external.recommendBody")}</p>
+        </div>
+        <p class="sub-hint">{$t("setup.separation.external.orderHint")}</p>
       </div>
     {/if}
   </div>
 
-  <!-- 歌詞 / 字幕 -->
   <div class="card">
-    <button class="section-header" onclick={() => sections.lyrics = !sections.lyrics}>
+    <button class="section-header" onclick={() => toggleSection("lyrics")}>
       <h2>{$t("setup.section.lyrics")}</h2>
       <span class="chevron" class:open={sections.lyrics}>▸</span>
     </button>
@@ -727,151 +941,36 @@
       <div class="section-body">
         <p class="hint">{lyricsStatusText}</p>
 
-    {#if embeddedSubtitles.length > 0}
-      <div class="embedded-subs">
-        <p class="sub-hint">{$t("setup.lyrics.subTitle")}</p>
-        <div class="sub-list">
-          {#each embeddedSubtitles as sub}
-            <button
-              class="btn sub-btn"
-              onclick={() => extractAndLoadSubtitle(sub)}
-              disabled={subtitleExtracting}
-            >
-              #{sub.index} {subtitleLabel(sub)}
-            </button>
-          {/each}
-        </div>
-      </div>
-    {/if}
-
-    <div class="actions">
-      <button class="btn primary" onclick={loadLyrics}>{$t("setup.lyrics.action.load")}</button>
-      {#if $lyricsLines.length > 0}
-        <button class="btn secondary" onclick={clearLyrics}>{$t("setup.lyrics.action.clear")}</button>
-      {/if}
-    </div>
-      </div>
-    {/if}
-  </div>
-
-  <!-- 目標旋律 -->
-  <div class="card">
-    <button class="section-header" onclick={() => sections.melody = !sections.melody}>
-      <h2>{$t("setup.section.melody")}</h2>
-      <span class="chevron" class:open={sections.melody}>▸</span>
-    </button>
-    {#if sections.melody}
-      <div class="section-body">
-    <p class="hint">{melodyStatusText}</p>
-
-    {#if $currentMelody === null}
-      <p class="sub-hint">
-        {$t("setup.melody.hint.empty.prefix")}<strong>{$t("setup.melody.hint.empty.vocals")}</strong>{$t("setup.melody.hint.empty.or")}<strong>{$t("setup.melody.hint.empty.midi")}</strong>{$t("setup.melody.hint.empty.suffix")}
-      </p>
-    {/if}
-
-    <div class="actions">
-      <button
-        class="btn primary"
-        onclick={loadVocalsTrack}
-        disabled={!backingLoaded}
-        title={$t("setup.melody.action.importVocals.title")}
-      >
-        {$t("setup.melody.action.importVocals")}
-      </button>
-      <button
-        class="btn secondary"
-        onclick={loadMelodyFile}
-        disabled={!backingLoaded}
-      >
-        {$t("setup.melody.action.loadMidi")}
-      </button>
-      {#if currentBackingPath && $currentMelody === null}
-        <button
-          class="btn ghost"
-          onclick={() => currentBackingPath && autoLoadMelodyForPath(currentBackingPath)}
-        >
-          {$t("setup.melody.action.rescan")}
-        </button>
-      {/if}
-    </div>
-
-    {#if $guideVocalPath}
-      <label class="guide-toggle" title={$guideVocalPath}>
-        <input type="checkbox" bind:checked={$guideVocalEnabled} />
-        <span>{$t("setup.guide.toggle", { name: basename($guideVocalPath) })}</span>
-      </label>
-      <p class="sub-hint guide-hint">{$t("setup.guide.hint")}</p>
-    {/if}
-
-    {#if $currentMelody}
-      <div class="alignment-box">
-        <div class="alignment-header">
-          <span class="alignment-title">{$t("setup.alignment.title")}</span>
-          {#if $melodySourcePath === null}
-            <span class="badge badge-muted">{$t("setup.alignment.badge.noNeed")}</span>
-          {:else if $alignmentResult}
-            {#if alignmentConfidence($alignmentResult) === "high"}
-              <span class="badge badge-high">{$t("setup.alignment.badge.high")}</span>
-            {:else if alignmentConfidence($alignmentResult) === "medium"}
-              <span class="badge badge-medium">{$t("setup.alignment.badge.medium")}</span>
-            {:else}
-              <span class="badge badge-low">{$t("setup.alignment.badge.low")}</span>
-            {/if}
-          {:else}
-            <span class="badge badge-muted">{$t("setup.alignment.badge.notAligned")}</span>
-          {/if}
-        </div>
-
-        {#if $melodySourcePath === null}
-          <p class="alignment-hint">
-            {$t("setup.alignment.hint.sameSource")}
-          </p>
-        {:else if $alignmentResult}
-          <p class="alignment-hint">
-            {$t("setup.alignment.hint.offset", {
-              offset: describeAlignmentOffset($alignmentResult),
-              ratio: $alignmentResult.peak_to_mean_ratio.toFixed(1),
-            })}
-          </p>
-        {:else}
-          <p class="alignment-hint">
-            {$t("setup.alignment.hint.pending")}
-          </p>
+        {#if embeddedSubtitles.length > 0}
+          <div class="embedded-subs">
+            <p class="sub-hint">{$t("setup.lyrics.subTitle")}</p>
+            <div class="sub-list">
+              {#each embeddedSubtitles as sub}
+                <button
+                  class="btn sub-btn"
+                  onclick={() => extractAndLoadSubtitle(sub)}
+                  disabled={subtitleExtracting}
+                >
+                  #{sub.index} {subtitleLabel(sub)}
+                </button>
+              {/each}
+            </div>
+          </div>
         {/if}
 
-        <div class="fine-tune-row">
-          <label for="fine_tune">{$t("setup.alignment.fineTune.label")}</label>
-          <input
-            id="fine_tune"
-            type="range"
-            min="-500"
-            max="500"
-            step="1"
-            bind:value={$alignmentFineTuneMs}
-          />
-          <span class="fine-tune-value">
-            {$alignmentFineTuneMs >= 0 ? "+" : ""}{$alignmentFineTuneMs} ms
-          </span>
-          {#if $alignmentFineTuneMs !== 0}
-            <button
-              class="btn ghost tiny"
-              onclick={() => alignmentFineTuneMs.set(0)}
-              title={$t("setup.alignment.fineTune.reset.title")}
-            >
-              {$t("setup.alignment.fineTune.reset.text")}
-            </button>
+        <div class="actions">
+          <button class="btn primary" onclick={loadLyrics}>{$t("setup.lyrics.action.load")}</button>
+          {#if $lyricsLines.length > 0}
+            <button class="btn secondary" onclick={clearLyrics}>{$t("setup.lyrics.action.clear")}</button>
           {/if}
         </div>
-      </div>
-    {/if}
       </div>
     {/if}
   </div>
 
   <!-- 裝置選擇 -->
   <div class="card">
-    <button class="section-header" onclick={() => sections.device = !sections.device}>
+    <button class="section-header" onclick={() => toggleSection("device")}>
       <h2>{$t("setup.section.device")}</h2>
       <span class="chevron" class:open={sections.device}>▸</span>
     </button>
@@ -917,7 +1016,7 @@
 
   <!-- 延遲校準 -->
   <div class="card">
-    <button class="section-header" onclick={() => sections.calibration = !sections.calibration}>
+    <button class="section-header" onclick={() => toggleSection("calibration")}>
       <h2>{$t("setup.section.calibration")}</h2>
       <span class="chevron" class:open={sections.calibration}>▸</span>
     </button>
@@ -950,6 +1049,10 @@
 <CalibrationVisualizer
   onFinish={dismissVisualizer}
 />
+
+{#if showUvrGuide}
+  <UvrGuideModal onClose={() => (showUvrGuide = false)} />
+{/if}
 
 <style>
   .setup-page {
@@ -1286,5 +1389,197 @@
   .sub-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .song-source-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .uvr-info-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    width: 100%;
+    padding: 16px 18px;
+    border: 1px solid rgba(159, 122, 0, 0.26);
+    border-radius: 16px;
+    background:
+      radial-gradient(circle at top left, rgba(253, 192, 3, 0.16), transparent 34%),
+      #fffaf1;
+    color: #3d3630;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition:
+      border-color 0.16s ease,
+      transform 0.16s ease,
+      box-shadow 0.16s ease;
+  }
+
+  .uvr-info-card:hover {
+    border-color: rgba(117, 87, 0, 0.46);
+    box-shadow: 0 12px 28px rgba(117, 87, 0, 0.12);
+    transform: translateY(-1px);
+  }
+
+  .uvr-info-card strong {
+    display: block;
+    margin-bottom: 5px;
+    color: #3d3630;
+    font-size: 15px;
+  }
+
+  .uvr-info-card p {
+    margin: 0;
+    color: #6f655b;
+    font-size: 13px;
+    line-height: 1.65;
+  }
+
+  .uvr-info-card > span {
+    flex: 0 0 auto;
+    padding: 9px 14px;
+    border-radius: 999px;
+    background: #755700;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .source-grid {
+    display: grid;
+    grid-template-columns: minmax(280px, 0.9fr) minmax(340px, 1.1fr);
+    gap: 12px;
+  }
+
+  .source-panel {
+    padding: 16px;
+    border: 1px solid #e8e2d8;
+    border-radius: 14px;
+    background: #fff;
+  }
+
+  .source-panel-header {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    margin-bottom: 12px;
+  }
+
+  .source-panel-header > span {
+    flex: 0 0 auto;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #755700;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 800;
+  }
+
+  .source-panel-header strong {
+    display: block;
+    margin-bottom: 4px;
+    color: #3d3630;
+    font-size: 15px;
+  }
+
+  .source-panel-header p {
+    margin: 0;
+    color: #7a7268;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .source-hint {
+    margin-top: 0;
+  }
+
+  .uvr-flow-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .uvr-step-card {
+    display: flex;
+    gap: 12px;
+    padding: 14px 16px;
+    border: 1px solid #e8e2d8;
+    border-radius: 14px;
+    background: #fdfaf5;
+  }
+
+  .uvr-step-card span {
+    flex: 0 0 auto;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #755700;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 800;
+  }
+
+  .uvr-step-card strong {
+    display: block;
+    margin-bottom: 5px;
+    color: #3d3630;
+    font-size: 14px;
+  }
+
+  .uvr-step-card p {
+    margin: 0;
+    color: #5c5248;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .uvr-note {
+    padding: 14px 16px;
+    border-radius: 14px;
+    border: 1px solid rgba(159, 122, 0, 0.3);
+    background: #fff8e6;
+    color: #5c4400;
+  }
+
+  .uvr-note strong {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 14px;
+    color: #3d3630;
+  }
+
+  .uvr-note p {
+    margin: 0;
+    color: #5c5248;
+    font-size: 13px;
+    line-height: 1.7;
+  }
+
+  @media (max-width: 900px) {
+    .uvr-info-card {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .uvr-info-card > span {
+      align-self: flex-start;
+    }
+
+    .uvr-flow-grid,
+    .source-grid {
+      grid-template-columns: 1fr;
+    }
   }
 </style>

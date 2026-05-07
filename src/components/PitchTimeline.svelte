@@ -21,6 +21,7 @@
   // 反應式訂閱：自由模式 / 分析中狀態切換時重新調整 UI
   let isFreeMode = $state(false);
   let analyzing = $state<BackingPitchAnalyzing | null>(null);
+  let manualMidiOffset = $state(0);
   // 分析中經過秒數（每秒更新一次，給橫幅顯示「已 X 秒」）
   let analyzingSeconds = $state(0);
   let analyzingTimer: number | null = null;
@@ -59,10 +60,11 @@
   const WINDOW_SECONDS = 10;
   const HALF_WINDOW = WINDOW_SECONDS / 2;
 
-  // Y 軸固定範圍：C2-C6 完整 4 個八度，涵蓋所有合理人聲音域
-  // （不做 auto-fit 也不支援 zoom，使用者明確要求滿版固定顯示）
-  const VIEW_MIDI_MIN = 36; // C2 ≈ 65 Hz
-  const VIEW_MIDI_MAX = 84; // C6 ≈ 1047 Hz
+  // Y 軸自動聚焦：保留 3 個八度視窗，跟著可見的人聲/旋律置中。
+  const VIEW_MIDI_SPAN = 36;
+  const VIEW_MIDI_MIN_LIMIT = 24; // C1
+  const VIEW_MIDI_MAX_LIMIT = 96; // C7
+  const VIEW_SCROLL_STEP = 2;
 
   // 顏色
   const COLOR_BG = "#fafaf6";
@@ -78,9 +80,13 @@
     return 69 + 12 * Math.log2(freq / 440);
   }
 
-  function midiToY(midi: number, h: number): number {
-    const range = VIEW_MIDI_MAX - VIEW_MIDI_MIN;
-    const norm = (midi - VIEW_MIDI_MIN) / range;
+  function clamp(value: number, min: number, max: number): number {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function midiToY(midi: number, h: number, viewMin: number, viewMax: number): number {
+    const range = viewMax - viewMin;
+    const norm = (midi - viewMin) / range;
     return h - norm * h;
   }
 
@@ -89,6 +95,83 @@
     const offset = t - currentT;
     const centerX = w / 2;
     return centerX + (offset / WINDOW_SECONDS) * w;
+  }
+
+  function firstVisibleIndex(samples: PitchTrackSample[], startTime: number): number {
+    let lo = 0;
+    let hi = samples.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (samples[mid].timestamp < startTime) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    return lo;
+  }
+
+  function collectVisibleMidi(
+    samples: PitchTrackSample[],
+    tStart: number,
+    tEnd: number,
+    values: number[],
+  ) {
+    const startIndex = firstVisibleIndex(samples, tStart - 0.5);
+    for (let i = startIndex; i < samples.length; i++) {
+      const sample = samples[i];
+      if (sample.timestamp > tEnd + 0.5) break;
+      if (sample.freq <= 0) continue;
+      const midi = freqToMidi(sample.freq);
+      if (Number.isFinite(midi) && midi >= VIEW_MIDI_MIN_LIMIT && midi <= VIEW_MIDI_MAX_LIMIT) {
+        values.push(midi);
+      }
+    }
+  }
+
+  function median(values: number[]): number {
+    if (values.length === 0) return 60;
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 0
+      ? (sorted[mid - 1] + sorted[mid]) / 2
+      : sorted[mid];
+  }
+
+  function computeViewRange(tStart: number, tEnd: number): { min: number; max: number } {
+    const values: number[] = [];
+    const backingTrack = get(backingPitchTrack);
+    if (backingTrack && !isFreeMode) {
+      collectVisibleMidi(backingTrack.samples, tStart, tEnd, values);
+    }
+    collectVisibleMidi(get(liveVocalSamples), tStart, tEnd, values);
+
+    const cur = get(currentPitch);
+    if (cur?.freq) {
+      values.push(freqToMidi(cur.freq));
+    }
+
+    const center = clamp(
+      median(values),
+      VIEW_MIDI_MIN_LIMIT + VIEW_MIDI_SPAN / 2,
+      VIEW_MIDI_MAX_LIMIT - VIEW_MIDI_SPAN / 2,
+    );
+    const viewMin = clamp(
+      center - VIEW_MIDI_SPAN / 2 + manualMidiOffset,
+      VIEW_MIDI_MIN_LIMIT,
+      VIEW_MIDI_MAX_LIMIT - VIEW_MIDI_SPAN,
+    );
+    return { min: viewMin, max: viewMin + VIEW_MIDI_SPAN };
+  }
+
+  function shiftView(deltaMidi: number) {
+    manualMidiOffset = clamp(manualMidiOffset + deltaMidi, -36, 36);
+  }
+
+  function handleWheel(event: WheelEvent) {
+    if (Math.abs(event.deltaY) < Math.abs(event.deltaX)) return;
+    event.preventDefault();
+    shiftView(event.deltaY > 0 ? -VIEW_SCROLL_STEP : VIEW_SCROLL_STEP);
   }
 
   // ── 繪製 ──
@@ -123,19 +206,20 @@
     const currentT = get(elapsed);
     const tStart = currentT - HALF_WINDOW;
     const tEnd = currentT + HALF_WINDOW;
+    const viewRange = computeViewRange(tStart, tEnd);
 
-    // 八度線（C 音標籤）：在當前固定 view 範圍內畫出每個 C
+    // 八度線（C 音標籤）：在當前聚焦 view 範圍內畫出每個 C
     ctx.strokeStyle = COLOR_OCTAVE_LINE;
     ctx.lineWidth = 1;
     ctx.font = "10px Consolas, monospace";
     ctx.fillStyle = COLOR_LABEL;
     ctx.textBaseline = "middle";
-    const octaveLo = Math.floor(VIEW_MIDI_MIN / 12) - 1;
-    const octaveHi = Math.ceil(VIEW_MIDI_MAX / 12);
+    const octaveLo = Math.floor(viewRange.min / 12) - 1;
+    const octaveHi = Math.ceil(viewRange.max / 12);
     for (let octave = octaveLo; octave <= octaveHi; octave++) {
       const midi = (octave + 1) * 12; // MIDI for C{octave}
-      if (midi < VIEW_MIDI_MIN || midi > VIEW_MIDI_MAX) continue;
-      const y = midiToY(midi, h);
+      if (midi < viewRange.min || midi > viewRange.max) continue;
+      const y = midiToY(midi, h, viewRange.min, viewRange.max);
       ctx.beginPath();
       ctx.moveTo(0, y);
       ctx.lineTo(w, y);
@@ -145,10 +229,10 @@
 
     // 半音格線（淡色）
     ctx.strokeStyle = COLOR_GRID;
-    const semiLo = Math.ceil(VIEW_MIDI_MIN);
-    const semiHi = Math.floor(VIEW_MIDI_MAX);
+    const semiLo = Math.ceil(viewRange.min);
+    const semiHi = Math.floor(viewRange.max);
     for (let midi = semiLo; midi <= semiHi; midi++) {
-      const y = midiToY(midi, h);
+      const y = midiToY(midi, h, viewRange.min, viewRange.max);
       ctx.beginPath();
       ctx.moveTo(28, y);
       ctx.lineTo(w, y);
@@ -163,7 +247,7 @@
       ctx.lineWidth = 3;
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
-      drawSegmentedLine(ctx, backingTrack.samples, currentT, w, h, tStart, tEnd);
+      drawSegmentedLine(ctx, backingTrack.samples, currentT, w, h, tStart, tEnd, viewRange.min, viewRange.max);
     }
 
     // ── 即時人聲（棕金線）──
@@ -175,7 +259,7 @@
       ctx.lineJoin = "round";
       ctx.shadowColor = "rgba(253, 192, 3, 0.4)";
       ctx.shadowBlur = 6;
-      drawSegmentedLine(ctx, vocalSamples, currentT, w, h, tStart, tEnd);
+      drawSegmentedLine(ctx, vocalSamples, currentT, w, h, tStart, tEnd, viewRange.min, viewRange.max);
       ctx.shadowBlur = 0;
     }
 
@@ -220,6 +304,8 @@
     h: number,
     tStart: number,
     tEnd: number,
+    viewMin: number,
+    viewMax: number,
   ) {
     // Step 1: 把可見且在範圍內的點分組（time gap > 0.5s 或 midi 出範圍時斷組）
     const segments: Array<Array<{ x: number; y: number }>> = [];
@@ -253,7 +339,7 @@
       if (s.timestamp > tEnd + 0.5) break;
 
       const midi = freqToMidi(s.freq);
-      if (midi < VIEW_MIDI_MIN || midi > VIEW_MIDI_MAX) {
+      if (midi < viewMin || midi > viewMax) {
         flush();
         prevT = null;
         prevMidi = null;
@@ -271,7 +357,7 @@
       }
 
       const x = timeToX(s.timestamp, currentT, w);
-      const y = midiToY(midi, h);
+      const y = midiToY(midi, h, viewMin, viewMax);
       current.push({ x, y });
       prevT = s.timestamp;
       prevMidi = midi;
@@ -325,6 +411,7 @@
 <div
   class="pitch-timeline"
   bind:this={containerEl}
+  onwheel={handleWheel}
 >
   <canvas bind:this={canvasEl}></canvas>
 
@@ -340,6 +427,33 @@
       <span class="legend-line vocal"></span>
       {$t("pitchTimeline.legend.yourPitch")}
     </span>
+  </div>
+
+  <div class="view-controls" aria-label="Pitch range controls">
+    <button
+      type="button"
+      title={$t("pitchTimeline.view.up")}
+      aria-label={$t("pitchTimeline.view.up")}
+      onclick={() => shiftView(VIEW_SCROLL_STEP)}
+    >
+      ↑
+    </button>
+    <button
+      type="button"
+      title={$t("pitchTimeline.view.auto")}
+      aria-label={$t("pitchTimeline.view.auto")}
+      onclick={() => (manualMidiOffset = 0)}
+    >
+      ◎
+    </button>
+    <button
+      type="button"
+      title={$t("pitchTimeline.view.down")}
+      aria-label={$t("pitchTimeline.view.down")}
+      onclick={() => shiftView(-VIEW_SCROLL_STEP)}
+    >
+      ↓
+    </button>
   </div>
 
   <!-- 分析中橫幅（優先顯示）-->
@@ -411,6 +525,33 @@
   .legend-line.vocal {
     background: #fdc003;
     box-shadow: 0 0 4px rgba(253, 192, 3, 0.5);
+  }
+
+  .view-controls {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .view-controls button {
+    width: 28px;
+    height: 28px;
+    border: 1px solid rgba(139, 105, 0, 0.18);
+    border-radius: 999px;
+    background: rgba(255, 252, 244, 0.86);
+    color: #8b6900;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 6px 16px rgba(62, 54, 45, 0.08);
+  }
+
+  .view-controls button:hover {
+    background: #fff8df;
+    border-color: rgba(139, 105, 0, 0.35);
   }
 
   .free-mode-banner {

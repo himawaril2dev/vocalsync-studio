@@ -35,7 +35,6 @@ pub fn run() {
             app.manage(commands::download_commands::DownloadRunFlag(
                 std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             ));
-
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -72,6 +71,7 @@ pub fn run() {
             commands::settings_commands::load_settings,
             commands::settings_commands::update_calibrated_latency,
             commands::settings_commands::update_pitch_engine,
+            commands::settings_commands::update_show_startup_guide,
             commands::melody_commands::auto_detect_melody_source,
             commands::melody_commands::load_melody_from_path,
             commands::melody_commands::load_vocals_and_extract_melody,

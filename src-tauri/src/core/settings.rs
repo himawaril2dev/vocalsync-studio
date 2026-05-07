@@ -21,10 +21,16 @@ pub struct AppSettings {
     /// 音高偵測引擎偏好："auto" | "crepe" | "yin"
     #[serde(default = "default_pitch_engine")]
     pub pitch_engine: String,
+    #[serde(default = "default_show_startup_guide")]
+    pub show_startup_guide: bool,
 }
 
 fn default_pitch_engine() -> String {
     "auto".to_string()
+}
+
+fn default_show_startup_guide() -> bool {
+    true
 }
 
 impl Default for AppSettings {
@@ -47,6 +53,7 @@ impl Default for AppSettings {
             calibrated_latency_ms: None,
             manual_offset_ms: 0,
             pitch_engine: default_pitch_engine(),
+            show_startup_guide: default_show_startup_guide(),
         }
     }
 }
