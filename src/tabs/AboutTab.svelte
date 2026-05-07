@@ -5,7 +5,7 @@
   import GuideContent from "../components/GuideContent.svelte";
   import UvrGuideModal from "../components/UvrGuideModal.svelte";
 
-  const VERSION = "0.2.17";
+  const VERSION = "0.2.18";
   const KOFI_URL = "https://ko-fi.com/himawari168";
   const GITHUB_URL = "https://github.com/himawaril2dev/vocalsync-studio";
   const ISSUES_URL = "https://github.com/himawaril2dev/vocalsync-studio/issues";
