@@ -75,6 +75,16 @@ function escapeText(s) {
   return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 }
 
+function safeHref(href) {
+  const value = String(href ?? "").trim();
+  if (!value) return "";
+  if (value.startsWith("#")) return value;
+  if (/^(?:https?:|mailto:)/i.test(value)) return value;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return "";
+  if (value.startsWith("//")) return "";
+  return value;
+}
+
 /**
  * Render markdown → { html, toc }.
  *   - Custom heading renderer assigns GitHub-style IDs and records h2/h3 for the sidebar TOC.
@@ -106,10 +116,23 @@ function render(md) {
     if (href === "USER_GUIDE.md") mapped = "user-guide-zh.html";
     else if (href === "USER_GUIDE.en.md") mapped = "user-guide-en.html";
     else if (href === "USER_GUIDE.ja.md") mapped = "user-guide-ja.html";
+    const safeMapped = safeHref(mapped);
+    if (!safeMapped) return text;
     const titleAttr = title ? ` title="${escapeAttr(title)}"` : "";
-    const isExternal = /^https?:/i.test(mapped);
+    const isExternal = /^https?:/i.test(safeMapped);
     const extAttr = isExternal ? ' target="_blank" rel="noopener noreferrer"' : "";
-    return `<a href="${escapeAttr(mapped)}"${titleAttr}${extAttr}>${text}</a>`;
+    return `<a href="${escapeAttr(safeMapped)}"${titleAttr}${extAttr}>${text}</a>`;
+  };
+
+  renderer.image = function image({ href, title, text }) {
+    const safeMapped = safeHref(href);
+    if (!safeMapped) return "";
+    const titleAttr = title ? ` title="${escapeAttr(title)}"` : "";
+    return `<img src="${escapeAttr(safeMapped)}" alt="${escapeAttr(text ?? "")}"${titleAttr}>`;
+  };
+
+  renderer.html = function html() {
+    return "";
   };
 
   marked.use({ renderer, gfm: true, breaks: false });

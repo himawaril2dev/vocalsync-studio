@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { save } from "@tauri-apps/plugin-dialog";
   import { lyricsLines, lyricsFileName } from "../stores/lyrics";
   import { elapsed } from "../stores/transport";
   import type { LyricLine } from "../stores/lyrics";
@@ -157,14 +156,12 @@
       : "lyrics";
 
     try {
-      const filePath = await save({
-        title: tSync("lyricsSync.export.dialog.title"),
-        filters: [{ name: "LRC", extensions: ["lrc"] }],
-        defaultPath: `${baseName}_synced.lrc`,
+      const filePath = await invoke<string | null>("save_lyrics_as_lrc", {
+        lines: result,
+        defaultFileName: `${baseName}_synced.lrc`,
       });
       if (!filePath) return;
 
-      await invoke("save_lyrics_as_lrc", { lines: result, outputPath: filePath });
       saveMsg = tSync("lyricsSync.status.saved", { path: filePath });
     } catch (e) {
       saveMsg = tSync("lyricsSync.status.saveFailed", { error: String(e) });

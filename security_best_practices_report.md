@@ -1,130 +1,129 @@
-# VocalSync Studio 安全性檢查報告
+# VocalSync Studio Security Review
 
-檢查日期：2026-04-28  
-專案版本：0.2.14
-範圍：`src/`、`src-tauri/`、`scripts/`、Tauri capability、npm/Rust 依賴
+Review date: 2026-05-08
+Reviewed version: v0.2.19
+Scope: `src/`, `src-tauri/`, `scripts/`, Tauri config, npm/Rust dependency advisories.
 
-## 結論
+## Executive Summary
 
-本輪未發現 P0/P1 等級的使用者安全問題。外部工具信任、yt-dlp / FFmpeg 下載驗證、YouTube URL allowlist、Tauri 權限與前端 XSS sink 目前都有明確防線。
+No Critical or High severity issue was found in this pass.
 
-2026-04-28 追加修復：4 個 P2/P3 findings 已處理。下載任務已加入後端單工鎖，playlist/channel 已加入使用者確認與後端項目上限，Tauri asset protocol 已收窄，未使用的完整設定寫入 command 已移除。HTTP YouTube URL 會在後端自動升級成 HTTPS 後再交給 yt-dlp。
+The app is in a good baseline state for a local Tauri tool: Dependabot open alerts are 0, `npm audit` reports 0 vulnerabilities, `cargo audit` reports 0 vulnerabilities, CSP is present, asset protocol scope is empty, no shell plugin / fs plugin / http plugin is exposed, tool downloads are pinned by SHA-256, and yt-dlp / FFmpeg subprocess calls use argument arrays instead of shell interpolation.
+
+Patch status: `save_lyrics_as_lrc` now opens the save dialog in the backend, enforces `.lrc`, and writes only the selected dialog path. The offline docs builder now strips raw Markdown HTML and rejects unsafe link/image URL schemes. CSP inline styles are recorded as an accepted exception for the current Svelte UI.
+
+The remaining security work is defense-in-depth against a compromised renderer in the broader export/download flows. Several backend commands still validate paths only as absolute, non-traversal paths, so an XSS or renderer compromise could invoke those file-write operations against arbitrary user-writable locations. I found no current DOM XSS sink that makes this directly exploitable.
 
 ## Findings
 
-### P2：播放清單與頻道下載缺少後端數量上限（已修復）
+### S1 - Medium - File-write commands are not bound to a dialog-granted path
 
-位置：
-- `src-tauri/src/core/ytdlp_engine.rs:1412`
-- `src-tauri/src/core/ytdlp_engine.rs:1477`
-- `src/tabs/DownloadTab.svelte:134`
+Status:
+Fixed for `save_lyrics_as_lrc` in this patch. Broader backend path-grant hardening remains for audio export and download output directories.
 
-證據：
-- `detect_url_type` 會辨識 playlist / channel。
-- `build_args` 對非單支影片只加上 `--ignore-errors`。
-- 前端開始下載時直接呼叫 `start_download`，沒有 metadata preview、項目數量上限或二次確認。
+Location:
+- `src-tauri/src/commands/lyrics_commands.rs:30`
+- `src-tauri/src/commands/lyrics_commands.rs:56`
+- `src-tauri/src/commands/lyrics_commands.rs:88`
+- `src-tauri/src/commands/audio_commands.rs:175`
+- `src-tauri/src/commands/audio_commands.rs:182`
+- `src-tauri/src/core/ytdlp_engine.rs:1505`
+- `src-tauri/src/core/ytdlp_engine.rs:1507`
+- `src-tauri/src/security.rs:22`
+- `src-tauri/src/security.rs:31`
 
-影響：使用者貼到頻道或大型播放清單時，可能長時間下載、大量占用磁碟與網路。若 renderer 未來出現 XSS，也會放大成資源消耗攻擊面。
+Evidence:
+- Before this patch, `save_lyrics_as_lrc(lines, output_path)` accepted `output_path` from the renderer and wrote it directly after `validate_path_safe`.
+- After this patch, `save_lyrics_as_lrc` opens the Tauri save dialog in the backend, converts the dialog result into a path, canonicalizes the parent directory, enforces `.lrc`, and writes only that selected path.
+- `export_audio(dir, prefix, ...)` accepts `dir` from the renderer and writes exported WAV files there.
+- `run_download` accepts `req.output_dir`, creates the directory, then passes it into the yt-dlp output template.
+- `validate_path_safe` checks empty/control chars, absolute path, `..`, and leading `-`; it does not verify that the remaining audio/download paths came from a save/open dialog or an allowlisted output root.
 
-建議修復：
-- 預設加入 `--playlist-end` 或 `--max-downloads`。
-- 對 playlist / channel 先做 metadata preview，顯示項目數與輸出位置後再確認。
-- UI 允許使用者設定最大下載數，後端也要 enforce。
+Impact:
+If the renderer is compromised, the remaining audio export and download output-directory commands could still be invoked against arbitrary user-writable locations. The clearest LRC write case is fixed in this patch.
 
-修復狀態：
-- 後端對 playlist/channel 加入 `--playlist-end 25`。
-- 前端在 playlist/channel 下載前顯示確認訊息。
-- `ToolStatus` 回傳 `batch_download_limit`，避免 UI 文案與後端限制漂移。
+Fix:
+- `save_lyrics_as_lrc` now routes save selection through Rust, uses the Tauri dialog backend grant, canonicalizes the parent directory, and enforces `.lrc` output.
+- Add backend-side path grants for the remaining save/open results. A simple approach is to route save/open dialogs through Rust commands, store granted canonical paths in app state, and require a matching grant before write/read commands execute.
+- For `export_audio`, require a granted directory and keep generated filenames backend-controlled.
+- For `start_download`, require a granted output directory and keep the batch limit in backend enforcement.
 
-### P2：下載任務缺少後端單工鎖（已修復）
+False positive notes:
+The current frontend uses Tauri dialog flows before invoking these commands. This finding is about renderer-compromise containment, not normal user flow.
 
-位置：
-- `src-tauri/src/commands/download_commands.rs:68`
-- `src-tauri/src/core/ytdlp_engine.rs:1487`
-- `src/stores/download.ts:74`
+### S2 - Low - Offline docs builder renders Markdown HTML without sanitization or URL scheme allowlist
 
-證據：
-- 前端用 `isDownloading` 控制按鈕狀態。
-- 後端 `start_download` 每次呼叫都會 `spawn_blocking` 啟動一個 yt-dlp subprocess。
-- `DownloadCancelFlag` 是全域旗標，沒有 per-task id 或 running mutex。
+Status:
+Fixed in this patch.
 
-影響：IPC 重送、未來新增第二個入口、或 renderer compromise 時，可同時啟動多個下載。結果會造成 CPU / 網路 / 磁碟壓力，取消按鈕也會變成全域取消，狀態容易互相覆蓋。
+Location:
+- `scripts/build-user-guide.mjs:78`
+- `scripts/build-user-guide.mjs:119`
+- `scripts/build-user-guide.mjs:127`
+- `scripts/build-user-guide.mjs:134`
 
-建議修復：
-- 後端新增 `DownloadRunLock` 或 `AtomicBool`。
-- `start_download` 進入時用 `compare_exchange(false, true)`，已有任務時直接回傳「下載已在進行中」。
-- 任務完成、錯誤或取消時用 guard 自動釋放。
+Evidence:
+- The script still uses `marked.parse(md)` and writes the result into static HTML.
+- `safeHref` now rejects empty values, protocol-relative URLs, and schemes outside `http:`, `https:`, and `mailto:`.
+- Custom link and image renderers now emit URLs only after `safeHref`.
+- The custom HTML renderer now returns an empty string, stripping raw Markdown HTML.
 
-修復狀態：
-- 新增 `DownloadRunFlag` 與 `DownloadRunGuard`。
-- `start_download` 在後端以 `AtomicBool::compare_exchange` 保證同時間只跑一個 yt-dlp 任務。
-- 已有任務時直接回傳錯誤，不會重設目前任務的取消旗標。
+Impact:
+Current docs are repo-controlled, and this patch adds containment before future generated or external Markdown can produce script-capable HTML or `javascript:` links.
 
-### P3：assetProtocol scope 偏寬（已修復）
+Fix:
+- The builder now strips raw Markdown HTML.
+- The builder now accepts only `http:`, `https:`, `mailto:`, relative paths, and `#anchors` for links/images.
+- Keep docs input repo-controlled, or add a sanitizer such as DOMPurify with a strict allowlist if future docs need a safe HTML subset.
 
-位置：
-- `src-tauri/tauri.conf.json:48`
-- `src-tauri/tauri.conf.json:50`
+False positive notes:
+This is a build-time/docs pipeline issue, not a runtime app issue.
 
-證據：
-- 修復前 asset protocol 允許 `$DOWNLOAD/**`、`$DESKTOP/**`、`$DOCUMENT/**`、`$VIDEO/**`、`$AUDIO/**`、`$APPDATA/**`、`$APPLOCALDATA/**`、`$TEMP/**`。
-- 目前前端只在 `src/tabs/SetupTab.svelte:253` 對載入的影片路徑呼叫 `convertFileSrc`。
+### S3 - Low - CSP still allows inline styles
 
-影響：目前沒有看到前端 XSS sink，所以實際風險低。未來若出現 renderer compromise，較寬的 asset scope 會增加本機檔案被 WebView 讀取或展示的範圍。
+Status:
+Accepted exception documented in this report.
 
-建議修復：
-- 移除目前不需要的 `$APPDATA/**`、`$APPLOCALDATA/**`、`$TEMP/**`。
-- 優先改成只服務使用者選過的媒體檔案，或建立後端 allowlist token。
+Location:
+- `src-tauri/tauri.conf.json:40`
 
-修復狀態：
-- 已移除 `$APPDATA/**`、`$APPLOCALDATA/**`、`$TEMP/**`。
-- 保留常用媒體來源：Downloads、Desktop、Documents、Video、Audio。
+Evidence:
+- CSP includes `style-src 'self' 'unsafe-inline'`.
 
-### P3：未使用的 `save_settings` command 增加攻擊面（已修復）
+Impact:
+The app currently has no direct DOM XSS sink in `src/`, and the app does not load remote UI. Inline styles still reduce CSP's containment value if a future markup injection bug appears.
 
-位置：
-- `src-tauri/src/commands/settings_commands.rs:17`
-- `src-tauri/src/lib.rs:66`
+Fix:
+- Keep this as an explicit accepted exception while Svelte components use inline dynamic styles.
+- Longer term, move frequently changing visual state into classes or controlled CSS variables generated from backend/frontend numeric clamps, then tighten CSP when practical.
 
-證據：
-- 前端沒有呼叫 `save_settings`。
-- 修復前後端仍將 `save_settings` 暴露在 invoke handler。
-- 這個 command 接收完整 `AppSettings` 並直接覆蓋設定檔。
+False positive notes:
+This is a hardening item. It is not blocking the current release.
 
-影響：目前下游重要路徑仍有額外驗證，實際風險低。保留未使用的完整設定寫入入口會增加 renderer compromise 後可持久化的狀態範圍。
+## Positive Controls Confirmed
 
-建議修復：
-- 從 invoke handler 移除 `save_settings`。
-- 保留目前較窄的 `update_pitch_engine`、`update_calibrated_latency`。
-- 若未來要恢復完整設定儲存，先做欄位 allowlist、範圍 clamp 與路徑驗證。
+- `gh api /dependabot/alerts?state=open`: 0 open alerts.
+- `npm.cmd audit --json`: 0 vulnerabilities.
+- `cargo audit --json`: 0 vulnerabilities.
+- `cargo audit` informational warnings remain for transitive unmaintained/unsound crates, mainly GTK3 Linux stack and transitive crates; no RustSec vulnerability is currently active.
+- Tauri capabilities expose dialog/core APIs only; shell, fs, and http plugins are not enabled.
+- `assetProtocol.scope` is empty in `src-tauri/tauri.conf.json`.
+- Frontend scan found no `innerHTML`, `outerHTML`, `insertAdjacentHTML`, Svelte `{@html}`, `document.write`, `eval`, or `new Function` usage under `src/`.
+- External links using `target="_blank"` include `rel="noopener"` or `rel="noopener noreferrer"`.
+- Managed yt-dlp and FFmpeg downloads use fixed URLs, byte limits, temporary files, and SHA-256 verification before activation.
+- Local yt-dlp / FFmpeg trust flow hashes the selected binary and rejects a changed file before trust is saved.
+- Subprocess execution uses `Command::new(...).args(...)`; no app runtime shell interpolation was found.
+- YouTube URL handling restricts scheme/host and normalizes `http` YouTube URLs to `https`.
+- Batch playlist/channel downloads are limited to 25 items in backend args.
 
-修復狀態：
-- 已從 Tauri invoke handler 移除 `save_settings`。
-- 已刪除後端完整設定覆蓋 command。
+## Verification Commands
 
-## 已確認的安全控制
+- `gh api --method GET /repos/himawaril2dev/vocalsync-studio/dependabot/alerts -f state=open --jq 'length'`
+- `npm.cmd audit --json`
+- `cargo audit --json`
+- `rg` scans for DOM XSS sinks, storage, external links, subprocess usage, file I/O, and Tauri commands.
 
-- 前端未找到 `innerHTML`、`outerHTML`、`insertAdjacentHTML`、`document.write`、`eval`、`new Function`、Svelte `{@html}`。
-- 外部連結使用 `target="_blank"` 時都有 `rel="noopener"`。
-- Tauri capability 沒有開 shell plugin、fs plugin、http plugin。
-- CSP 包含 `object-src 'none'`、`base-uri 'self'`、`frame-ancestors 'none'`、`form-action 'self'`。
-- yt-dlp / FFmpeg managed download 使用固定 URL、SHA-256 驗證與下載大小上限。
-- 本機 yt-dlp / FFmpeg 偵測階段只計算 SHA-256，不直接執行；信任後會綁定路徑與 hash。
-- YouTube URL 後端驗證包含長度限制、NUL/空白字元阻擋、scheme 限制與 host allowlist。
-- `http://` YouTube URL 會 normalize 成 `https://`，避免下載流程使用明文 HTTP。
-- subprocess 呼叫使用 `Command::new(...).args(...)`，沒有 shell 字串拼接執行下載命令。
+## Recommended Priority
 
-## 驗證結果
-
-- `npm run build`：通過。
-- `cargo test --quiet`：170 tests 通過。
-- `git diff --check`：通過。
-- `npm audit --omit=dev`：0 vulnerabilities。
-- `cargo audit`：無直接 vulnerability；有 Tauri/Linux GTK 相關 transitive unmaintained warnings，以及 `glib`、`rand` transitive unsound warnings。Windows portable release 主要風險較低，建議持續追 Tauri / wry 更新。
-- `cargo clippy --quiet -- -D warnings`：未通過，失敗點集中在既有 `audio_engine.rs`、`crepe_engine.rs`、`melody_extractor.rs`、`pyin_engine.rs`、`settings.rs`、`wsola.rs` warning，與本次安全修補檔案無關。
-
-## Release 判定
-
-狀態：READY
-
-0.2.14 的外部工具安全修復仍有效。本報告列出的 4 個 findings 已完成修復，前端 build 與 Rust tests 已通過。
+1. Add backend path grants for the remaining audio export and download output-directory commands.
+2. Track CSP inline-style cleanup as a low-priority hardening task.
