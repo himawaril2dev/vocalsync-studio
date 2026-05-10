@@ -8,7 +8,7 @@
 //! - **yt-dlp**：使用 SHA-256 驗證通過的 managed binary 或使用者信任的本機檔案
 //! - **FFmpeg**：使用 install manifest 記錄 hash 的 managed binary 或使用者信任的本機檔案
 
-use crate::{error::AppError, security};
+use crate::{core::portable_paths, error::AppError, security};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -59,7 +59,6 @@ const FFMPEG_DOWNLOAD_URL: &str =
 const FFMPEG_ZIP_SHA256: &str = "e1872e1eab6a280da863f6336fa719ed13368dc294cf8010c81d3f63144c45b7";
 
 const TOOL_MANIFEST_NAME: &str = "tool-manifest.json";
-const SHARED_TOOL_DIR_NAME: &str = "com.vocalsync.tools";
 const MAX_YTDLP_DOWNLOAD_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_BATCH_DOWNLOAD_ITEMS: u32 = 25;
 
@@ -184,50 +183,16 @@ pub struct DownloadRequest {
 
 /// 取得 app 內部的 bin 資料夾路徑（用於存放 yt-dlp 執行檔）。
 ///
-/// 位置：`%APPDATA%/com.vocalsync.studio/bin/`（Windows）
-///       `~/.local/share/com.vocalsync.studio/bin/`（Linux）
-///       `~/Library/Application Support/com.vocalsync.studio/bin/`（macOS）
+/// Location: portable root, beside the executable.
 pub fn get_app_bin_dir() -> Option<PathBuf> {
-    dirs_next::data_dir().map(|d| d.join("com.vocalsync.studio").join("bin"))
+    Some(portable_paths::root_dir())
 }
 
 fn app_tool_manifest_path() -> Option<PathBuf> {
     get_app_bin_dir().map(|dir| dir.join(TOOL_MANIFEST_NAME))
 }
 
-fn current_exe_dir() -> Option<PathBuf> {
-    std::env::current_exe()
-        .ok()?
-        .parent()
-        .map(Path::to_path_buf)
-}
-
-fn dir_is_writable(dir: &Path) -> bool {
-    if std::fs::create_dir_all(dir).is_err() {
-        return false;
-    }
-
-    let probe = dir.join(format!(".vocalsync-write-test-{}", std::process::id()));
-    match std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&probe)
-    {
-        Ok(_) => {
-            let _ = std::fs::remove_file(probe);
-            true
-        }
-        Err(_) => false,
-    }
-}
-
 fn get_preferred_tool_dir() -> Option<PathBuf> {
-    if let Some(dir) = current_exe_dir() {
-        if dir_is_writable(&dir) {
-            return Some(dir);
-        }
-    }
-
     get_app_bin_dir()
 }
 
@@ -293,11 +258,11 @@ fn save_tool_manifest(manifest: &ToolManifest) -> Result<(), AppError> {
 }
 
 fn shared_tool_manifest_path() -> Option<PathBuf> {
-    dirs_next::data_dir().map(|dir| dir.join(SHARED_TOOL_DIR_NAME).join(TOOL_MANIFEST_NAME))
+    None
 }
 
 fn load_shared_tool_manifest() -> Option<ToolManifest> {
-    load_tool_manifest_from_path(&shared_tool_manifest_path()?)
+    None
 }
 
 fn save_shared_tool_manifest(manifest: &ToolManifest) -> Result<(), AppError> {
@@ -402,6 +367,51 @@ fn trusted_path_with_hash(path: PathBuf, expected_hash: &str, label: &str) -> Op
     }
 }
 
+fn canonical_path_inside_dir(path: &Path, dir: &Path) -> Option<PathBuf> {
+    let canonical_path = path.canonicalize().ok()?;
+    let canonical_dir = dir.canonicalize().ok()?;
+    canonical_path
+        .starts_with(canonical_dir)
+        .then_some(canonical_path)
+}
+
+fn manifest_path_inside_dir(path: Option<&str>, dir: &Path) -> Option<PathBuf> {
+    canonical_path_inside_dir(&PathBuf::from(path?), dir)
+}
+
+fn copy_verified_tool_to_portable(
+    source: &Path,
+    target: &Path,
+    expected_hash: &str,
+) -> Result<PathBuf, AppError> {
+    let source = source.canonicalize().map_err(AppError::Io)?;
+    if let Ok(target_canonical) = target.canonicalize() {
+        if target_canonical == source && verify_sha256(&target_canonical, expected_hash).is_ok() {
+            return Ok(target_canonical);
+        }
+        if verify_sha256(&target_canonical, expected_hash).is_ok() {
+            return Ok(target_canonical);
+        }
+    }
+
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(AppError::Io)?;
+    }
+    let tmp_path = target.with_extension(format!("tmp-{}", std::process::id()));
+    let mut tmp_guard = TempFileGuard::new(tmp_path.clone());
+    let _ = std::fs::remove_file(&tmp_path);
+    std::fs::copy(&source, &tmp_path).map_err(AppError::Io)?;
+    verify_sha256(&tmp_path, expected_hash)?;
+
+    #[cfg(windows)]
+    if target.exists() {
+        std::fs::remove_file(target).map_err(AppError::Io)?;
+    }
+    std::fs::rename(&tmp_path, target).map_err(AppError::Io)?;
+    tmp_guard.disarm();
+    target.canonicalize().map_err(AppError::Io)
+}
+
 fn manifest_ffmpeg_path<'a>(manifest: &'a ToolManifest, exe_name: &str) -> Option<&'a str> {
     match exe_name {
         "ffmpeg.exe" | "ffmpeg" => manifest.ffmpeg_path.as_deref(),
@@ -423,10 +433,8 @@ fn trusted_ffmpeg_path_from_manifest(
     base_dir: &Path,
     exe_name: &str,
 ) -> Option<PathBuf> {
-    let candidate = match manifest_ffmpeg_path(manifest, exe_name) {
-        Some(path) => PathBuf::from(path),
-        None => find_tool_in_dir(base_dir, exe_name)?,
-    };
+    let candidate = manifest_path_inside_dir(manifest_ffmpeg_path(manifest, exe_name), base_dir)
+        .or_else(|| find_tool_in_dir(base_dir, exe_name))?;
     let expected_hash = manifest_ffmpeg_hash(manifest, exe_name)?;
 
     trusted_path_with_hash(candidate, expected_hash, exe_name)
@@ -444,11 +452,8 @@ fn trusted_app_ffmpeg_path(exe_name: &str) -> Option<PathBuf> {
     trusted_ffmpeg_path_from_manifest(&manifest, &bin_dir, exe_name)
 }
 
-fn trusted_shared_ffmpeg_path(exe_name: &str) -> Option<PathBuf> {
-    let manifest_path = shared_tool_manifest_path()?;
-    let manifest = load_tool_manifest_from_path(&manifest_path)?;
-    let base_dir = manifest_path.parent()?;
-    trusted_ffmpeg_path_from_manifest(&manifest, base_dir, exe_name)
+fn trusted_shared_ffmpeg_path(_exe_name: &str) -> Option<PathBuf> {
+    None
 }
 
 fn trusted_portable_ffmpeg_path(exe_name: &str) -> Option<PathBuf> {
@@ -458,10 +463,8 @@ fn trusted_portable_ffmpeg_path(exe_name: &str) -> Option<PathBuf> {
 }
 
 fn trusted_ytdlp_path_from_manifest(manifest: &ToolManifest, base_dir: &Path) -> Option<PathBuf> {
-    let candidate = match manifest.ytdlp_path.as_deref() {
-        Some(path) => PathBuf::from(path),
-        None => find_tool_in_dir(base_dir, YTDLP_EXE_NAME)?,
-    };
+    let candidate = manifest_path_inside_dir(manifest.ytdlp_path.as_deref(), base_dir)
+        .or_else(|| find_tool_in_dir(base_dir, YTDLP_EXE_NAME))?;
     let expected_hash = manifest.ytdlp_sha256.as_deref()?;
 
     trusted_path_with_hash(candidate, expected_hash, "yt-dlp")
@@ -482,10 +485,7 @@ fn trusted_app_ytdlp_path() -> Option<PathBuf> {
 }
 
 fn trusted_shared_ytdlp_path() -> Option<PathBuf> {
-    let manifest_path = shared_tool_manifest_path()?;
-    let manifest = load_tool_manifest_from_path(&manifest_path)?;
-    let base_dir = manifest_path.parent()?;
-    trusted_ytdlp_path_from_manifest(&manifest, base_dir)
+    None
 }
 
 fn trusted_portable_ytdlp_path() -> Option<PathBuf> {
@@ -572,6 +572,23 @@ fn ytdlp_candidate_from_trust_request(
     Ok(refreshed)
 }
 
+fn import_ytdlp_candidate_to_portable(
+    candidate: LocalYtdlpCandidate,
+) -> Result<LocalYtdlpCandidate, AppError> {
+    let bin_dir = get_app_bin_dir()
+        .ok_or_else(|| AppError::Internal("Could not locate portable tool directory".into()))?;
+    let source = PathBuf::from(&candidate.ytdlp_path);
+    let target = bin_dir.join(YTDLP_EXE_NAME);
+    let imported_path = copy_verified_tool_to_portable(&source, &target, &candidate.ytdlp_sha256)?;
+    let imported = ytdlp_candidate_from_path(imported_path)?;
+    if imported.ytdlp_sha256 != candidate.ytdlp_sha256 {
+        return Err(AppError::Audio(
+            "yt-dlp changed during portable import".into(),
+        ));
+    }
+    Ok(imported)
+}
+
 pub fn detect_local_ytdlp_candidate() -> Result<Option<LocalYtdlpCandidate>, AppError> {
     let Some(path) = find_local_ytdlp_path() else {
         return Ok(None);
@@ -588,13 +605,14 @@ pub fn trust_local_ytdlp_candidate(
     candidate: LocalYtdlpCandidate,
 ) -> Result<LocalYtdlpCandidate, AppError> {
     let _tool_state_guard = acquire_tool_state_lock()?;
-    let trusted_candidate = ytdlp_candidate_from_trust_request(candidate)?;
+    let trusted_candidate =
+        import_ytdlp_candidate_to_portable(ytdlp_candidate_from_trust_request(candidate)?)?;
 
     let mut manifest = tool_manifest_path()
         .and_then(|path| load_tool_manifest_from_path(&path))
         .unwrap_or_default();
     manifest.ytdlp_sha256 = Some(trusted_candidate.ytdlp_sha256.clone());
-    manifest.ytdlp_path = Some(trusted_candidate.ytdlp_path.clone());
+    manifest.ytdlp_path = None;
     save_tool_manifest(&manifest)?;
     publish_shared_ytdlp(&trusted_candidate);
 
@@ -733,6 +751,33 @@ fn ffmpeg_candidate_from_trust_request(
     Ok(refreshed)
 }
 
+fn import_ffmpeg_candidate_to_portable(
+    candidate: LocalFfmpegCandidate,
+) -> Result<LocalFfmpegCandidate, AppError> {
+    let bin_dir = get_app_bin_dir()
+        .ok_or_else(|| AppError::Internal("Could not locate portable tool directory".into()))?;
+    let (ffmpeg_name, ffprobe_name) = ffmpeg_tool_names();
+    let ffmpeg_path = copy_verified_tool_to_portable(
+        &PathBuf::from(&candidate.ffmpeg_path),
+        &bin_dir.join(ffmpeg_name),
+        &candidate.ffmpeg_sha256,
+    )?;
+    let ffprobe_path = copy_verified_tool_to_portable(
+        &PathBuf::from(&candidate.ffprobe_path),
+        &bin_dir.join(ffprobe_name),
+        &candidate.ffprobe_sha256,
+    )?;
+    let imported = candidate_from_pair(ffmpeg_path, ffprobe_path)?;
+    if imported.ffmpeg_sha256 != candidate.ffmpeg_sha256
+        || imported.ffprobe_sha256 != candidate.ffprobe_sha256
+    {
+        return Err(AppError::Audio(
+            "FFmpeg changed during portable import".into(),
+        ));
+    }
+    Ok(imported)
+}
+
 pub fn detect_local_ffmpeg_candidate() -> Result<Option<LocalFfmpegCandidate>, AppError> {
     let Some((ffmpeg_path, ffprobe_path)) = find_local_ffmpeg_pair() else {
         return Ok(None);
@@ -749,15 +794,16 @@ pub fn trust_local_ffmpeg_candidate(
     candidate: LocalFfmpegCandidate,
 ) -> Result<LocalFfmpegCandidate, AppError> {
     let _tool_state_guard = acquire_tool_state_lock()?;
-    let trusted_candidate = ffmpeg_candidate_from_trust_request(candidate)?;
+    let trusted_candidate =
+        import_ffmpeg_candidate_to_portable(ffmpeg_candidate_from_trust_request(candidate)?)?;
 
     let mut manifest = tool_manifest_path()
         .and_then(|path| load_tool_manifest_from_path(&path))
         .unwrap_or_default();
     manifest.ffmpeg_sha256 = Some(trusted_candidate.ffmpeg_sha256.clone());
     manifest.ffprobe_sha256 = Some(trusted_candidate.ffprobe_sha256.clone());
-    manifest.ffmpeg_path = Some(trusted_candidate.ffmpeg_path.clone());
-    manifest.ffprobe_path = Some(trusted_candidate.ffprobe_path.clone());
+    manifest.ffmpeg_path = None;
+    manifest.ffprobe_path = None;
     save_tool_manifest(&manifest)?;
     publish_shared_ffmpeg(&trusted_candidate);
 

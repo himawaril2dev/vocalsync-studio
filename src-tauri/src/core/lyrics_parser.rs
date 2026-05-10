@@ -40,7 +40,8 @@ pub fn load_lyrics(path: &str) -> Result<Vec<LyricLine>, AppError> {
     let mut lines = match ext.as_str() {
         "srt" => parse_srt(&content),
         "vtt" => parse_vtt(&content),
-        _ => parse_lrc(&content), // 預設當 LRC 處理（lrc / txt / 其他）
+        "txt" => parse_plain_text(&content),
+        _ => parse_lrc(&content), // 預設當 LRC 處理（lrc / 其他）
     };
 
     if lines.is_empty() {
@@ -68,6 +69,11 @@ pub fn parse_srt_text(content: &str) -> Vec<LyricLine> {
     parse_srt(content)
 }
 
+/// 解析純文字歌詞：每個非空白行都是一行，時間戳留給自動對齊或手動同步補上。
+pub fn parse_plain_text_lyrics(content: &str) -> Vec<LyricLine> {
+    parse_plain_text(content)
+}
+
 // ── 字元編碼處理 ──────────────────────────────────────────────────
 
 fn decode_text(bytes: &[u8]) -> String {
@@ -85,6 +91,23 @@ fn decode_text(bytes: &[u8]) -> String {
 
     // Fallback：用 lossy 模式（無法解碼的字元變成 �）
     String::from_utf8_lossy(stripped).to_string()
+}
+
+// ── 純文字歌詞解析 ────────────────────────────────────────────────
+
+fn parse_plain_text(content: &str) -> Vec<LyricLine> {
+    content
+        .replace("\r\n", "\n")
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|text| LyricLine {
+            start_ms: 0,
+            end_ms: 0,
+            text: text.to_string(),
+            translation: None,
+        })
+        .collect()
 }
 
 // ── LRC 解析 ──────────────────────────────────────────────────────
@@ -455,6 +478,11 @@ fn detect_and_split_bilingual(lines: &mut Vec<LyricLine>) {
 
     // ── 策略 2：相同時間戳行對 ──
     // 找出 start_ms 完全相同的連續行對，第二行視為翻譯
+    let has_timed_lines = lines.iter().any(|l| l.end_ms > l.start_ms);
+    if !has_timed_lines {
+        return;
+    }
+
     let mut i = 0;
     let mut merged: Vec<LyricLine> = Vec::with_capacity(lines.len());
 
@@ -497,6 +525,103 @@ pub fn export_lrc(lines: &[LyricLine]) -> String {
         output.push_str(&format!("[{:02}:{:02}.{:02}]{}\n", min, sec, ms, text));
     }
     output
+}
+
+/// 將歌詞匯出為 SRT 格式字串。
+pub fn export_srt(lines: &[LyricLine]) -> String {
+    let mut output = String::new();
+    for (i, line) in lines.iter().enumerate() {
+        let start = line.start_ms;
+        let end = effective_subtitle_end_ms(lines, i);
+        let text = subtitle_text(line, "\n");
+        output.push_str(&format!(
+            "{}\n{} --> {}\n{}\n\n",
+            i + 1,
+            format_srt_time(start),
+            format_srt_time(end),
+            text
+        ));
+    }
+    output
+}
+
+/// 將歌詞匯出為 ASS 格式字串。
+pub fn export_ass(lines: &[LyricLine]) -> String {
+    let mut output = String::new();
+    output.push_str("[Script Info]\n");
+    output.push_str("ScriptType: v4.00+\n");
+    output.push_str("WrapStyle: 2\n");
+    output.push_str("ScaledBorderAndShadow: yes\n");
+    output.push_str("YCbCr Matrix: TV.709\n\n");
+    output.push_str("[V4+ Styles]\n");
+    output.push_str("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n");
+    output.push_str("Style: Default,Noto Sans CJK TC,48,&H00FFFFFF,&H000000FF,&H80000000,&H80000000,0,0,0,0,100,100,0,0,1,2,0,2,80,80,48,1\n\n");
+    output.push_str("[Events]\n");
+    output.push_str(
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n",
+    );
+
+    for (i, line) in lines.iter().enumerate() {
+        let start = line.start_ms;
+        let end = effective_subtitle_end_ms(lines, i);
+        let text = escape_ass_text(&subtitle_text(line, "\\N"));
+        output.push_str(&format!(
+            "Dialogue: 0,{},{},Default,,0,0,0,,{}\n",
+            format_ass_time(start),
+            format_ass_time(end),
+            text
+        ));
+    }
+
+    output
+}
+
+fn subtitle_text(line: &LyricLine, separator: &str) -> String {
+    match line.translation.as_deref() {
+        Some(translation) if !translation.trim().is_empty() => {
+            format!("{}{}{}", line.text, separator, translation.trim())
+        }
+        _ => line.text.clone(),
+    }
+}
+
+fn effective_subtitle_end_ms(lines: &[LyricLine], idx: usize) -> u64 {
+    let line = &lines[idx];
+    if line.end_ms > line.start_ms {
+        return line.end_ms;
+    }
+    if let Some(next) = lines.get(idx + 1) {
+        if next.start_ms > line.start_ms {
+            return next.start_ms;
+        }
+    }
+    line.start_ms + 3000
+}
+
+fn format_srt_time(ms: u64) -> String {
+    let h = ms / 3_600_000;
+    let rem = ms % 3_600_000;
+    let m = rem / 60_000;
+    let rem = rem % 60_000;
+    let s = rem / 1000;
+    let millis = rem % 1000;
+    format!("{:02}:{:02}:{:02},{:03}", h, m, s, millis)
+}
+
+fn format_ass_time(ms: u64) -> String {
+    let h = ms / 3_600_000;
+    let rem = ms % 3_600_000;
+    let m = rem / 60_000;
+    let rem = rem % 60_000;
+    let s = rem / 1000;
+    let centis = (rem % 1000) / 10;
+    format!("{}:{:02}:{:02}.{:02}", h, m, s, centis)
+}
+
+fn escape_ass_text(text: &str) -> String {
+    text.replace('{', "\\{")
+        .replace('}', "\\}")
+        .replace('\n', "\\N")
 }
 
 /// 掃描目錄中的字幕檔案（.srt, .vtt, .lrc）。
@@ -730,6 +855,23 @@ mod tests {
     }
 
     #[test]
+    fn parses_plain_text_lyrics_without_timestamps() {
+        let lines = parse_plain_text_lyrics("第一行\n\n第二行\r\n第三行");
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].text, "第一行");
+        assert_eq!(lines[0].start_ms, 0);
+        assert_eq!(lines[0].end_ms, 0);
+    }
+
+    #[test]
+    fn plain_text_lines_do_not_merge_as_same_timestamp_bilingual() {
+        let mut lines = parse_plain_text_lyrics("第一行\n第二行\n第三行\n第四行");
+        detect_and_split_bilingual(&mut lines);
+        assert_eq!(lines.len(), 4);
+        assert!(lines.iter().all(|line| line.translation.is_none()));
+    }
+
+    #[test]
     fn parse_srt_malformed_timestamp() {
         // 不完整的 SRT — 缺少 --> 分隔符
         let srt = "1\n00:00:10,500 00:00:15,000\nBroken line\n\n2\n00:00:15,000 --> 00:00:20,000\nGood line";
@@ -795,5 +937,32 @@ mod tests {
         let lrc = export_lrc(&lines);
         assert!(lrc.contains("[00:10.50]第一行"));
         assert!(lrc.contains("[00:15.00]日本語 / 中文翻譯"));
+    }
+
+    #[test]
+    fn exports_srt_with_translation_on_second_line() {
+        let lines = vec![LyricLine {
+            start_ms: 10500,
+            end_ms: 15000,
+            text: "日本語".to_string(),
+            translation: Some("中文翻譯".to_string()),
+        }];
+        let srt = export_srt(&lines);
+        assert!(srt.contains("00:00:10,500 --> 00:00:15,000"));
+        assert!(srt.contains("日本語\n中文翻譯"));
+    }
+
+    #[test]
+    fn exports_ass_dialogue() {
+        let lines = vec![LyricLine {
+            start_ms: 90500,
+            end_ms: 93000,
+            text: "Hello".to_string(),
+            translation: Some("你好".to_string()),
+        }];
+        let ass = export_ass(&lines);
+        assert!(ass.contains("[Events]"));
+        assert!(ass.contains("Dialogue: 0,0:01:30.50,0:01:33.00"));
+        assert!(ass.contains("Hello\\N你好"));
     }
 }

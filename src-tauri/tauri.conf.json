@@ -1,6 +1,6 @@
 {
   "productName": "VocalSync Studio",
-  "version": "0.2.19",
+  "version": "0.3.6",
   "identifier": "com.vocalsync.studio",
   "build": {
     "frontendDist": "../dist",
@@ -31,18 +31,7 @@
     }
   },
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "title": "VocalSync Studio",
-        "width": 1280,
-        "height": 800,
-        "minWidth": 900,
-        "minHeight": 600,
-        "resizable": true,
-        "decorations": false
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost; media-src 'self' asset: http://asset.localhost blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
       "assetProtocol": {

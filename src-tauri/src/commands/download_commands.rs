@@ -6,6 +6,7 @@
 //! - `start_download`：開始下載（背景執行，透過 event 推送進度）
 //! - `cancel_download`：取消下載
 
+use crate::core::portable_paths;
 use crate::core::ytdlp_engine::{
     self, DownloadRequest, DownloadResult, LocalFfmpegCandidate, LocalYtdlpCandidate, ToolStatus,
     UrlType,
@@ -128,8 +129,8 @@ pub fn cancel_download(cancel_flag: State<'_, DownloadCancelFlag>) {
 /// 取得預設下載目錄（桌面或下載資料夾）。
 #[tauri::command]
 pub fn get_default_download_dir() -> Option<String> {
-    dirs_next::download_dir()
-        .or_else(dirs_next::desktop_dir)
+    portable_paths::ensure_dir("downloads")
+        .ok()
         .map(|p| p.to_string_lossy().to_string())
 }
 

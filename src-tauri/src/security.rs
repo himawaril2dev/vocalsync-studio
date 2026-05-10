@@ -10,6 +10,9 @@
 use crate::error::AppError;
 use std::path::{Component, Path};
 
+#[cfg(windows)]
+use std::path::Prefix;
+
 /// 檢查檔案路徑是否安全：
 /// - 必須為絕對路徑（避免 cwd-relative 逃逸）
 /// - 不可包含 `..` 組件（擋 parent traversal）
@@ -37,6 +40,32 @@ pub fn validate_path_safe(path: &str) -> Result<(), AppError> {
         }
     }
     Ok(())
+}
+
+pub fn validate_local_path_safe(path: &str) -> Result<(), AppError> {
+    validate_path_safe(path)?;
+
+    #[cfg(windows)]
+    {
+        let p = Path::new(path);
+        let Some(Component::Prefix(prefix)) = p.components().next() else {
+            return Err(AppError::Audio("Path must start with a local drive".into()));
+        };
+        match prefix.kind() {
+            Prefix::Disk(_) | Prefix::VerbatimDisk(_) => Ok(()),
+            Prefix::UNC(_, _)
+            | Prefix::VerbatimUNC(_, _)
+            | Prefix::Verbatim(_)
+            | Prefix::DeviceNS(_) => Err(AppError::Audio(
+                "Network and device paths are not allowed for restored files".into(),
+            )),
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        Ok(())
+    }
 }
 
 /// 檢查「檔名前綴」（給 `export_audio(prefix)` 這類會被拼進完整路徑的使用者字串）：
@@ -109,6 +138,16 @@ mod tests {
         assert!(validate_path_safe("C:\\Users\\testuser\\video.mp4").is_ok());
         #[cfg(not(windows))]
         assert!(validate_path_safe("/home/user/video.mp4").is_ok());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn local_path_rejects_unc_and_device_paths() {
+        assert!(validate_local_path_safe(r"\\server\share\song.wav").is_err());
+        assert!(validate_local_path_safe(r"\\?\UNC\server\share\song.wav").is_err());
+        assert!(validate_local_path_safe(r"\\.\COM1").is_err());
+        assert!(validate_local_path_safe(r"C:\Users\testuser\song.wav").is_ok());
+        assert!(validate_local_path_safe(r"\\?\C:\Users\testuser\song.wav").is_ok());
     }
 
     #[test]

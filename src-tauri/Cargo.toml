@@ -1,6 +1,6 @@
 [package]
 name = "vocalsync-studio"
-version = "0.2.19"
+version = "0.3.6"
 description = "VocalSync Studio — Karaoke Practice Tool"
 authors = ["himawari168"]
 edition = "2021"
@@ -25,7 +25,6 @@ biquad = "0.6"
 thiserror = "2"
 log = "0.4"
 env_logger = "0.11"
-dirs-next = "2.0"
 url = "2"
 # HTTP 下載（yt-dlp / FFmpeg 自動安裝）
 ureq = { version = "2.10", features = ["tls"] }

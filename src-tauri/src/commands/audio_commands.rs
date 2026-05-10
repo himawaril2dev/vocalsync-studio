@@ -5,11 +5,11 @@ use crate::core::pitch_data::PitchTrack;
 use crate::error::AppError;
 use crate::security;
 use std::sync::Mutex;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 #[tauri::command]
 pub fn load_backing(
-    _app: AppHandle,
+    app: AppHandle,
     path: String,
     engine: State<'_, Mutex<AudioEngine>>,
 ) -> Result<LoadResult, AppError> {
@@ -20,7 +20,22 @@ pub fn load_backing(
     let mut result = engine.load_backing(&path)?;
     result.melody_source = None;
 
+    if let Some(video_path) = result.video_path.as_deref() {
+        app.asset_protocol_scope()
+            .allow_file(video_path)
+            .map_err(|e| AppError::Internal(format!("Could not allow video playback: {e}")))?;
+    }
+
     Ok(result)
+}
+
+#[tauri::command]
+pub fn clear_backing(engine: State<'_, Mutex<AudioEngine>>) -> Result<(), AppError> {
+    let mut engine = engine
+        .lock()
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    engine.clear_backing();
+    Ok(())
 }
 
 #[tauri::command]

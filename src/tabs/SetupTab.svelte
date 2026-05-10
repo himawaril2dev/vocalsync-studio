@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { invoke, convertFileSrc } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
   import { loadedMedia, basename } from "../stores/media";
@@ -35,9 +35,11 @@
     guideVocalEnabled,
   } from "../stores/settings";
   import CalibrationVisualizer from "../components/CalibrationVisualizer.svelte";
+  import LyricsPrepTools from "../components/LyricsPrepTools.svelte";
   import UvrGuideModal from "../components/UvrGuideModal.svelte";
   import DownloadTab from "./DownloadTab.svelte";
   import { t, tSync } from "../i18n";
+  import { projectSessionReady } from "../stores/projectSession";
 
   type SetupSectionKey =
     | "download"
@@ -48,6 +50,7 @@
   type SetupSections = Record<SetupSectionKey, boolean>;
 
   const SETUP_SECTIONS_STORAGE_KEY = "vocalsync.setup.sections.v1";
+  const PROJECT_SESSION_VERSION = 1;
   const DEFAULT_SECTIONS: SetupSections = {
     download: true,
     lyrics: true,
@@ -79,6 +82,19 @@
     video_path: string | null;
     /** 自動偵測結果：`"midi"` / `"uvr_cache"` / `null` */
     melody_source: string | null;
+  }
+
+  interface ProjectSession {
+    version: typeof PROJECT_SESSION_VERSION;
+    backingPath: string | null;
+    lyricsFileName: string;
+    lyricsLines: LyricLine[];
+    melody: MelodyTrack | null;
+    melodySourcePath: string | null;
+    guideVocalPath: string | null;
+    guideVocalEnabled: boolean;
+    alignmentResult: AlignmentResult | null;
+    alignmentFineTuneMs: number;
   }
 
   /** 目前載入的伴奏路徑（給「重試載入 melody」按鈕用）。
@@ -167,8 +183,163 @@
   // 裝置列表與校準狀態
   let devices = $state<DeviceList | null>(null);
   let calibrationResultText = $state("");
+  let deviceMsg = $state("");
 
   let pitchEngineLoaded = false;
+  let projectSessionLoaded = false;
+  let projectSessionRestoring = false;
+  let projectSessionSaveTimer: number | null = null;
+
+  function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+  }
+
+  function sanitizeLyricsLines(value: unknown): LyricLine[] {
+    if (!Array.isArray(value)) return [];
+    return value.filter((line): line is LyricLine => {
+      if (!isRecord(line)) return false;
+      return (
+        typeof line.start_ms === "number" &&
+        typeof line.end_ms === "number" &&
+        typeof line.text === "string"
+      );
+    });
+  }
+
+  function sanitizeProjectSession(value: unknown): ProjectSession | null {
+    if (!isRecord(value) || value.version !== PROJECT_SESSION_VERSION) return null;
+    return {
+      version: PROJECT_SESSION_VERSION,
+      backingPath: typeof value.backingPath === "string" ? value.backingPath : null,
+      lyricsFileName:
+        typeof value.lyricsFileName === "string" ? value.lyricsFileName : "",
+      lyricsLines: sanitizeLyricsLines(value.lyricsLines),
+      melody:
+        isRecord(value.melody) && Array.isArray(value.melody.notes)
+          ? (value.melody as MelodyTrack)
+          : null,
+      melodySourcePath:
+        typeof value.melodySourcePath === "string" ? value.melodySourcePath : null,
+      guideVocalPath:
+        typeof value.guideVocalPath === "string" ? value.guideVocalPath : null,
+      guideVocalEnabled: value.guideVocalEnabled === true,
+      alignmentResult: isRecord(value.alignmentResult)
+        ? (value.alignmentResult as AlignmentResult)
+        : null,
+      alignmentFineTuneMs:
+        typeof value.alignmentFineTuneMs === "number"
+          ? value.alignmentFineTuneMs
+          : 0,
+    };
+  }
+
+  function createProjectSessionSnapshot(): ProjectSession {
+    return {
+      version: PROJECT_SESSION_VERSION,
+      backingPath: get(loadedMedia)?.file_path ?? null,
+      lyricsFileName: get(lyricsFileName),
+      lyricsLines: get(lyricsLines),
+      melody: get(currentMelody),
+      melodySourcePath: get(melodySourcePath),
+      guideVocalPath: get(guideVocalPath),
+      guideVocalEnabled: get(guideVocalEnabled),
+      alignmentResult: get(alignmentResult),
+      alignmentFineTuneMs: get(alignmentFineTuneMs),
+    };
+  }
+
+  async function saveProjectSessionNow(): Promise<void> {
+    if (!projectSessionLoaded || projectSessionRestoring) return;
+    try {
+      await invoke("save_project_session", {
+        sessionJson: JSON.stringify(createProjectSessionSnapshot()),
+      });
+    } catch (err) {
+      console.warn("[setup] project session save failed:", err);
+    }
+  }
+
+  function scheduleProjectSessionSave(): void {
+    if (!projectSessionLoaded || projectSessionRestoring) return;
+    if (projectSessionSaveTimer !== null) {
+      window.clearTimeout(projectSessionSaveTimer);
+    }
+    projectSessionSaveTimer = window.setTimeout(() => {
+      projectSessionSaveTimer = null;
+      void saveProjectSessionNow();
+    }, 200);
+  }
+
+  async function restoreProjectSession(): Promise<void> {
+    projectSessionRestoring = true;
+    try {
+      const raw = await invoke<string | null>("load_project_session");
+      const session = raw ? sanitizeProjectSession(JSON.parse(raw)) : null;
+      if (!session) return;
+
+      if (session.lyricsLines.length > 0) {
+        lyricsLines.set(session.lyricsLines);
+        lyricsFileName.set(session.lyricsFileName);
+        lyricsStatus = {
+          key: "setup.lyrics.status.restored",
+          vars: { n: session.lyricsLines.length },
+        };
+      }
+
+      if (session.backingPath) {
+        try {
+          await loadBackingFromPath(session.backingPath, {
+            resetDependents: false,
+            autoDetectMelody: false,
+            probeSubtitles: false,
+          });
+        } catch (err) {
+          pendingStatusText = tSync("setup.backing.hint.restoreFailed", {
+            error: String(err),
+          });
+        }
+      }
+
+      if (session.melody) {
+        currentMelody.set(session.melody);
+        melodySourcePath.set(session.melodySourcePath);
+        alignmentResult.set(session.alignmentResult);
+        alignmentFineTuneMs.set(session.alignmentFineTuneMs);
+        refreshBackingPitchFromMelody();
+        melodyStatus.set({
+          key: "setup.melody.status.restored",
+          vars: { n: session.melody.notes.length },
+        });
+      }
+
+      if (session.guideVocalPath) {
+        try {
+          await loadGuideVocalTrack(session.guideVocalPath);
+          guideVocalEnabled.set(session.guideVocalEnabled);
+          await syncGuideVocalTiming();
+        } catch (err) {
+          guideVocalPath.set(null);
+          guideVocalEnabled.set(false);
+          melodyStatus.update((s) =>
+            s
+              ? {
+                  ...s,
+                  appendKey: "setup.guide.status.loadFailedAppend",
+                  appendVars: { error: String(err) },
+                }
+              : s,
+          );
+        }
+      }
+    } catch (err) {
+      console.warn("[setup] project session restore failed:", err);
+    } finally {
+      projectSessionRestoring = false;
+      projectSessionLoaded = true;
+      projectSessionReady.set(true);
+      void saveProjectSessionNow();
+    }
+  }
 
   function loadPersistedSections(): void {
     try {
@@ -194,9 +365,22 @@
     sections[key] = !sections[key];
   }
 
-  onMount(async () => {
+  onMount(() => {
     loadPersistedSections();
     sectionsLoaded = true;
+    if (get(projectSessionReady)) {
+      projectSessionLoaded = true;
+    } else {
+      void restoreProjectSession();
+    }
+  });
+
+  onDestroy(() => {
+    if (projectSessionSaveTimer !== null) {
+      window.clearTimeout(projectSessionSaveTimer);
+      projectSessionSaveTimer = null;
+    }
+    void saveProjectSessionNow();
   });
 
   $effect(() => {
@@ -207,6 +391,19 @@
     } catch (err) {
       console.warn("[setup] section layout save failed:", err);
     }
+  });
+
+  $effect(() => {
+    void $loadedMedia;
+    void $lyricsFileName;
+    void $lyricsLines;
+    void $currentMelody;
+    void $melodySourcePath;
+    void $guideVocalPath;
+    void $guideVocalEnabled;
+    void $alignmentResult;
+    void $alignmentFineTuneMs;
+    scheduleProjectSessionSave();
   });
 
   $effect(() => {
@@ -275,6 +472,15 @@
     }
   }
 
+  async function openCrepeModelFolder() {
+    try {
+      const path = await invoke<string>("open_crepe_model_folder");
+      deviceMsg = tSync("setup.device.modelFolder.opened", { path });
+    } catch (err) {
+      deviceMsg = tSync("setup.device.modelFolder.failed", { error: String(err) });
+    }
+  }
+
   function dismissVisualizer() {
     // 動畫播完後讓 visualizer overlay 收起來
     resetCalibrationStatus();
@@ -290,6 +496,41 @@
     await invoke("clear_guide_vocal").catch((err) =>
       console.warn("[guide] clear failed:", err),
     );
+  }
+
+  async function clearVocalsTrack(): Promise<void> {
+    await clearGuideVocalTrack();
+    melodyStatus.set({ key: "setup.guide.status.cleared" });
+  }
+
+  function clearPitchCurve(): void {
+    currentMelody.set(null);
+    detectedMelodySourceKind.set(null);
+    melodySourcePath.set(null);
+    alignmentResult.set(null);
+    alignmentFineTuneMs.set(0);
+    backingPitchTrack.set(null);
+    lastMelodyOffsetSecs = null;
+    lastMelodyKey = null;
+    melodyStatus.set({ key: "setup.melody.status.cleared" });
+  }
+
+  async function clearBackingTrack(): Promise<void> {
+    try {
+      await invoke("clear_backing");
+    } catch (err) {
+      console.warn("[backing] clear failed:", err);
+    }
+    loadedMedia.set(null);
+    pendingStatusText = null;
+    resetBackingState();
+    resetMelodyState();
+    await clearGuideVocalTrack();
+    clearLoop();
+    hasRecording.set(false);
+    clearLiveVocalSamples();
+    embeddedSubtitles = [];
+    melodyStatus.set(null);
   }
 
   async function loadGuideVocalTrack(path: string): Promise<void> {
@@ -308,6 +549,70 @@
     }).catch((err) => console.warn("[guide] offset sync failed:", err));
   }
 
+  interface LoadBackingOptions {
+    resetDependents?: boolean;
+    autoDetectMelody?: boolean;
+    probeSubtitles?: boolean;
+  }
+
+  async function loadBackingFromPath(
+    path: string,
+    options: LoadBackingOptions = {},
+  ): Promise<void> {
+    const resetDependents = options.resetDependents ?? true;
+    const autoDetectMelody = options.autoDetectMelody ?? true;
+    const probeSubtitles = options.probeSubtitles ?? true;
+    pendingStatusText = tSync("setup.backing.hint.loading");
+
+    if (resetDependents) {
+      loadedMedia.set(null);
+      resetBackingState();
+      resetMelodyState();
+      await clearGuideVocalTrack();
+      clearLoop();
+      hasRecording.set(false);
+      clearLiveVocalSamples();
+      embeddedSubtitles = [];
+    }
+
+    const result: LoadResult = await invoke("load_backing", { path });
+    const videoUrl = result.video_path ? convertFileSrc(result.video_path) : null;
+    loadedMedia.set({
+      file_path: path,
+      file_name: basename(path),
+      duration: result.duration,
+      sample_rate: result.sample_rate,
+      is_video: result.is_video,
+      video_path: result.video_path,
+      video_url: videoUrl,
+    });
+    pendingStatusText = null;
+    detectedMelodySourceKind.set(result.melody_source);
+
+    embeddedSubtitles = [];
+    if (probeSubtitles && result.is_video) {
+      try {
+        const subs = await invoke<SubtitleStream[]>(
+          "probe_embedded_subtitles",
+          { videoPath: path },
+        );
+        embeddedSubtitles = subs;
+        if (subs.length > 0) {
+          lyricsStatus = {
+            key: "setup.lyrics.status.subDetected",
+            vars: { n: subs.length },
+          };
+        }
+      } catch (err) {
+        console.warn("[setup] embedded subtitle probe failed:", err);
+      }
+    }
+
+    if (autoDetectMelody) {
+      await autoLoadMelodyForPath(path);
+    }
+  }
+
   async function loadFile() {
     const path = await open({
       title: tSync("setup.backing.dialog.title"),
@@ -320,57 +625,8 @@
     });
     if (!path) return;
 
-    pendingStatusText = tSync("setup.backing.hint.loading");
-    // 載入新伴奏前先重設旋律相關狀態，避免上一首的灰藍線殘留
-    resetBackingState();
-    resetMelodyState();
-    await clearGuideVocalTrack();
-    clearLoop();
-    // 換曲 → 舊錄音也會在後端被清掉（engine.load_backing 內已呼叫 clear_recording），
-    // 同步前端 hasRecording，避免「匯出/回放」按鈕誤開。
-    hasRecording.set(false);
-    clearLiveVocalSamples();
     try {
-      const result: LoadResult = await invoke("load_backing", { path });
-
-      const videoUrl = result.video_path ? convertFileSrc(result.video_path) : null;
-      loadedMedia.set({
-        file_path: path,
-        file_name: basename(path),
-        duration: result.duration,
-        sample_rate: result.sample_rate,
-        is_video: result.is_video,
-        video_path: result.video_path,
-        video_url: videoUrl,
-      });
-      // 載入成功 → 清掉暫時訊息，讓 statusText 從 store 推導
-      pendingStatusText = null;
-
-      // 後端偵測結果（提示來源種類）
-      detectedMelodySourceKind.set(result.melody_source);
-
-      // 影片格式：自動偵測內嵌字幕軌
-      embeddedSubtitles = [];
-      if (result.is_video) {
-        try {
-          const subs = await invoke<SubtitleStream[]>(
-            "probe_embedded_subtitles",
-            { videoPath: path },
-          );
-          embeddedSubtitles = subs;
-          if (subs.length > 0) {
-            lyricsStatus = {
-              key: "setup.lyrics.status.subDetected",
-              vars: { n: subs.length },
-            };
-          }
-        } catch (err) {
-          console.warn("[setup] 字幕軌偵測失敗（ffprobe 不可用或無字幕）", err);
-        }
-      }
-
-      // 自動載入目標旋律
-      await autoLoadMelodyForPath(path);
+      await loadBackingFromPath(path);
     } catch (err) {
       pendingStatusText = tSync("setup.backing.hint.loadFailed", { error: String(err) });
     }
@@ -807,6 +1063,9 @@
             </p>
             <div class="actions">
               <button class="btn primary" onclick={loadFile}>{$t("setup.backing.action.import")}</button>
+              {#if backingLoaded}
+                <button class="btn secondary" onclick={clearBackingTrack}>{$t("setup.backing.action.clear")}</button>
+              {/if}
             </div>
           </section>
 
@@ -847,6 +1106,16 @@
                   onclick={() => currentBackingPath && autoLoadMelodyForPath(currentBackingPath)}
                 >
                   {$t("setup.melody.action.rescan")}
+                </button>
+              {/if}
+              {#if $guideVocalPath}
+                <button class="btn secondary" onclick={clearVocalsTrack}>
+                  {$t("setup.melody.action.clearVocals")}
+                </button>
+              {/if}
+              {#if $currentMelody}
+                <button class="btn secondary" onclick={clearPitchCurve}>
+                  {$t("setup.melody.action.clearPitch")}
                 </button>
               {/if}
             </div>
@@ -940,6 +1209,7 @@
     {#if sections.lyrics}
       <div class="section-body">
         <p class="hint">{lyricsStatusText}</p>
+        <p class="sub-hint lyrics-feature-hint">{$t("setup.lyrics.hint.timeline")}</p>
 
         {#if embeddedSubtitles.length > 0}
           <div class="embedded-subs">
@@ -964,6 +1234,7 @@
             <button class="btn secondary" onclick={clearLyrics}>{$t("setup.lyrics.action.clear")}</button>
           {/if}
         </div>
+        <LyricsPrepTools />
       </div>
     {/if}
   </div>
@@ -1010,6 +1281,14 @@
             </select>
           </div>
         </div>
+        <div class="actions device-actions">
+          <button class="btn secondary" onclick={openCrepeModelFolder}>
+            {$t("setup.device.modelFolder.openCrepe")}
+          </button>
+        </div>
+        {#if deviceMsg}
+          <p class="sub-hint">{deviceMsg}</p>
+        {/if}
       </div>
     {/if}
   </div>
@@ -1153,6 +1432,11 @@
 
   .guide-hint {
     margin-top: 8px;
+  }
+
+  .lyrics-feature-hint {
+    margin-top: -8px;
+    margin-bottom: 16px;
   }
 
   .btn {

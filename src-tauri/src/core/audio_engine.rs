@@ -302,6 +302,20 @@ impl AudioEngine {
         })
     }
 
+    pub fn clear_backing(&mut self) {
+        self.stop();
+        self.backing_data = None;
+        self.backing_channels = 2;
+        self.duration = 0.0;
+        self.shared.playback_pos.store(0, Ordering::Relaxed);
+        self.clear_recording();
+        self.clear_guide_vocal();
+        self.clear_loop();
+        if let Ok(mut t) = self.backing_pitch_track.lock() {
+            *t = None;
+        }
+    }
+
     pub fn load_guide_vocal(&self, path: &str, offset_secs: f64) -> Result<(), AppError> {
         let media = crate::core::media_loader::load_media(path)?;
         let channels = media.channels.max(1) as usize;

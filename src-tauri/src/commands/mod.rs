@@ -5,3 +5,4 @@ pub mod lyrics_commands;
 pub mod melody_commands;
 pub mod settings_commands;
 pub mod updates_commands;
+pub mod whisper_commands;

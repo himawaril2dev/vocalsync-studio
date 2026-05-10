@@ -7,6 +7,7 @@
 //!   目前固定回傳 `None`。
 
 use crate::core::audio_aligner::{self, AlignmentResult};
+use crate::core::folder_open;
 use crate::core::melody_extractor;
 use crate::core::melody_source_detector::{detect_melody_source, DetectedSource};
 use crate::core::melody_track::MelodyTrack;
@@ -49,6 +50,23 @@ fn get_model_dir() -> Option<PathBuf> {
 }
 
 /// 偵測結果（給前端判斷要不要顯示「沒有目標旋律」提示）
+fn fallback_app_models_dir() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()?
+        .parent()
+        .map(|dir| dir.join("models"))
+}
+
+#[tauri::command]
+pub fn open_crepe_model_folder() -> Result<String, AppError> {
+    let dir = get_model_dir()
+        .or_else(fallback_app_models_dir)
+        .ok_or_else(|| AppError::Internal("Could not locate app model directory".into()))?;
+    std::fs::create_dir_all(&dir).map_err(AppError::Io)?;
+    folder_open::open_folder(&dir)?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DetectedSourceDto {

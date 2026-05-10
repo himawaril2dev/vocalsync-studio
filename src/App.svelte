@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { get } from "svelte/store";
   import SetupTab from "./tabs/SetupTab.svelte";
   import RecordingTab from "./tabs/RecordingTab.svelte";
   import PitchAnalysisTab from "./tabs/PitchAnalysisTab.svelte";
@@ -14,14 +15,80 @@
   import StartupGuideModal from "./components/StartupGuideModal.svelte";
   import { t } from "./i18n";
   import { invoke } from "@tauri-apps/api/core";
+  import { loadedMedia } from "./stores/media";
+  import { lyricsFileName, lyricsLines, type LyricLine } from "./stores/lyrics";
+  import {
+    alignmentFineTuneMs,
+    alignmentResult,
+    currentMelody,
+    guideVocalPath,
+    melodySourcePath,
+    type AlignmentResult,
+    type MelodyTrack,
+  } from "./stores/melody";
+  import { guideVocalEnabled } from "./stores/settings";
+  import { projectSessionReady } from "./stores/projectSession";
 
   let activeTab = $state<"setup" | "recording" | "pitch" | "about">("setup");
   let boundaryError = $state<Error | null>(null);
   let isMaximized = $state(false);
   let showStartupGuide = $state(false);
   let showStartupGuideNextLaunch = $state(true);
+  let projectSessionSaveTimer: number | null = null;
+
+  const PROJECT_SESSION_VERSION = 1;
 
   const appWindow = getCurrentWindow();
+
+  interface ProjectSession {
+    version: typeof PROJECT_SESSION_VERSION;
+    backingPath: string | null;
+    lyricsFileName: string;
+    lyricsLines: LyricLine[];
+    melody: MelodyTrack | null;
+    melodySourcePath: string | null;
+    guideVocalPath: string | null;
+    guideVocalEnabled: boolean;
+    alignmentResult: AlignmentResult | null;
+    alignmentFineTuneMs: number;
+  }
+
+  function createProjectSessionSnapshot(): ProjectSession {
+    return {
+      version: PROJECT_SESSION_VERSION,
+      backingPath: get(loadedMedia)?.file_path ?? null,
+      lyricsFileName: get(lyricsFileName),
+      lyricsLines: get(lyricsLines),
+      melody: get(currentMelody),
+      melodySourcePath: get(melodySourcePath),
+      guideVocalPath: get(guideVocalPath),
+      guideVocalEnabled: get(guideVocalEnabled),
+      alignmentResult: get(alignmentResult),
+      alignmentFineTuneMs: get(alignmentFineTuneMs),
+    };
+  }
+
+  async function saveProjectSessionNow(): Promise<void> {
+    if (!get(projectSessionReady)) return;
+    try {
+      await invoke("save_project_session", {
+        sessionJson: JSON.stringify(createProjectSessionSnapshot()),
+      });
+    } catch (err) {
+      console.warn("[app] project session save failed:", err);
+    }
+  }
+
+  function scheduleProjectSessionSave(): void {
+    if (!get(projectSessionReady)) return;
+    if (projectSessionSaveTimer !== null) {
+      window.clearTimeout(projectSessionSaveTimer);
+    }
+    projectSessionSaveTimer = window.setTimeout(() => {
+      projectSessionSaveTimer = null;
+      void saveProjectSessionNow();
+    }, 200);
+  }
 
   async function updateMaximized() {
     isMaximized = await appWindow.isMaximized();
@@ -53,8 +120,27 @@
   });
 
   onDestroy(() => {
+    if (projectSessionSaveTimer !== null) {
+      window.clearTimeout(projectSessionSaveTimer);
+      projectSessionSaveTimer = null;
+    }
+    void saveProjectSessionNow();
     teardownEventListeners();
     unlistenResize?.();
+  });
+
+  $effect(() => {
+    void $projectSessionReady;
+    void $loadedMedia;
+    void $lyricsFileName;
+    void $lyricsLines;
+    void $currentMelody;
+    void $melodySourcePath;
+    void $guideVocalPath;
+    void $guideVocalEnabled;
+    void $alignmentResult;
+    void $alignmentFineTuneMs;
+    scheduleProjectSessionSave();
   });
 
   async function closeStartupGuide(showNextLaunch: boolean): Promise<void> {
