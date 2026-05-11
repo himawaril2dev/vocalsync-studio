@@ -1,0 +1,196 @@
+# VocalSync Studio
+
+[繁體中文](README.md) | **English** | [日本語](README.ja.md)
+
+A desktop practice room — built for anyone who wants to sing, truly hear their own voice, and make every rehearsal audibly better.
+
+VocalSync Studio is a desktop application that combines backing-track playback, real-time recording, AI pitch detection, and synchronized lyrics display to help singers visualize their performance.
+
+📖 **User guide**: [English](docs/USER_GUIDE.en.md)｜[繁體中文](docs/USER_GUIDE.md)｜[日本語](docs/USER_GUIDE.ja.md) (an offline HTML copy is also bundled in the portable zip)
+
+> 📢 **Disclosure**
+> The author has no prior programming background. This project was built through AI collaboration (Claude / Codex) — architecture, code, and UI were all AI-generated. All features have been tested and cross-model reviewed (Claude for implementation, Codex for independent audit). Please evaluate the risk against your own use case before adopting.
+
+## Features
+
+- **YouTube downloader** — paste a URL to download a backing track (yt-dlp + FFmpeg are installed automatically)
+- **Real-time recording** — record while listening to the backing track, with latency calibration support
+- **AI pitch detection** — analyze sung pitch with the CREPE neural network model (runs offline, no network required)
+- **Pitch curve comparison** — display your vocal pitch side-by-side with the target melody
+- **Guide vocal monitoring** — use an imported vocals track as a low-volume reference without exporting it
+- **Lyrics sync** — supports LRC / SRT / VTT formats, with automatic bilingual detection
+- **A–B loop** — repeat specific sections for focused practice
+- **Speed change** — WSOLA time-stretching that preserves pitch
+
+## Tech Stack
+
+| Layer | Technology |
+|------|------|
+| Frontend | Svelte 5 + TypeScript + Vite |
+| Backend | Rust + Tauri v2 |
+| Audio | cpal (capture / playback) + symphonia (decoding) + biquad (filtering) |
+| Pitch detection | CREPE tiny (ONNX Runtime) + PYIN (classical algorithm) |
+| Signal processing | rustfft (FFT) + WSOLA (time-stretching) |
+| Download | yt-dlp CLI wrapper + SHA-256 supply-chain verification |
+
+## Installation
+
+### Download from Release (recommended)
+
+1. Go to the [Releases](https://github.com/himawaril2dev/vocalsync-studio/releases) page and download the latest `VocalSync.Studio.Portable.x.y.z.zip`
+2. Unzip it anywhere you like (e.g. the desktop or `D:\Tools\`)
+3. Open the folder and double-click **`vocalsync-studio.exe`** to launch
+
+> ⚠️ **Do not rearrange the folder contents**
+> `DirectML.dll`, `yt-dlp.exe`, and `models/` are runtime dependencies loaded by `vocalsync-studio.exe` at startup. **Do not move them individually.** If you want to relocate the app, move the entire folder as a unit.
+
+| File | Description |
+|---|---|
+| **`vocalsync-studio.exe`** | Main executable ← launch this |
+| `DirectML.dll` | ONNX Runtime's DirectX ML acceleration DLL (required by CREPE pitch detection) |
+| `yt-dlp.exe` | YouTube backing-track download CLI |
+| `models/crepe-tiny.onnx` | CREPE pitch detection model |
+
+### Tested Environment
+
+| Item | Version |
+|---|---|
+| OS | Windows 11 Pro 23H2 / 24H2 |
+| Architecture | x86_64 |
+| WebView2 | 120+ (preinstalled on Windows 10/11) |
+
+Tauri builds for macOS / Linux are theoretically possible (the source is cross-platform) but **not yet tested**, and no portable releases are provided for those platforms. If you want to build on them, follow the "Build from source" section and please report your results on Issues.
+
+> **First-run Windows SmartScreen warning**
+> The binary is not currently code-signed, so Windows SmartScreen may show a "Windows protected your PC" warning.
+> Click **"More info"** in the top-left of the warning window, then press the **"Run anyway"** button that appears to launch the app.
+> The warning will not appear again for the same exe.
+> If you want extra assurance, download the zip from the Releases page and verify it with `certutil -hashfile "filename.zip" SHA256` against the digest published on GitHub.
+
+### Build from source
+
+**Prerequisites:**
+- [Node.js](https://nodejs.org/) >= 18
+- [Rust](https://rustup.rs/) >= 1.77
+- [Tauri CLI](https://v2.tauri.app/start/prerequisites/)
+
+```bash
+# 1. Install frontend dependencies
+npm install
+
+# 2. Development mode
+npm run tauri dev
+
+# 3. Release build
+npm run tauri build
+
+# 4. (Optional) Generate the offline USER_GUIDE HTML and repack it into the portable zip
+npm run build:docs          # emits dist-docs/*.html
+npm run pack:portable-docs  # copies HTML into the portable folder and rebuilds the zip
+```
+
+Build artifacts land in `src-tauri/target/release/bundle/`.
+
+## Project Structure
+
+```
+vocalsync-studio/
+├── src/                    # Svelte frontend
+│   ├── components/         # UI components (pitch curve, lyrics panel, calibrator, ...)
+│   ├── stores/             # State management (playback, recording, lyrics, settings, ...)
+│   └── tabs/               # Pages (Setup, Recording, Pitch, About)
+├── src-tauri/
+│   └── src/
+│       ├── commands/       # Tauri IPC commands
+│       ├── core/           # Core engines
+│       │   ├── audio_engine.rs      # Capture / playback engine
+│       │   ├── crepe_engine.rs      # CREPE AI pitch detection
+│       │   ├── pyin_engine.rs       # PYIN classical pitch detection
+│       │   ├── lyrics_parser.rs     # LRC/SRT/VTT parser
+│       │   ├── wsola.rs             # Time-stretching
+│       │   ├── ytdlp_engine.rs      # YouTube download
+│       │   └── ...
+│       └── lib.rs          # Tauri entry point
+└── package.json
+```
+
+## Keyboard Shortcuts
+
+| Key | Action |
+|------|------|
+| `Space` | Play / pause |
+| `R` | Start recording |
+| `Esc` | Stop |
+| `A` | Set loop A point |
+| `B` | Set loop B point |
+| `+` | Transpose up a semitone |
+| `-` | Transpose down a semitone |
+
+## Feedback & Bug Reports
+
+Questions, bug reports, and feature requests are all very welcome. You can reach out through either of the following channels:
+
+- **GitHub Issues**: [vocalsync-studio/issues](https://github.com/himawaril2dev/vocalsync-studio/issues)
+- **Email**: `himawaril2dev@gmail.com`
+
+If you can include the OS version, VocalSync Studio version, reproduction steps, and a screenshot of the error, it will be much easier to track the issue down.
+
+## License
+
+This project is released as open source under the [MIT License](LICENSE) — feel free to use, modify, and redistribute, without warranty.
+
+### Third-Party Component Licenses
+
+| Component | License | Usage in this project |
+|---|---|---|
+| [CREPE](https://github.com/marl/crepe) / [onnxcrepe v1.1.0](https://github.com/yqzhishen/onnxcrepe) | MIT | AI pitch detection model (developed by NYU MARL; the ONNX conversion is from onnxcrepe v1.1.0; [BibTeX citation](#crepe-paper-citation)) |
+| [ONNX Runtime](https://github.com/microsoft/onnxruntime) | MIT | Inference engine that executes the CREPE model |
+| [DirectML](https://github.com/microsoft/DirectML) | MIT | ML acceleration layer on Windows (`DirectML.dll`) |
+| [Tauri](https://github.com/tauri-apps/tauri) | MIT / Apache-2.0 | Desktop application framework |
+| [Svelte](https://github.com/sveltejs/svelte) | MIT | Frontend UI framework |
+| [Symphonia](https://github.com/pdeljanov/Symphonia) / [cpal](https://github.com/RustAudio/cpal) / [rustfft](https://github.com/ejmahler/RustFFT) / [biquad](https://github.com/korken89/biquad-rs) and other Rust crates | MIT / Apache-2.0 | Audio decoding, capture / playback, signal processing |
+
+### yt-dlp (Unlicense / public domain)
+
+[yt-dlp](https://github.com/yt-dlp/yt-dlp) is a community-maintained fork of youtube-dl, released under **[The Unlicense](https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE)** (equivalent to public domain, CC0-like).
+
+- **How we use it**: this project invokes `yt-dlp.exe` as a **subprocess / CLI**. It is not statically linked and its source is not modified.
+- **Source**: `yt-dlp.exe` is the unmodified binary from the [official yt-dlp Releases](https://github.com/yt-dlp/yt-dlp/releases).
+- **User responsibility**: whether content downloaded through yt-dlp complies with local law (copyright, YouTube ToS, etc.) is the user's responsibility.
+- Full official license text: <https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE>
+
+### FFmpeg (LGPL 2.1+ / potentially GPL)
+
+[FFmpeg](https://ffmpeg.org/) is released by default under **[LGPL-2.1-or-later](https://ffmpeg.org/legal.html)**. Enabling certain encoders (such as libx264 or libx265) changes the effective license to **GPL-2.0-or-later**.
+
+- **How we use it**: this project invokes `ffmpeg` / `ffprobe` as a **subprocess / CLI**. We do not statically link libavcodec / libavformat, so this project itself is not "infected" by LGPL / GPL.
+- **Source**: by default it is loaded from [gyan.dev FFmpeg Windows builds](https://www.gyan.dev/ffmpeg/builds/) or an existing system installation. Please check the license of the specific build you download (essentials builds are typically LGPL; full builds include GPL components).
+- **Modification / redistribution**: if you redistribute FFmpeg binaries together with this project, you must comply with FFmpeg's license terms (include the license text, provide a way to obtain the source, etc.). This repository does **not** ship ffmpeg binaries, to avoid license conflicts.
+- Full official license text: <https://ffmpeg.org/legal.html>
+
+### CREPE paper citation
+
+The CREPE pitch detection model used by this project is based on the following paper:
+
+```bibtex
+@inproceedings{kim2018crepe,
+  title={{CREPE}: A Convolutional Representation for Pitch Estimation},
+  author={Kim, Jong Wook and Salamon, Justin and Li, Peter and Bello, Juan Pablo},
+  booktitle={2018 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP)},
+  pages={161--165},
+  year={2018},
+  organization={IEEE}
+}
+```
+
+If you use VocalSync's pitch detection results in academic or commercial research, please also cite the paper above and the [onnxcrepe](https://github.com/yqzhishen/onnxcrepe) ONNX-conversion work.
+
+### Disclaimer
+
+VocalSync Studio is purely a local vocal practice companion. The copyright and legal responsibility for any audio content the user downloads, processes, or transcribes through this tool belong solely to the user. The developer is not responsible for any misuse by users.
+
+## Support Development
+
+If this tool helps your vocal practice, please consider buying me a coffee:
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/himawari168)

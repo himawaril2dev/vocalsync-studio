@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-docs/
+src-tauri/target/
+src-tauri/.cargo/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.*
+
+# Vite
+*.local
+
+# Tauri dev artifacts
+src-tauri/WixTools/
+src-tauri/gen/
+
+# Local source-separation worker build artifacts
+.worker-build/
+workers/separation/
+_tmp/
+screenshots/
+
+# Session handoff / audit docs (development only)
+*_HANDOFF.md
+*_AUDIT_*.md
+SESSION_*.md
+CREPE_*.md
+MELODY_*.md

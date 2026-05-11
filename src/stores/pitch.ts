@@ -1,0 +1,86 @@
+import { writable } from "svelte/store";
+
+export interface PitchSample {
+  freq: number;
+  note: string;
+  octave: number;
+  cent: number;
+  confidence: number;
+}
+
+export interface PitchTrackSample {
+  timestamp: number;
+  freq: number;
+  confidence: number;
+  note: string;
+  octave: number;
+  cent: number;
+}
+
+export interface PitchTrack {
+  samples: PitchTrackSample[];
+}
+
+/** 即時音高（錄音中持續更新，None 代表靜音）*/
+export const currentPitch = writable<PitchSample | null>(null);
+
+/** 完整人聲音高軌跡（錄音結束後查詢，供音高分析頁使用）*/
+export const pitchTrack = writable<PitchTrack>({ samples: [] });
+
+/** 伴奏旋律音高軌跡（載入伴奏後背景分析得到）*/
+export const backingPitchTrack = writable<PitchTrack | null>(null);
+
+/** 伴奏分析品質摘要 */
+export interface BackingPitchQuality {
+  total_frames: number;
+  voiced_frames: number;
+  voiced_ratio: number;
+  mean_confidence: number;
+  elapsed_secs: number;
+}
+
+export const backingPitchQuality = writable<BackingPitchQuality | null>(null);
+
+/** 自由模式狀態：true 代表伴奏沒有可偵測的主旋律，前端應隱藏目標旋律線 */
+export const freeMode = writable<boolean>(false);
+
+/**
+ * 自由模式提示的結構化表示。
+ * - `{ kind: "i18n", key, vars }`：可翻譯的 key，切 locale 時 UI 要重翻
+ * - `{ kind: "text", text }`：後端傳來的 raw 字串（payload.reason），原樣顯示
+ * - `null`：沒提示
+ */
+export type FreeModeReason =
+  | null
+  | { kind: "i18n"; key: string; vars?: Record<string, string | number> }
+  | { kind: "text"; text: string };
+
+/** 自由模式提示（給 UI 顯示「為什麼進入自由模式」）*/
+export const freeModeReason = writable<FreeModeReason>(null);
+
+/**
+ * 伴奏旋律分析中狀態：
+ * - null = 未分析（idle）
+ * - { duration } = 分析中，UI 應顯示「分析中…」橫幅
+ */
+export interface BackingPitchAnalyzing {
+  duration: number;
+}
+export const backingPitchAnalyzing = writable<BackingPitchAnalyzing | null>(null);
+
+/** 即時累積的人聲樣本（為了在 PitchTimeline 中畫線，每次 currentPitch 更新就 push）*/
+export const liveVocalSamples = writable<PitchTrackSample[]>([]);
+
+/** 清空即時人聲樣本（錄音開始時呼叫）*/
+export function clearLiveVocalSamples() {
+  liveVocalSamples.set([]);
+}
+
+/** 重置與伴奏相關的所有 store（載入新伴奏時呼叫）*/
+export function resetBackingState() {
+  backingPitchTrack.set(null);
+  backingPitchQuality.set(null);
+  backingPitchAnalyzing.set(null);
+  freeMode.set(false);
+  freeModeReason.set(null);
+}

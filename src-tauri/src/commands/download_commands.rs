@@ -1,0 +1,157 @@
+//! YouTube 下載 Commands
+//!
+//! 前端可呼叫：
+//! - `check_download_tools`：檢查 yt-dlp / FFmpeg 是否已安裝
+//! - `detect_url_type`：偵測 URL 類型（影片/播放清單/頻道）
+//! - `start_download`：開始下載（背景執行，透過 event 推送進度）
+//! - `cancel_download`：取消下載
+
+use crate::core::portable_paths;
+use crate::core::ytdlp_engine::{
+    self, DownloadRequest, DownloadResult, LocalFfmpegCandidate, LocalYtdlpCandidate, ToolStatus,
+    UrlType,
+};
+use crate::error::AppError;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tauri::{AppHandle, State};
+
+/// 全域取消旗標，供前端呼叫 cancel_download 時使用。
+pub struct DownloadCancelFlag(pub Arc<AtomicBool>);
+
+/// 全域下載執行旗標，後端保證同時間只跑一個 yt-dlp 任務。
+pub struct DownloadRunFlag(pub Arc<AtomicBool>);
+
+struct DownloadRunGuard {
+    flag: Arc<AtomicBool>,
+}
+
+impl DownloadRunGuard {
+    fn acquire(flag: Arc<AtomicBool>) -> Result<Self, AppError> {
+        flag.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .map_err(|_| AppError::Internal("已有下載任務正在進行中，請先停止目前任務。".into()))?;
+        Ok(Self { flag })
+    }
+}
+
+impl Drop for DownloadRunGuard {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::Release);
+    }
+}
+
+// ── Tauri Commands ──────────────────────────────────────────────
+
+/// 檢查 yt-dlp 與 FFmpeg 的安裝狀態。
+#[tauri::command]
+pub fn check_download_tools() -> ToolStatus {
+    ytdlp_engine::check_tool_status()
+}
+
+/// 偵測本機已安裝的 FFmpeg / ffprobe 候選，不執行外部程式。
+#[tauri::command]
+pub fn detect_local_ffmpeg() -> Result<Option<LocalFfmpegCandidate>, AppError> {
+    ytdlp_engine::detect_local_ffmpeg_candidate()
+}
+
+/// 偵測本機已安裝的 yt-dlp 候選，不執行外部程式。
+#[tauri::command]
+pub fn detect_local_ytdlp() -> Result<Option<LocalYtdlpCandidate>, AppError> {
+    ytdlp_engine::detect_local_ytdlp_candidate()
+}
+
+#[tauri::command]
+pub fn inspect_local_ytdlp_path(path: String) -> Result<LocalYtdlpCandidate, AppError> {
+    ytdlp_engine::inspect_local_ytdlp_path(path)
+}
+
+#[tauri::command]
+pub fn inspect_local_ffmpeg_path(path: String) -> Result<LocalFfmpegCandidate, AppError> {
+    ytdlp_engine::inspect_local_ffmpeg_path(path)
+}
+
+/// 信任本機 FFmpeg：記錄偵測到的路徑與 SHA-256，之後只使用同一組檔案。
+#[tauri::command]
+pub fn trust_local_ffmpeg(
+    candidate: LocalFfmpegCandidate,
+) -> Result<LocalFfmpegCandidate, AppError> {
+    ytdlp_engine::trust_local_ffmpeg_candidate(candidate)
+}
+
+/// 信任本機 yt-dlp：記錄偵測到的路徑與 SHA-256，之後只使用同一個檔案。
+#[tauri::command]
+pub fn trust_local_ytdlp(candidate: LocalYtdlpCandidate) -> Result<LocalYtdlpCandidate, AppError> {
+    ytdlp_engine::trust_local_ytdlp_candidate(candidate)
+}
+
+/// 偵測 YouTube URL 的類型。
+#[tauri::command]
+pub fn detect_download_url_type(url: String) -> String {
+    let url_type = ytdlp_engine::detect_url_type(&url);
+    match url_type {
+        UrlType::Video => "video".into(),
+        UrlType::Playlist => "playlist".into(),
+        UrlType::Channel => "channel".into(),
+    }
+}
+
+/// 開始下載。在背景執行緒中執行 yt-dlp，透過 `ytdlp:progress` event 推送進度。
+#[tauri::command]
+pub async fn start_download(
+    app: AppHandle,
+    cancel_flag: State<'_, DownloadCancelFlag>,
+    run_flag: State<'_, DownloadRunFlag>,
+    request: DownloadRequest,
+) -> Result<DownloadResult, AppError> {
+    let run_guard = DownloadRunGuard::acquire(run_flag.0.clone())?;
+
+    // 重設取消旗標
+    cancel_flag.0.store(false, Ordering::Relaxed);
+    let flag = cancel_flag.0.clone();
+
+    // 在 blocking 執行緒中跑（yt-dlp 是 subprocess，會阻塞）
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        ytdlp_engine::run_download(&app, request, flag)
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("下載任務失敗: {}", e)))?;
+
+    drop(run_guard);
+    result
+}
+
+/// 取消目前的下載。
+#[tauri::command]
+pub fn cancel_download(cancel_flag: State<'_, DownloadCancelFlag>) {
+    cancel_flag.0.store(true, Ordering::Relaxed);
+}
+
+/// 取得預設下載目錄（桌面或下載資料夾）。
+#[tauri::command]
+pub fn get_default_download_dir() -> Option<String> {
+    portable_paths::ensure_dir("downloads")
+        .ok()
+        .map(|p| p.to_string_lossy().to_string())
+}
+
+/// 自動下載 yt-dlp 到 app 資料夾。
+/// 透過 `ytdlp:install_progress` event 推送進度。
+#[tauri::command]
+pub async fn install_ytdlp(app: AppHandle) -> Result<String, AppError> {
+    let result = tauri::async_runtime::spawn_blocking(move || ytdlp_engine::download_ytdlp(&app))
+        .await
+        .map_err(|e| AppError::Internal(format!("安裝任務失敗: {}", e)))?;
+
+    result.map(|p| p.to_string_lossy().to_string())
+}
+
+/// 自動下載 FFmpeg 到 app 資料夾。
+/// 透過 `ffmpeg:install_progress` event 推送進度。
+#[tauri::command]
+pub async fn install_ffmpeg(app: AppHandle) -> Result<String, AppError> {
+    let result = tauri::async_runtime::spawn_blocking(move || ytdlp_engine::download_ffmpeg(&app))
+        .await
+        .map_err(|e| AppError::Internal(format!("安裝任務失敗: {}", e)))?;
+
+    result.map(|p| p.to_string_lossy().to_string())
+}
