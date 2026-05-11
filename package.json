@@ -1,13 +1,14 @@
 {
   "name": "vocalsync-studio",
   "private": true,
-  "version": "0.3.6",
+  "version": "0.3.7",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "tauri:build:release": "node scripts/tauri-build-release.mjs",
     "build:docs": "node scripts/build-user-guide.mjs",
     "pack:portable-docs": "node scripts/pack-portable-docs.mjs",
     "pack:portable": "node scripts/pack-portable.mjs --flavor=base",

@@ -1,8 +1,31 @@
 # VocalSync Studio Security Review
 
-Review date: 2026-05-08; v0.3.3/v0.3.6 addenda: 2026-05-10
-Reviewed version: v0.2.19; v0.3.3 Whisper downloader and v0.3.6 portable session addenda included below
+Review date: 2026-05-08; v0.3.3/v0.3.6 addenda: 2026-05-10; v0.3.7 release privacy addendum: 2026-05-11
+Reviewed version: v0.2.19; v0.3.3 Whisper downloader, v0.3.6 portable session, and v0.3.7 release privacy addenda included below
 Scope: `src/`, `src-tauri/`, `scripts/`, Tauri config, npm/Rust dependency advisories.
+
+## 2026-05-11 v0.3.7 Release Privacy Addendum
+
+Scope: published portable zip contents, release executable strings, generated user-guide HTML, source tree strings, and portable packaging safeguards.
+
+Finding:
+- v0.3.6 portable release embedded local Rust build paths in `vocalsync-studio.exe`, including the Windows account name in `C:\Users\<user>\.cargo\...`.
+- v0.3.6 source also contained one Windows test fixture with a local username-shaped path.
+- Generated user-guide HTML still documented an AppData fallback for bundled tools.
+
+Fix:
+- v0.3.7 release builds now run through `npm.cmd run tauri:build:release`, which temporarily configures Cargo `--remap-path-prefix` rules and removes the temporary config after the build.
+- `npm.cmd run pack:portable` now refuses to create a zip when packaged files contain the local user name, home path, or workspace path.
+- The test fixture now uses `C:\Users\example\...`.
+- User guides now state that tools stay inside the portable root and that users should move the portable folder to a writable location when needed.
+
+Verification:
+- `npm.cmd run build:docs`
+- `npm.cmd run tauri:build:release`
+- `npm.cmd run pack:portable`
+- Extracted `VocalSync.Studio.Portable.0.3.7.zip` and scanned for local user paths, workspace paths, AppData fallback text, secret/token patterns, stale settings/session/manifest/cache files, and bundled Whisper model names.
+
+Portable artifact: `src-tauri/target/release/bundle/portable/VocalSync.Studio.Portable.0.3.7.zip`; SHA-256 `bd3960a072eeccf3647861641333cf839be8f600fd6e615317eb0ea26d59c9cf`.
 
 ## 2026-05-10 v0.3.6 Portable Session Addendum
 

@@ -5,6 +5,7 @@ node_modules/
 dist/
 dist-docs/
 src-tauri/target/
+src-tauri/.cargo/
 
 # IDE
 .vscode/
@@ -30,6 +31,8 @@ src-tauri/gen/
 # Local source-separation worker build artifacts
 .worker-build/
 workers/separation/
+_tmp/
+screenshots/
 
 # Session handoff / audit docs (development only)
 *_HANDOFF.md

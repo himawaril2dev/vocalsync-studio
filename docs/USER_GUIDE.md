@@ -174,7 +174,7 @@ VocalSync Studio 是一間**桌面練唱室**，讓想練習唱歌的你可以�
 - **使用本機工具**：可偵測你電腦上的 yt-dlp / FFmpeg；按下信任後會記錄路徑與 SHA-256，之後只執行同一個已驗證檔案
 - **yt-dlp 自動安裝**：從 GitHub Releases 下載 `yt-dlp.exe`，驗證 SHA-256 後優先放在免安裝包根目錄
 - **FFmpeg 自動安裝**：從固定的 essentials build 下載壓縮檔，驗證 SHA-256 後解壓 `ffmpeg.exe` / `ffprobe.exe`，優先放在免安裝包根目錄
-- **備援位置**：免安裝包根目錄無法寫入時，工具會放到使用者 AppData 的 `com.vocalsync.studio/bin`
+- **寫入位置**：工具只會放在免安裝包根目錄；若根目錄不可寫，請把整個資料夾移到可寫入的位置後再安裝
 
 若你的公司網路擋了對外連線，建議先用系統套件管理器或可信來源安裝 yt-dlp / FFmpeg，再回到 Download tab 按「偵測本機工具」並信任。
 

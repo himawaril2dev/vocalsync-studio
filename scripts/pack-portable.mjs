@@ -23,6 +23,7 @@ import { createWriteStream } from "node:fs";
 import { spawn } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import https from "node:https";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -64,6 +65,61 @@ async function copyDir(src, dst) {
   }
 }
 
+async function listFiles(root) {
+  const files = [];
+  const entries = await readdir(root, { withFileTypes: true });
+  for (const entry of entries) {
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...(await listFiles(path)));
+    } else if (entry.isFile()) {
+      files.push(path);
+    }
+  }
+  return files;
+}
+
+function localLeakNeedles() {
+  const username = os.userInfo().username;
+  const home = resolve(os.homedir());
+  const values = [
+    home,
+    ROOT,
+    process.env.USERPROFILE,
+    process.env.HOME,
+    username && username.length >= 3 ? username : null,
+  ].filter(Boolean);
+  return [...new Set(values)].flatMap((value) => [
+    { label: value, bytes: Buffer.from(value, "utf8") },
+    { label: value, bytes: Buffer.from(value, "utf16le") },
+  ]);
+}
+
+async function assertNoLocalPathLeaks(root) {
+  const needles = localLeakNeedles();
+  const matches = [];
+  for (const file of await listFiles(root)) {
+    const data = await readFile(file);
+    for (const needle of needles) {
+      if (needle.bytes.length > 0 && data.includes(needle.bytes)) {
+        matches.push(`${file}: ${needle.label}`);
+      }
+    }
+  }
+  if (matches.length > 0) {
+    throw new Error(
+      [
+        "Refusing to package portable zip because local user or workspace data was found:",
+        ...matches.slice(0, 20).map((match) => `  ${match}`),
+        matches.length > 20 ? `  ... ${matches.length - 20} more` : "",
+        "Build with npm run tauri:build:release before packaging.",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+}
+
 async function copyWhisperRuntime(src, dst) {
   await mkdir(dst, { recursive: true });
   const entries = await readdir(src, { withFileTypes: true });
@@ -87,7 +143,7 @@ async function runNpm(script) {
     const child = spawn(isWin ? "npm.cmd" : "npm", ["run", script], {
       cwd: ROOT,
       stdio: "inherit",
-      shell: false,
+      shell: isWin,
     });
     child.on("error", rejectPromise);
     child.on("exit", (code) => {
@@ -358,6 +414,7 @@ async function assemble(plan, common) {
   }
   await writeFile(join(portableDir, "使用說明.html"), landingPageHtml(), "utf8");
 
+  await assertNoLocalPathLeaks(portableDir);
   await compressDir(portableDir, zipPath);
   const size = await stat(zipPath);
   const hash = await sha256(zipPath);

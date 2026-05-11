@@ -1687,8 +1687,8 @@ mod tests {
     #[test]
     fn strips_windows_verbatim_prefix_for_whisper_cli_args() {
         assert_eq!(
-            command_arg_path(Path::new(r"\\?\C:\Users\notlate\song.wav")),
-            PathBuf::from(r"C:\Users\notlate\song.wav")
+            command_arg_path(Path::new(r"\\?\C:\Users\example\song.wav")),
+            PathBuf::from(r"C:\Users\example\song.wav")
         );
         assert_eq!(
             command_arg_path(Path::new(r"\\?\UNC\server\share\song.wav")),

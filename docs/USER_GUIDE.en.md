@@ -174,7 +174,7 @@ The app does **not bundle** yt-dlp or FFmpeg. On first use, their status appears
 - **Use local tools**: Detects yt-dlp / FFmpeg already installed on your computer. After you trust them, VocalSync records their path and SHA-256, then only runs the same verified files.
 - **Auto-install yt-dlp**: Downloads `yt-dlp.exe` from GitHub Releases, verifies SHA-256, and prefers the portable root.
 - **Auto-install FFmpeg**: Downloads a pinned essentials build, verifies SHA-256, extracts `ffmpeg.exe` / `ffprobe.exe`, and prefers the portable root.
-- **Fallback location**: If the portable root is not writable, tools are installed under the user's AppData `com.vocalsync.studio/bin` folder.
+- **Install location**: Tools are kept inside the portable root. If the folder is not writable, move the whole portable folder to a writable location before installing tools.
 
 If your corporate network blocks outbound connections, install yt-dlp / FFmpeg from a trusted source first, then return to the Download tab, detect the local tools, and trust them.
 
