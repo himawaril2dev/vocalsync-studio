@@ -70,8 +70,8 @@
 
   // 已遷移至全域 toast 系統
   let videoEl = $state<HTMLVideoElement | null>(null);
-  let mixerSettingsLoaded = $state(false);
-  let mixerSettingsSaveTimer = $state<number | null>(null);
+  let mixerSettingsLoaded = false;
+  let mixerSettingsSaveTimer: number | null = null;
 
   function percentToRatio(value: unknown, fallback: number, maxPercent: number): number {
     if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
