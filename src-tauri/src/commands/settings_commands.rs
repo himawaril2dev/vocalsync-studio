@@ -77,6 +77,35 @@ pub fn update_show_startup_guide(
         .map_err(|e| AppError::Settings(e.to_string()))
 }
 
+fn ratio_to_percent(value: f32, max_percent: u16) -> u16 {
+    if !value.is_finite() {
+        return 0;
+    }
+    let percent = (value * 100.0).round();
+    percent.clamp(0.0, max_percent as f32) as u16
+}
+
+#[tauri::command]
+pub fn update_mixer_settings(
+    backing: f32,
+    mic: f32,
+    guide: f32,
+    auto_balance: bool,
+    settings: State<'_, Mutex<AppSettings>>,
+) -> Result<(), AppError> {
+    let mut current = settings
+        .lock()
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    current.backing_volume = ratio_to_percent(backing, 100);
+    current.mic_gain = ratio_to_percent(mic, 300);
+    current.guide_volume = ratio_to_percent(guide, 100);
+    current.auto_balance = auto_balance;
+    current.mixer_settings_version = 1;
+    current
+        .save()
+        .map_err(|e| AppError::Settings(e.to_string()))
+}
+
 /// 部分更新：只寫入校準延遲值並立即持久化。
 ///
 /// 用途：校準完成後前端只想更新這一欄位，不想 round-trip 整個 AppSettings。

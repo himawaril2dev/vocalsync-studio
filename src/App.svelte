@@ -11,8 +11,8 @@
     teardownEventListeners,
   } from "./lib/events";
   import ToastContainer from "./components/ToastContainer.svelte";
-  import LanguageSwitcher from "./components/LanguageSwitcher.svelte";
   import StartupGuideModal from "./components/StartupGuideModal.svelte";
+  import LanguageSwitcher from "./components/LanguageSwitcher.svelte";
   import { t } from "./i18n";
   import { invoke } from "@tauri-apps/api/core";
   import { loadedMedia } from "./stores/media";
@@ -187,6 +187,8 @@
       <span class="brand-sub">{$t("app.brand.sub")}</span>
     </div>
 
+    <LanguageSwitcher />
+
     <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
     <nav class="sidebar-nav" role="tablist" aria-label={$t("app.nav.aria")}>
       <button
@@ -233,8 +235,6 @@
         {$t("app.nav.about")}
       </button>
     </nav>
-
-    <LanguageSwitcher />
   </aside>
 
   <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->

@@ -2,8 +2,9 @@ import { derived, get, writable } from "svelte/store";
 import zhTW from "./locales/zh-TW.json";
 import en from "./locales/en.json";
 import ja from "./locales/ja.json";
+import ko from "./locales/ko.json";
 
-export type Locale = "zh-TW" | "en" | "ja";
+export type Locale = "zh-TW" | "en" | "ja" | "ko";
 
 export interface LocaleOption {
   code: Locale;
@@ -14,6 +15,7 @@ export const LOCALES: readonly LocaleOption[] = [
   { code: "zh-TW", label: "繁體中文" },
   { code: "en", label: "English" },
   { code: "ja", label: "日本語" },
+  { code: "ko", label: "한국어" },
 ] as const;
 
 const STORAGE_KEY = "vocalsync.locale";
@@ -25,10 +27,11 @@ const messages: Record<Locale, Dictionary> = {
   "zh-TW": zhTW as Dictionary,
   en: en as Dictionary,
   ja: ja as Dictionary,
+  ko: ko as Dictionary,
 };
 
 function isLocale(value: unknown): value is Locale {
-  return value === "zh-TW" || value === "en" || value === "ja";
+  return value === "zh-TW" || value === "en" || value === "ja" || value === "ko";
 }
 
 function detectLocale(): Locale {
@@ -39,6 +42,7 @@ function detectLocale(): Locale {
   if (typeof navigator !== "undefined") {
     const lang = navigator.language?.toLowerCase() ?? "";
     if (lang.startsWith("ja")) return "ja";
+    if (lang.startsWith("ko")) return "ko";
     if (lang.startsWith("zh")) return "zh-TW";
     if (lang.startsWith("en")) return "en";
   }

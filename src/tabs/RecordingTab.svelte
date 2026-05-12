@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy, onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { ask, save } from "@tauri-apps/plugin-dialog";
   import {
@@ -59,8 +60,84 @@
 
   type PanelView = "lyrics" | "sync";
 
+  interface MixerSettings {
+    backing_volume?: number;
+    mic_gain?: number;
+    guide_volume?: number;
+    auto_balance?: boolean;
+    mixer_settings_version?: number;
+  }
+
   // 已遷移至全域 toast 系統
   let videoEl = $state<HTMLVideoElement | null>(null);
+  let mixerSettingsLoaded = $state(false);
+  let mixerSettingsSaveTimer = $state<number | null>(null);
+
+  function percentToRatio(value: unknown, fallback: number, maxPercent: number): number {
+    if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+    return Math.max(0, Math.min(maxPercent, value)) / 100;
+  }
+
+  function saveMixerSettings(backing: number, mic: number, guide: number, autoBalance: boolean): void {
+    void invoke("update_mixer_settings", {
+      backing,
+      mic,
+      guide,
+      autoBalance,
+    }).catch((err) => console.warn("[settings] mixer save failed:", err));
+  }
+
+  function scheduleMixerSettingsSave(
+    backing: number,
+    mic: number,
+    guide: number,
+    autoBalance: boolean,
+  ): void {
+    if (!mixerSettingsLoaded) return;
+    if (mixerSettingsSaveTimer !== null) {
+      window.clearTimeout(mixerSettingsSaveTimer);
+    }
+    mixerSettingsSaveTimer = window.setTimeout(() => {
+      mixerSettingsSaveTimer = null;
+      saveMixerSettings(backing, mic, guide, autoBalance);
+    }, 250);
+  }
+
+  function flushMixerSettingsSave(): void {
+    if (!mixerSettingsLoaded) return;
+    if (mixerSettingsSaveTimer !== null) {
+      window.clearTimeout(mixerSettingsSaveTimer);
+      mixerSettingsSaveTimer = null;
+    }
+    saveMixerSettings(
+      get(backingVolume),
+      get(micGain),
+      get(guideVolume),
+      get(autoBalanceMixin),
+    );
+  }
+
+  onMount(() => {
+    void invoke<MixerSettings>("load_settings")
+      .then((settings) => {
+        if ((settings.mixer_settings_version ?? 0) >= 1) {
+          backingVolume.set(
+            percentToRatio(settings.backing_volume, DEFAULT_BACKING_VOLUME, 100),
+          );
+          micGain.set(percentToRatio(settings.mic_gain, DEFAULT_MIC_GAIN, 300));
+          guideVolume.set(percentToRatio(settings.guide_volume, DEFAULT_GUIDE_VOLUME, 100));
+          if (typeof settings.auto_balance === "boolean") {
+            autoBalanceMixin.set(settings.auto_balance);
+          }
+        }
+      })
+      .catch((err) => console.warn("[settings] mixer load failed:", err))
+      .finally(() => {
+        mixerSettingsLoaded = true;
+      });
+  });
+
+  onDestroy(flushMixerSettingsSave);
 
   // ── 進度條拖動狀態 ──
   // 播放中後端 ~20Hz 推送 elapsed，若 slider 直接綁 $elapsed 會在拖動過程中被覆蓋回去，
@@ -157,6 +234,7 @@
     invoke("set_guide_vocal_enabled", {
       enabled: Boolean($guideVocalPath && $guideVocalEnabled),
     }).catch(() => {});
+    scheduleMixerSettingsSave($backingVolume, $micGain, $guideVolume, $autoBalanceMixin);
   });
 
   function onSeekInput(e: Event) {

@@ -99,6 +99,7 @@ pub fn run() {
             commands::whisper_commands::transcribe_vocals_with_whisper,
             commands::settings_commands::load_settings,
             commands::settings_commands::update_calibrated_latency,
+            commands::settings_commands::update_mixer_settings,
             commands::settings_commands::update_pitch_engine,
             commands::settings_commands::update_show_startup_guide,
             commands::settings_commands::load_project_session,

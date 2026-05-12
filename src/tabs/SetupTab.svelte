@@ -1192,10 +1192,6 @@
           </section>
         </div>
 
-        <div class="uvr-note">
-          <strong>{$t("setup.separation.external.recommendTitle")}</strong>
-          <p>{$t("setup.separation.external.recommendBody")}</p>
-        </div>
         <p class="sub-hint">{$t("setup.separation.external.orderHint")}</p>
       </div>
     {/if}
@@ -1827,28 +1823,6 @@
     color: #5c5248;
     font-size: 13px;
     line-height: 1.6;
-  }
-
-  .uvr-note {
-    padding: 14px 16px;
-    border-radius: 14px;
-    border: 1px solid rgba(159, 122, 0, 0.3);
-    background: #fff8e6;
-    color: #5c4400;
-  }
-
-  .uvr-note strong {
-    display: block;
-    margin-bottom: 6px;
-    font-size: 14px;
-    color: #3d3630;
-  }
-
-  .uvr-note p {
-    margin: 0;
-    color: #5c5248;
-    font-size: 13px;
-    line-height: 1.7;
   }
 
   @media (max-width: 900px) {

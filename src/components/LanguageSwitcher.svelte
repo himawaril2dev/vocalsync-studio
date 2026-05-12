@@ -1,13 +1,17 @@
 <script lang="ts">
   import { locale, setLocale, t, LOCALES, type Locale } from "../i18n";
 
+  type Variant = "sidebar" | "toolbar";
+
+  let { variant = "sidebar" }: { variant?: Variant } = $props();
+
   function onChange(e: Event) {
     const value = (e.currentTarget as HTMLSelectElement).value as Locale;
     setLocale(value);
   }
 </script>
 
-<div class="lang-switcher">
+<div class="lang-switcher" class:toolbar={variant === "toolbar"}>
   <svg
     class="lang-icon"
     width="14"
@@ -24,6 +28,7 @@
     <line x1="2" y1="12" x2="22" y2="12" />
     <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
   </svg>
+  <span class="lang-label">{$t("language.switcher.label")}</span>
   <select
     class="lang-select"
     value={$locale}
@@ -48,6 +53,16 @@
     transition: background var(--transition-fast), color var(--transition-fast);
   }
 
+  .lang-switcher.toolbar {
+    margin: 0;
+    margin-left: auto;
+    min-width: 190px;
+    width: fit-content;
+    background: #fff;
+    border: 1px solid var(--color-border);
+    color: var(--color-text-secondary);
+  }
+
   .lang-switcher:hover {
     background: var(--color-bg-hover);
     color: var(--color-text-secondary);
@@ -55,6 +70,12 @@
 
   .lang-icon {
     flex-shrink: 0;
+  }
+
+  .lang-label {
+    flex-shrink: 0;
+    font-size: 12px;
+    font-weight: 600;
   }
 
   .lang-select {

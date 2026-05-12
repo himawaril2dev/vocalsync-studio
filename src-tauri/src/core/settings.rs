@@ -9,9 +9,13 @@ pub struct AppSettings {
     pub last_backing_path: String,
     pub backing_volume: u16,
     pub mic_gain: u16,
+    #[serde(default = "default_guide_volume")]
+    pub guide_volume: u16,
     pub export_volume: u16,
     pub export_prefix: String,
     pub auto_balance: bool,
+    #[serde(default)]
+    pub mixer_settings_version: u8,
     pub playback_speed: f32,
     pub transpose_semitones: i8,
     pub window_geometry: Option<String>,
@@ -31,6 +35,10 @@ fn default_show_startup_guide() -> bool {
     true
 }
 
+fn default_guide_volume() -> u16 {
+    25
+}
+
 fn default_download_folder() -> String {
     portable_paths::ensure_dir("downloads")
         .unwrap_or_else(|_| portable_paths::path("downloads"))
@@ -44,11 +52,13 @@ impl Default for AppSettings {
             theme: "light".to_string(),
             download_folder: default_download_folder(),
             last_backing_path: String::new(),
-            backing_volume: 5,
+            backing_volume: 10,
             mic_gain: 100,
+            guide_volume: default_guide_volume(),
             export_volume: 50,
             export_prefix: String::new(),
             auto_balance: true,
+            mixer_settings_version: 0,
             playback_speed: 1.0,
             transpose_semitones: 0,
             window_geometry: None,
