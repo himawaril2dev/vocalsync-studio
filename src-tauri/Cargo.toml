@@ -20,7 +20,7 @@ serde_json = "1"
 cpal = "0.15"
 hound = "3.5"
 ringbuf = "0.4"
-symphonia = { version = "0.5", features = ["mp3", "isomp4", "aac", "flac", "vorbis", "wav"] }
+symphonia = { version = "0.6", features = ["mp3", "isomp4", "aac", "flac", "vorbis", "wav"] }
 biquad = "0.6"
 thiserror = "2"
 log = "0.4"
