@@ -22,7 +22,7 @@
     "@sveltejs/vite-plugin-svelte": "^5",
     "@tauri-apps/cli": "^2.11.1",
     "marked": "^18.0.2",
-    "svelte": "^5.55.7",
+    "svelte": "^5.56.0",
     "typescript": "^5",
     "vite": "^6"
   }
