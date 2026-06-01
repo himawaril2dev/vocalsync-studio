@@ -11,7 +11,6 @@
   "app.error.title": "예상치 못한 오류가 발생했습니다",
   "app.error.unknown": "알 수 없는 오류",
   "app.error.retry": "페이지 다시 불러오기",
-
   "startupGuide.title": "사용 가이드",
   "startupGuide.subtitle": "VocalSync는 원곡만으로 시작하거나 반주와 원 보컬을 함께 준비해 사용할 수 있습니다. 음원 분리는 UVR5를 사용하고, VocalSync는 녹음, 피치 곡선, 가이드 보컬, 내보내기에 집중합니다.",
   "startupGuide.step1.title": "원곡 또는 반주 준비",
@@ -28,7 +27,6 @@
   "startupGuide.tip.body": "빠르게 확인하려면 UVR5에서 일반적인 MDX/UVR 모델로 시작하세요. 더 깨끗한 보컬 기준이 필요하면 UVR5에서 한 번 더 분리한 뒤 최종 vocals.wav를 VocalSync로 가져오세요.",
   "startupGuide.showAgain": "다음 실행 때 이 가이드 표시",
   "startupGuide.close": "시작하기",
-
   "uvrGuide.entry.title": "UVR5란?",
   "uvrGuide.entry.body": "UVR5는 보컬과 반주를 분리하는 널리 쓰이는 도구입니다. 원곡을 vocals.wav와 instrumental.wav로 분리한 뒤 VocalSync에서 피치 곡선, 가이드 보컬, 녹음에 사용하세요.",
   "uvrGuide.entry.action": "UVR5 가이드 열기",
@@ -59,10 +57,8 @@
   "uvrGuide.faq.noise.body": "다른 모델을 사용하거나 더 깨끗한 소스를 쓰거나, UVR5에서 보컬 정리 모델로 두 번째 패스를 실행해 보세요. VocalSync에는 출시용 드라이 보컬보다 선명한 멜로디 기준이 더 중요합니다.",
   "uvrGuide.faq.sync.title": "반주와 보컬이 맞지 않아요",
   "uvrGuide.faq.sync.body": "가장 쉬운 방법은 같은 원곡에서 나온 instrumental.wav와 vocals.wav를 사용하는 것입니다. 다른 반주 버전을 쓰는 경우 VocalSync가 자동 정렬을 할 수 있고, 수동으로 미세 조정할 수 있습니다.",
-
   "language.switcher.label": "언어",
   "language.switcher.aria": "인터페이스 언어 전환",
-
   "setup.section.download": "YouTube 다운로드",
   "setup.section.song": "곡 및 피치 소스",
   "setup.section.backing": "연습 반주",
@@ -71,11 +67,9 @@
   "setup.section.separation": "UVR5 보컬 준비",
   "setup.section.device": "장치 선택",
   "setup.section.calibration": "지연 보정",
-
   "setup.song.hint": "먼저 노래할 반주를 선택한 뒤 vocals.wav 또는 MIDI를 피치 곡선과 가이드 보컬 소스로 가져오세요. 원곡만 있다면 먼저 UVR5로 instrumental.wav와 vocals.wav를 만드세요.",
   "setup.song.backing.title": "연습 반주",
   "setup.song.melody.title": "피치 곡선 및 가이드",
-
   "setup.backing.hint.empty": "연습을 시작하려면 반주를 불러오세요",
   "setup.backing.hint.loading": "불러오는 중...",
   "setup.backing.hint.loaded": "{kind} 불러옴: {name} ({min}:{sec})",
@@ -88,7 +82,6 @@
   "setup.backing.kind.video": "영상",
   "setup.backing.dialog.title": "반주 파일 선택",
   "setup.backing.dialog.filter": "오디오/영상",
-
   "setup.lyrics.status.empty": "불러온 가사가 없습니다",
   "setup.lyrics.status.parsing": "파싱 중...",
   "setup.lyrics.status.loaded": "가사 {n}줄 불러옴 ({name})",
@@ -104,7 +97,6 @@
   "setup.lyrics.action.clear": "가사 지우기",
   "setup.lyrics.dialog.title": "가사 파일 선택",
   "setup.lyrics.dialog.filter": "가사 파일",
-
   "setup.melody.hint.empty.prefix": "기준 멜로디로 ",
   "setup.melody.hint.empty.vocals": "미리 분리한 보컬 트랙",
   "setup.melody.hint.empty.or": " 또는 ",
@@ -135,12 +127,10 @@
   "setup.melody.source.midi": "MIDI: 트랙 {n}",
   "setup.melody.source.importedVocals": "유성 구간 {ratio}%",
   "setup.melody.source.separated": "보컬 분리: {model}",
-
   "setup.guide.toggle": "가이드 보컬로 재생: {name}",
   "setup.guide.hint": "가이드 보컬은 모니터링 전용이며 내보낸 파일에는 섞이지 않습니다.",
   "setup.guide.status.cleared": "보컬 트랙 지워짐",
   "setup.guide.status.loadFailedAppend": "{status} (가이드 보컬 불러오기 실패: {error})",
-
   "setup.separation.hint": "UVR5로 원곡을 vocals.wav와 instrumental.wav로 분리한 뒤 VocalSync로 돌아와 반주와 보컬 트랙을 가져오세요. VocalSync는 녹음, 피치 곡선, 가이드 보컬, 가사, 내보내기에 집중합니다.",
   "setup.separation.external.step1.title": "UVR5에서 원곡 분리",
   "setup.separation.external.step1.body": "원곡을 UVR5에 넣고 vocals.wav와 instrumental.wav를 내보냅니다. 더 깨끗한 보컬이 필요하면 UVR5 안에서 두 번째 분리 패스를 실행하세요.",
@@ -153,7 +143,6 @@
   "setup.separation.external.importBacking": "연습 반주 가져오기",
   "setup.separation.external.importVocals": "vocals.wav 가져오기",
   "setup.separation.external.orderHint": "먼저 반주를 가져오고, 그 다음 vocals.wav를 가져오세요. 새 반주를 가져오면 곡이 섞이지 않도록 현재 피치 곡선과 가이드 보컬이 초기화됩니다.",
-
   "setup.alignment.title": "타임라인 정렬",
   "setup.alignment.badge.noNeed": "정렬 필요 없음",
   "setup.alignment.badge.high": "높은 신뢰도",
@@ -167,7 +156,6 @@
   "setup.alignment.fineTune.reset.title": "미세 조정 초기화",
   "setup.alignment.fineTune.reset.text": "초기화",
   "setup.alignment.offset.seconds": "초",
-
   "setup.device.input.label": "마이크 (입력):",
   "setup.device.output.label": "헤드폰 (출력):",
   "setup.device.pitch.label": "피치 감지 엔진:",
@@ -178,7 +166,6 @@
   "setup.device.modelFolder.openCrepe": "CREPE 모델 폴더 열기",
   "setup.device.modelFolder.opened": "모델 폴더 열림: {path}",
   "setup.device.modelFolder.failed": "모델 폴더 열기 실패: {error}",
-
   "setup.calibration.hint": "녹음 중 하드웨어와 소프트웨어 지연을 보정합니다. 마지막 보정값은 재시작 시 자동으로 불러옵니다",
   "setup.calibration.auto.title": "자동 박자 탭 보정",
   "setup.calibration.auto.hint": "헤드폰을 착용하고 아래 버튼을 클릭하세요. 시스템이 우드블록 박자 8개를 재생합니다. 처음 2개는 워밍업, 마지막 6개는 측정용입니다. 각 박자에 맞춰 마이크에 박수나 짧은 소리를 내세요.",
@@ -189,7 +176,6 @@
   "setup.calibration.result.success": "보정 완료! 지연 {ms} ms (표준편차 {std} ms)",
   "setup.calibration.result.successNoStd": "보정 완료! 지연 {ms} ms",
   "setup.calibration.result.failed": "보정 실패: {error}",
-
   "calibration.canvas.title": "공이 기준선에 닿을 때 마이크에 박수를 치세요!",
   "calibration.canvas.warmup": "처음 {n}박자는 리듬을 잡기 위한 워밍업이며 측정에 포함되지 않습니다",
   "calibration.canvas.measuring": "측정 중 (총 {n}박자)",
@@ -199,7 +185,6 @@
   "calibration.canvas.stdDev": "표준편차 {ms} ms (낮을수록 안정적)",
   "calibration.canvas.warmupBadge": "워밍업",
   "calibration.canvas.warmupLabel": "W{n}",
-
   "download.tool.ytdlp.installed": "yt-dlp {version}",
   "download.tool.ytdlp.notInstalled": "설치되지 않음",
   "download.tool.ffmpeg.installed": "설치됨",
@@ -231,7 +216,6 @@
   "download.tool.ytdlp.localNotFound": "로컬 yt-dlp를 찾지 못했습니다. yt-dlp가 설치되어 있고 PATH에서 사용할 수 있는지 확인하세요.",
   "download.tool.ytdlp.localDetectFailed": "로컬 yt-dlp 감지 실패: {error}",
   "download.tool.ytdlp.localTrustFailed": "로컬 yt-dlp 신뢰 실패: {error}",
-
   "download.tool.ffmpeg.hint": "FFmpeg가 설치되어 있지 않습니다. 영상 다운로드와 오디오 변환에는 FFmpeg가 필요합니다.",
   "download.tool.ffmpeg.install": "FFmpeg 자동 설치 (약 80 MB)",
   "download.tool.ffmpeg.localHint": "이 컴퓨터에 이미 설치된 FFmpeg도 사용할 수 있습니다. 신뢰 후 VocalSync가 경로와 SHA-256을 기록합니다.",
@@ -251,7 +235,6 @@
   "download.tool.ffmpeg.localDetectFailed": "로컬 FFmpeg 감지 실패: {error}",
   "download.tool.ffmpeg.localTrustFailed": "로컬 FFmpeg 신뢰 실패: {error}",
   "download.tool.ytdlp.manualHint": "Windows에서 VocalSync는 사용자가 로컬에서 승인한 도구를 신뢰합니다. 자동 설치는 portable root를 우선 사용하고 다운로드된 파일을 검증합니다.",
-
   "download.form.url.label": "YouTube URL",
   "download.form.url.placeholder": "https://www.youtube.com/watch?v=...",
   "download.form.format.label": "형식",
@@ -292,7 +275,6 @@
   "download.subtitle.loadingAsLyrics": "불러오는 중...",
   "download.subtitle.loadedAsLyrics": "가사 {n}줄 불러옴",
   "download.subtitle.loadFailed": "불러오기 실패: {error}",
-
   "recording.transport.state.idle": "대기",
   "recording.transport.state.previewing": "미리 듣는 중",
   "recording.transport.state.recording": "녹음 중",
@@ -325,7 +307,7 @@
   "recording.toast.clearFailed": "지우기 실패: {error}",
   "recording.toast.exportFailed": "내보내기 실패: {error}",
   "recording.toast.clearedCanRerecord": "녹음을 지웠습니다. 처음부터 다시 녹음할 수 있습니다",
-  "recording.toast.exportSuccess": "내보내기 완료\n보컬: {vocal}\n믹스: {mix}",
+  "recording.toast.exportSuccess": "내보내기 완료\n보컬 파일: {vocal}\n믹스 파일(활성화된 효과 포함): {mix}",
   "recording.toast.loopBAfterA": "B 지점은 A 지점보다 뒤에 있어야 합니다",
   "recording.dialog.forwardRecord.message": "현재 재생 위치({now}초)가 일시정지 지점({baseline}초)보다 앞에 있습니다. 계속 녹음하면 {now}초 이후에 이미 녹음된 내용이 삭제됩니다. 계속할까요?",
   "recording.dialog.forwardRecord.title": "앞쪽 위치에서 녹음 확인",
@@ -364,14 +346,18 @@
   "recording.loop.b.default": "B 지점 설정 (B)",
   "recording.loop.clear.title": "반복 지우기",
   "recording.export.button": "내보내기",
+  "recording.export.naming.label": "자동 이름",
+  "recording.export.naming.title": "반주 이름과 날짜로 자동 이름을 지정합니다. 끄면 매번 직접 지정합니다",
+  "recording.export.naming.manual": "매번 지정",
+  "recording.export.naming.auto": "반주+날짜",
+  "recording.export.error.noBackingPath": "자동 내보내기에 사용할 반주 파일 경로를 찾을 수 없습니다",
   "recording.playback.button": "재생",
   "recording.playback.title": "녹음 재생",
   "recording.clearRecord.button": "녹음 지우기",
   "recording.clearRecord.title": "현재 녹음을 지우고 다시 시작",
-  "recording.autoBalance.tooltip": "켜져 있으면 내보낸 믹스에서 마이크를 반주보다 약 +2 dB 더 앞으로 배치해 목소리가 또렷하게 들리게 합니다. 꺼져 있으면 반주/마이크 슬라이더 비율을 그대로 따릅니다.",
+  "recording.autoBalance.tooltip": "켜져 있으면 재생과 믹스 내보내기 모두에서 마이크와 반주 음량을 자동으로 맞춰 목소리가 더 또렷하게 들립니다. 꺼져 있으면 현재 반주/마이크 슬라이더 비율로 재생하고 내보냅니다.",
   "recording.autoBalance.aria": "정규화 정보",
   "recording.autoBalance.label": "정규화",
-
   "pitch.header.title": "피치 곡선",
   "pitch.header.alignment": "정렬 {sign}{offset}초",
   "pitch.header.noMelody": "준비 페이지에서 반주와 보컬 트랙을 불러오세요",
@@ -393,7 +379,6 @@
   "pitchIndicator.status.high": "높음",
   "pitchIndicator.status.low": "낮음",
   "pitchIndicator.empty": "음성이 감지되지 않음",
-
   "lyricsPanel.empty.title": "불러온 가사가 없습니다",
   "lyricsPanel.empty.hint": "준비 페이지에서 .lrc 또는 .srt 파일을 불러오세요",
   "lyricsPanel.toast.loopCancelled": "반복 취소됨",
@@ -434,7 +419,6 @@
   "lyricsSync.timingStatus.empty": "불러온 가사가 없습니다",
   "lyricsSync.timingStatus.notAligned": "아직 정렬되지 않음",
   "lyricsSync.timingStatus.aligned": "정렬됨: {count}/{total}줄",
-
   "lyricsSync.whisper.title": "Whisper 엔진",
   "lyricsSync.whisper.action.runner": "러너 선택",
   "lyricsSync.whisper.action.downloadRunner": "러너 설치",
@@ -483,7 +467,6 @@
   "lyricsSync.export.dialog.title": "LRC 가사 내보내기",
   "lyricsSync.status.saved": "저장됨: {path}",
   "lyricsSync.status.saveFailed": "저장 실패: {error}",
-
   "about.tagline": "자신의 목소리를 제대로 듣고, 매 연습을 더 선명하게 개선하고 싶은 사람을 위한 데스크톱 연습실",
   "about.disclosure.title": "공개 안내",
   "about.disclosure.body": "작성자는 이전 프로그래밍 경험이 없습니다. 이 프로젝트는 AI 협업(Claude / Codex)을 통해 만들어졌으며, 아키텍처, 코드, UI가 모두 AI로 생성되었습니다. 모든 기능은 테스트와 교차 모델 리뷰(Claude 구현, Codex 독립 감사)를 거쳤습니다. 사용 목적에 맞춰 위험을 직접 판단해 주세요.",

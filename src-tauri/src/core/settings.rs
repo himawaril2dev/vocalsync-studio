@@ -13,6 +13,8 @@ pub struct AppSettings {
     pub guide_volume: u16,
     pub export_volume: u16,
     pub export_prefix: String,
+    #[serde(default = "default_export_naming_mode")]
+    pub export_naming_mode: String,
     pub auto_balance: bool,
     #[serde(default)]
     pub mixer_settings_version: u8,
@@ -39,6 +41,10 @@ fn default_guide_volume() -> u16 {
     25
 }
 
+fn default_export_naming_mode() -> String {
+    "auto".to_string()
+}
+
 fn default_download_folder() -> String {
     portable_paths::ensure_dir("downloads")
         .unwrap_or_else(|_| portable_paths::path("downloads"))
@@ -57,6 +63,7 @@ impl Default for AppSettings {
             guide_volume: default_guide_volume(),
             export_volume: 50,
             export_prefix: String::new(),
+            export_naming_mode: default_export_naming_mode(),
             auto_balance: true,
             mixer_settings_version: 0,
             playback_speed: 1.0,

@@ -1,7 +1,7 @@
 //! CREPE AI 音高偵測引擎
 //!
 //! 使用 CREPE tiny ONNX 模型（~1.9MB, MIT license）做音高偵測，
-//! 準確度遠超 PYIN，對分離人聲的 reverb artifact 更 robust。
+//! 準確度遠超 PYIN，對分離人聲的 vocal artifact 更 robust。
 //!
 //! # 模型規格
 //!

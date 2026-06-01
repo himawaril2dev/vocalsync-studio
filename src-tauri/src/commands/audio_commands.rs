@@ -102,12 +102,13 @@ pub fn start_playback(
     start_frame: Option<u64>,
     output_device: Option<usize>,
     latency_ms: f64,
+    auto_balance: bool,
     engine: State<'_, Mutex<AudioEngine>>,
 ) -> Result<(), AppError> {
     let mut engine = engine
         .lock()
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    engine.start_playback(app, start_frame, output_device, latency_ms)
+    engine.start_playback(app, start_frame, output_device, latency_ms, auto_balance)
 }
 
 #[tauri::command]
@@ -192,6 +193,7 @@ pub fn set_guide_vocal_enabled(
 pub fn export_audio(
     dir: String,
     prefix: String,
+    auto_increment: bool,
     auto_balance: bool,
     latency_ms: f64,
     engine: State<'_, Mutex<AudioEngine>>,
@@ -201,7 +203,7 @@ pub fn export_audio(
     let engine = engine
         .lock()
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    engine.export(&dir, &prefix, auto_balance, latency_ms)
+    engine.export(&dir, &prefix, auto_increment, auto_balance, latency_ms)
 }
 
 #[tauri::command]

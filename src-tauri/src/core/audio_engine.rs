@@ -27,6 +27,7 @@ use crate::events::{
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ringbuf::{traits::*, HeapCons, HeapProd, HeapRb};
 use serde::Serialize;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -35,6 +36,8 @@ use tauri::AppHandle;
 use timestretch::{EdmPreset, EnvelopePreset, StreamProcessor, StretchParams};
 
 const PITCH_BUF_SIZE: usize = 2048;
+const STOP_REASON_NONE: u32 = 0;
+const STOP_REASON_MANUAL: u32 = 1;
 
 // ── 型別 ──────────────────────────────────────────────────────────
 
@@ -53,6 +56,35 @@ pub enum EngineState {
 pub struct ExportPaths {
     pub vocal_path: String,
     pub mix_path: String,
+}
+
+fn export_output_paths(dir: &Path, prefix: &str) -> (PathBuf, PathBuf) {
+    (
+        dir.join(format!("{prefix}_vocal.wav")),
+        dir.join(format!("{prefix}_mix.wav")),
+    )
+}
+
+fn resolve_export_paths(
+    dir: &str,
+    prefix: &str,
+    auto_increment: bool,
+) -> Result<(String, PathBuf, PathBuf), AppError> {
+    let dir = Path::new(dir);
+    for index in 0..10_000 {
+        let candidate = if index == 0 {
+            prefix.to_string()
+        } else {
+            format!("{prefix} ({index})")
+        };
+        let (vocal_path, mix_path) = export_output_paths(dir, &candidate);
+        if !auto_increment || (!vocal_path.exists() && !mix_path.exists()) {
+            return Ok((candidate, vocal_path, mix_path));
+        }
+    }
+    Err(AppError::Audio(
+        "Could not find an unused export file name".to_string(),
+    ))
 }
 
 /// 載入伴奏的結果（給前端判斷是否要顯示影片）
@@ -117,6 +149,8 @@ struct SharedState {
     playback_pos: Arc<AtomicU64>,
     /// 是否正在執行
     running: Arc<AtomicBool>,
+    /// 手動停止旗標，用來區分自然播放結束與使用者暫停/停止。
+    stop_reason: Arc<AtomicU32>,
     /// 伴奏播放音量（f32 bits）
     backing_volume: Arc<AtomicU32>,
     /// 麥克風增益（f32 bits）
@@ -143,6 +177,7 @@ impl SharedState {
         Self {
             playback_pos: Arc::new(AtomicU64::new(0)),
             running: Arc::new(AtomicBool::new(false)),
+            stop_reason: Arc::new(AtomicU32::new(STOP_REASON_NONE)),
             backing_volume: Arc::new(AtomicU32::new(0.05_f32.to_bits())),
             mic_gain: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
             guide_volume: Arc::new(AtomicU32::new(0.25_f32.to_bits())),
@@ -534,8 +569,38 @@ impl AudioEngine {
     }
 
     pub fn seek(&mut self, seconds: f64) {
-        let frame = (seconds.max(0.0) * self.sample_rate as f64) as u64;
+        let mut frame = (seconds.max(0.0) * self.sample_rate as f64) as u64;
+        if let Some(backing) = self.backing_data.as_ref() {
+            let total_frames = (backing.len() / self.backing_channels.max(1) as usize) as u64;
+            frame = frame.min(total_frames);
+        }
+        if self.state == EngineState::Recording {
+            self.sync_recording_timeline_to_frame(frame);
+        }
         self.shared.playback_pos.store(frame, Ordering::Relaxed);
+    }
+
+    fn sync_recording_timeline_to_frame(&self, frame: u64) {
+        let target_len = frame.min(usize::MAX as u64) as usize;
+        if let Ok(mut v) = self.vocal_buffer.lock() {
+            match v.len().cmp(&target_len) {
+                std::cmp::Ordering::Less => {
+                    v.resize(target_len, 0.0);
+                }
+                std::cmp::Ordering::Greater => {
+                    v.truncate(target_len);
+                }
+                std::cmp::Ordering::Equal => {}
+            }
+        }
+
+        let target_secs = frame as f64 / self.sample_rate.max(1) as f64;
+        if let Ok(mut t) = self.pitch_track.lock() {
+            t.truncate_after(target_secs);
+        }
+        if let Ok(mut p) = self.shared.current_pitch.lock() {
+            *p = None;
+        }
     }
 
     /// 清除目前錄音資料並回到起點，供前端「清除錄音」按鈕使用。
@@ -647,6 +712,7 @@ impl AudioEngine {
             backing,
             start_frame,
             false,
+            false,
             output_device,
             0.0,
             input_device,
@@ -664,6 +730,7 @@ impl AudioEngine {
         start_frame: Option<u64>,
         output_device: Option<usize>,
         latency_ms: f64,
+        auto_balance: bool,
     ) -> Result<(), AppError> {
         if self.state != EngineState::Idle {
             return Err(AppError::Audio("引擎正忙，請先停止".to_string()));
@@ -678,6 +745,7 @@ impl AudioEngine {
             backing,
             start_frame,
             true,
+            auto_balance,
             output_device,
             latency_ms,
             None,
@@ -693,6 +761,7 @@ impl AudioEngine {
         backing: Arc<Vec<f32>>,
         start_frame: Option<u64>,
         mix_vocal: bool,
+        auto_balance: bool,
         output_device: Option<usize>,
         latency_ms: f64,
         input_device: Option<usize>,
@@ -707,9 +776,12 @@ impl AudioEngine {
         let vocal_buffer = self.vocal_buffer.clone();
         let guide_vocal = self.guide_vocal.clone();
 
-        if let Some(sf) = start_frame {
-            shared.playback_pos.store(sf, Ordering::Relaxed);
-        }
+        shared
+            .playback_pos
+            .store(start_frame.unwrap_or(0), Ordering::Relaxed);
+        shared
+            .stop_reason
+            .store(STOP_REASON_NONE, Ordering::Relaxed);
         shared.running.store(true, Ordering::Relaxed);
         shared.backing_rms.store(0, Ordering::Relaxed);
 
@@ -725,6 +797,7 @@ impl AudioEngine {
                 total_frames,
                 duration_s,
                 mix_vocal,
+                auto_balance,
                 output_device,
                 latency_ms,
                 shared,
@@ -822,6 +895,9 @@ impl AudioEngine {
         shared
             .playback_pos
             .store(resume_frame.unwrap_or(0), Ordering::Relaxed);
+        shared
+            .stop_reason
+            .store(STOP_REASON_NONE, Ordering::Relaxed);
         shared.running.store(true, Ordering::Relaxed);
         shared.backing_rms.store(0, Ordering::Relaxed);
         shared.mic_rms.store(0, Ordering::Relaxed);
@@ -853,6 +929,11 @@ impl AudioEngine {
     // ── 停止 ───────────────────────────────────────────────────────
 
     pub fn stop(&mut self) {
+        if self.state != EngineState::Idle || self.worker.is_some() {
+            self.shared
+                .stop_reason
+                .store(STOP_REASON_MANUAL, Ordering::Relaxed);
+        }
         self.shared.running.store(false, Ordering::Relaxed);
         if let Some(handle) = self.worker.take() {
             let _ = handle.join();
@@ -861,9 +942,8 @@ impl AudioEngine {
     }
 
     pub fn pause(&mut self) -> u64 {
-        let pos = self.shared.playback_pos.load(Ordering::Relaxed);
         self.stop();
-        pos
+        self.shared.playback_pos.load(Ordering::Relaxed)
     }
 
     // ── 裝置列舉 ───────────────────────────────────────────────────
@@ -917,6 +997,7 @@ impl AudioEngine {
         &self,
         dir: &str,
         prefix: &str,
+        auto_increment: bool,
         auto_balance: bool,
         latency_ms: f64,
     ) -> Result<ExportPaths, AppError> {
@@ -936,8 +1017,8 @@ impl AudioEngine {
         let sr = self.sample_rate;
         std::fs::create_dir_all(dir).ok();
 
-        let vocal_path = format!("{}/{}_vocal.wav", dir, prefix);
-        let mix_path = format!("{}/{}_mix.wav", dir, prefix);
+        let (resolved_prefix, vocal_path, mix_path) =
+            resolve_export_paths(dir, prefix, auto_increment)?;
 
         let mono_spec = hound::WavSpec {
             channels: 1,
@@ -965,6 +1046,7 @@ impl AudioEngine {
                 shifted_vocal.push(0.0);
             }
         }
+        let shifted_stats = analyze_signal(&shifted_vocal, VOCAL_MIX_LIMIT_CEILING);
 
         let mut writer = hound::WavWriter::create(&vocal_path, mono_spec)?;
         for &s in shifted_vocal.iter() {
@@ -978,47 +1060,27 @@ impl AudioEngine {
 
         // 參數：標準化/自動音量調整
         let mut vocal_gain = 1.0;
+        let export_backing_gain = self.export_volume * auto_balance_backing_gain(auto_balance);
         if auto_balance && n > 0 {
-            // 找伴奏 RMS 與 人聲 RMS
-            let mut sum_b_sq = 0.0;
-            let mut sum_v_sq = 0.0;
-            for i in 0..n {
-                let bidx = i * backing_channels;
-                let bg = (backing[bidx] + backing[bidx + (1.min(backing_channels - 1))]) * 0.5;
-                sum_b_sq += bg * bg;
-                let vg = shifted_vocal[i];
-                sum_v_sq += vg * vg;
-            }
-            let b_rms = (sum_b_sq / n as f32).sqrt();
-            let v_rms = (sum_v_sq / n as f32).sqrt();
-
-            // 目標：人聲 RMS ≈ 原始 backing RMS × 1.5。
-            //
-            // 重要：下方實際混音時伴奏會被 `self.export_volume`（= 0.5）衰減，
-            // 所以人聲對「實際混音伴奏」的比例 = 1.5 / 0.5 = 3.0 倍 ≈ +9.5 dB，
-            // 卡拉 OK 場景下人聲清楚主導。
-            //
-            // 只設下限、不設上限：
-            //   舊設計有 clamp 上限 4.0 會把小聲錄音的 gain 卡死，
-            //   人聲放不夠大反而讓伴奏聽起來蓋過人聲（使用者實測回報）。
-            //   下限 0.5 防止超大音量錄音被過度衰減失去動態。
-            //   normalize 階段的 peak limiter 會處理整體 clip 風險。
-            if v_rms > 0.001 {
-                vocal_gain = ((b_rms * 1.5) / v_rms).max(0.5);
-            }
+            vocal_gain = compute_auto_balance_vocal_gain(
+                backing.as_slice(),
+                backing_channels,
+                n,
+                export_backing_gain,
+                |i| shifted_vocal[i],
+            );
         }
 
-        // 預掃描找峰值，確保加總後不會 Clip
         let mut max_peak = 0.0_f32;
         let mut mix_buffer = Vec::with_capacity(n * 2);
         for i in 0..n {
             let bidx = i * backing_channels;
-            let bl = backing[bidx] * self.export_volume;
-            let br = backing[bidx + (1.min(backing_channels - 1))] * self.export_volume;
-            let v = shifted_vocal[i] * vocal_gain;
+            let bl = backing[bidx] * export_backing_gain;
+            let br = backing[bidx + (1.min(backing_channels - 1))] * export_backing_gain;
+            let v = process_vocal_for_mix(shifted_vocal[i], vocal_gain);
 
-            let l = bl + v;
-            let r = br + v;
+            let l = bl + v[0];
+            let r = br + v[1];
             if l.abs() > max_peak {
                 max_peak = l.abs();
             }
@@ -1030,9 +1092,22 @@ impl AudioEngine {
             mix_buffer.push(r);
         }
 
-        let mix_gain = if max_peak > 0.9 {
-            // -1 dBTP = 10^(-1/20) = 0.891
-            0.891 / max_peak
+        let mix_stats = analyze_signal(&mix_buffer, EXPORT_MIX_LIMIT_CEILING);
+        log::info!(
+            "[audio_quality] export vocal peak={:.3} rms={:.3} over={} / {}; pre_output peak={:.3} rms={:.3} over={} / {}; vocal_gain={:.3}",
+            shifted_stats.peak,
+            shifted_stats.rms,
+            shifted_stats.over_ceiling_samples,
+            shifted_stats.sample_count,
+            mix_stats.peak,
+            mix_stats.rms,
+            mix_stats.over_ceiling_samples,
+            mix_stats.sample_count,
+            vocal_gain,
+        );
+
+        let mix_gain = if max_peak > EXPORT_MIX_LIMIT_CEILING {
+            EXPORT_MIX_LIMIT_CEILING / max_peak
         } else {
             1.0
         };
@@ -1043,11 +1118,16 @@ impl AudioEngine {
         }
         writer.finalize()?;
 
-        log::info!("Exported: vocal={}, mix={}", vocal_path, mix_path);
+        log::info!(
+            "Exported: prefix={}, vocal={}, mix={}",
+            resolved_prefix,
+            vocal_path.display(),
+            mix_path.display()
+        );
 
         Ok(ExportPaths {
-            vocal_path,
-            mix_path,
+            vocal_path: vocal_path.to_string_lossy().to_string(),
+            mix_path: mix_path.to_string_lossy().to_string(),
         })
     }
 
@@ -1117,6 +1197,9 @@ impl AudioEngine {
         }
 
         shared.playback_pos.store(0, Ordering::Relaxed);
+        shared
+            .stop_reason
+            .store(STOP_REASON_NONE, Ordering::Relaxed);
         shared.running.store(true, Ordering::Relaxed);
 
         let dur_s = total_frames as f64 / source_sr as f64;
@@ -1442,6 +1525,7 @@ fn fill_backing_output(
     cur_pos: u64,
     vol: f32,
     vocal_snapshot: Option<&[f32]>,
+    vocal_gain: f32,
     guide_snapshot: Option<&GuideVocalTrack>,
     guide_volume: f32,
     latency_ms: f64,
@@ -1465,7 +1549,20 @@ fn fill_backing_output(
 
         let lo = (src_idx_lo as usize) * backing_channels;
         let hi = lo + backing_channels;
+        let vocal_mix = if let Some(vocal) = vocal_snapshot {
+            let latency_frames = (latency_ms / 1000.0 * source_sr as f64).round() as isize;
+            let src_idx = src_idx_lo as isize + latency_frames;
+            if src_idx >= 0 && src_idx < vocal.len() as isize {
+                process_vocal_for_mix(vocal[src_idx as usize], vocal_gain)
+            } else {
+                [0.0, 0.0]
+            }
+        } else {
+            [0.0, 0.0]
+        };
 
+        let frame_base = frame * out_channels;
+        let mut frame_peak = 0.0_f32;
         for ch in 0..out_channels {
             let src_ch = ch.min(backing_channels - 1);
             let s_lo = backing[lo + src_ch];
@@ -1473,19 +1570,20 @@ fn fill_backing_output(
             let mut s = (s_lo + (s_hi - s_lo) * frac) * vol;
 
             // 混入人聲（回放模式）
-            if let Some(vocal) = vocal_snapshot {
-                let latency_frames = (latency_ms / 1000.0 * source_sr as f64).round() as isize;
-                let src_idx = src_idx_lo as isize + latency_frames;
-                if src_idx >= 0 && src_idx < vocal.len() as isize {
-                    s += vocal[src_idx as usize];
-                }
-            }
+            s += vocal_mix_for_channel(vocal_mix, ch, out_channels);
             if let Some(guide) = guide_snapshot {
                 s += sample_guide_at_source_frame(guide, src_pos_f, source_sr) * guide_volume;
             }
 
-            let s = s.clamp(-1.0, 1.0);
-            data[frame * out_channels + ch] = s;
+            let s = if s.is_finite() { s } else { 0.0 };
+            frame_peak = frame_peak.max(s.abs());
+            data[frame_base + ch] = s;
+        }
+
+        let gain = frame_limit_gain(frame_peak, OUTPUT_LIMIT_CEILING);
+        for ch in 0..out_channels {
+            let s = (data[frame_base + ch] * gain).clamp(-1.0, 1.0);
+            data[frame_base + ch] = s;
             sum_sq += s * s;
             sample_count += 1;
         }
@@ -1554,6 +1652,269 @@ fn downmix_interleaved_to_mono(samples: &[f32], channels: usize) -> Vec<f32> {
         .chunks_exact(channels)
         .map(|frame| frame.iter().sum::<f32>() / channels as f32)
         .collect()
+}
+
+#[inline]
+fn sample_vocal_with_latency(vocal: &[f32], frame_idx: usize, latency_frames: isize) -> f32 {
+    let src_idx = frame_idx as isize + latency_frames;
+    if src_idx >= 0 && src_idx < vocal.len() as isize {
+        vocal[src_idx as usize]
+    } else {
+        0.0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AudioSignalStats {
+    peak: f32,
+    rms: f32,
+    over_ceiling_samples: usize,
+    sample_count: usize,
+}
+
+fn analyze_signal(samples: &[f32], ceiling: f32) -> AudioSignalStats {
+    let mut peak = 0.0_f32;
+    let mut sum_sq = 0.0_f32;
+    let mut over_ceiling_samples = 0_usize;
+    for sample in samples {
+        let abs = sample.abs();
+        peak = peak.max(abs);
+        sum_sq += sample * sample;
+        if abs > ceiling {
+            over_ceiling_samples += 1;
+        }
+    }
+
+    let sample_count = samples.len();
+    let rms = if sample_count > 0 {
+        (sum_sq / sample_count as f32).sqrt()
+    } else {
+        0.0
+    };
+
+    AudioSignalStats {
+        peak,
+        rms,
+        over_ceiling_samples,
+        sample_count,
+    }
+}
+
+fn compute_auto_balance_vocal_gain<F>(
+    backing: &[f32],
+    backing_channels: usize,
+    frame_count: usize,
+    backing_gain: f32,
+    mut vocal_at: F,
+) -> f32
+where
+    F: FnMut(usize) -> f32,
+{
+    compute_auto_balance_vocal_gain_from_mix(
+        backing,
+        backing_channels,
+        frame_count,
+        backing_gain,
+        |i| {
+            let sample = vocal_at(i);
+            [sample, sample]
+        },
+    )
+}
+
+fn compute_auto_balance_vocal_gain_from_mix<F>(
+    backing: &[f32],
+    backing_channels: usize,
+    frame_count: usize,
+    backing_gain: f32,
+    mut vocal_mix_at: F,
+) -> f32
+where
+    F: FnMut(usize) -> [f32; 2],
+{
+    let channels = backing_channels.max(1);
+    let max_frames = backing.len() / channels;
+    let n = frame_count.min(max_frames);
+    if n == 0 {
+        return 1.0;
+    }
+
+    let right_ch = 1.min(channels - 1);
+    let backing_gain = backing_gain.clamp(0.0, 2.0);
+    let mut sum_b_sq = 0.0_f32;
+    let mut sum_v_sq = 0.0_f32;
+    let mut backing_peak_histogram = [0_usize; AUTO_BALANCE_PEAK_HISTOGRAM_BINS];
+    let mut vocal_peak_histogram = [0_usize; AUTO_BALANCE_PEAK_HISTOGRAM_BINS];
+    for i in 0..n {
+        let bidx = i * channels;
+        let bl = backing[bidx] * backing_gain;
+        let br = backing[bidx + right_ch] * backing_gain;
+        sum_b_sq += (bl * bl + br * br) * 0.5;
+        record_peak_histogram(
+            &mut backing_peak_histogram,
+            bl.abs().max(br.abs()),
+            AUTO_BALANCE_PEAK_HISTOGRAM_MAX,
+        );
+        let vg = vocal_mix_at(i);
+        sum_v_sq += (vg[0] * vg[0] + vg[1] * vg[1]) * 0.5;
+        record_peak_histogram(
+            &mut vocal_peak_histogram,
+            vg[0].abs().max(vg[1].abs()),
+            AUTO_BALANCE_PEAK_HISTOGRAM_MAX,
+        );
+    }
+
+    let b_rms = (sum_b_sq / n as f32).sqrt();
+    let v_rms = (sum_v_sq / n as f32).sqrt();
+    if v_rms > 0.001 {
+        let desired_gain = ((b_rms * AUTO_BALANCE_VOCAL_TARGET_RATIO) / v_rms)
+            .max(0.5)
+            .min(AUTO_BALANCE_MAX_VOCAL_GAIN);
+        let robust_peak = histogram_percentile_peak(
+            &vocal_peak_histogram,
+            n,
+            AUTO_BALANCE_PEAK_HISTOGRAM_MAX,
+            AUTO_BALANCE_ROBUST_PEAK_PERCENTILE,
+        );
+        let backing_robust_peak = histogram_percentile_peak(
+            &backing_peak_histogram,
+            n,
+            AUTO_BALANCE_PEAK_HISTOGRAM_MAX,
+            AUTO_BALANCE_ROBUST_PEAK_PERCENTILE,
+        );
+        let peak_safe_gain = if robust_peak > 0.001 {
+            (AUTO_BALANCE_ROBUST_PEAK_CEILING / robust_peak)
+                .max(0.5)
+                .min(AUTO_BALANCE_MAX_VOCAL_GAIN)
+        } else {
+            AUTO_BALANCE_MAX_VOCAL_GAIN
+        };
+        let mix_safe_gain = if robust_peak > 0.001 {
+            ((AUTO_BALANCE_MIX_SUM_CEILING - backing_robust_peak).max(0.0) / robust_peak)
+                .min(AUTO_BALANCE_MAX_VOCAL_GAIN)
+        } else {
+            AUTO_BALANCE_MAX_VOCAL_GAIN
+        };
+        let safe_gain = desired_gain.min(peak_safe_gain).min(mix_safe_gain.max(0.0));
+        if mix_safe_gain >= 0.25 {
+            safe_gain.max(0.25)
+        } else {
+            safe_gain.max(0.0)
+        }
+    } else {
+        1.0
+    }
+}
+
+fn record_peak_histogram(histogram: &mut [usize], value: f32, max_value: f32) {
+    if histogram.is_empty() || !value.is_finite() || max_value <= 0.0 {
+        return;
+    }
+    let normalized = (value.max(0.0) / max_value).clamp(0.0, 1.0);
+    let index = (normalized * (histogram.len().saturating_sub(1)) as f32).round() as usize;
+    histogram[index.min(histogram.len().saturating_sub(1))] += 1;
+}
+
+fn histogram_percentile_peak(
+    histogram: &[usize],
+    total: usize,
+    max_value: f32,
+    percentile: f32,
+) -> f32 {
+    if histogram.is_empty() || total == 0 || max_value <= 0.0 {
+        return 0.0;
+    }
+    let target = ((total as f32 * percentile.clamp(0.0, 1.0)).ceil() as usize).max(1);
+    let mut cumulative = 0_usize;
+    for (index, count) in histogram.iter().enumerate() {
+        cumulative += *count;
+        if cumulative >= target {
+            let normalized = index as f32 / (histogram.len().saturating_sub(1)).max(1) as f32;
+            return normalized * max_value;
+        }
+    }
+    max_value
+}
+
+const AUTO_BALANCE_VOCAL_TARGET_RATIO: f32 = 3.35;
+const AUTO_BALANCE_MAX_VOCAL_GAIN: f32 = 28.0;
+const AUTO_BALANCE_ROBUST_PEAK_PERCENTILE: f32 = 0.995;
+const AUTO_BALANCE_ROBUST_PEAK_CEILING: f32 = 0.58;
+const AUTO_BALANCE_BACKING_GAIN: f32 = 0.40;
+const AUTO_BALANCE_MIX_SUM_CEILING: f32 = 0.82;
+const AUTO_BALANCE_PEAK_HISTOGRAM_BINS: usize = 256;
+const AUTO_BALANCE_PEAK_HISTOGRAM_MAX: f32 = 1.0;
+const VOCAL_MIX_LIMIT_CEILING: f32 = 0.78;
+const OUTPUT_LIMIT_CEILING: f32 = 0.86;
+const EXPORT_MIX_LIMIT_CEILING: f32 = 0.84;
+const INPUT_SOFT_LIMIT_START: f32 = 0.92;
+const INPUT_SOFT_LIMIT_CEILING: f32 = 0.98;
+#[inline]
+fn auto_balance_backing_gain(auto_balance: bool) -> f32 {
+    if auto_balance {
+        AUTO_BALANCE_BACKING_GAIN
+    } else {
+        1.0
+    }
+}
+
+#[inline]
+fn apply_vocal_mix_gain(vocal_mix: [f32; 2], gain: f32) -> [f32; 2] {
+    limit_stereo_peak(
+        [vocal_mix[0] * gain, vocal_mix[1] * gain],
+        VOCAL_MIX_LIMIT_CEILING,
+    )
+}
+
+#[inline]
+fn process_vocal_for_mix(sample: f32, vocal_gain: f32) -> [f32; 2] {
+    apply_vocal_mix_gain([sample, sample], vocal_gain)
+}
+
+#[inline]
+fn vocal_mix_for_channel(vocal_mix: [f32; 2], ch: usize, out_channels: usize) -> f32 {
+    if out_channels <= 1 {
+        (vocal_mix[0] + vocal_mix[1]) * 0.5
+    } else if ch % 2 == 0 {
+        vocal_mix[0]
+    } else {
+        vocal_mix[1]
+    }
+}
+
+#[inline]
+fn frame_limit_gain(peak: f32, ceiling: f32) -> f32 {
+    if peak.is_finite() && peak > ceiling && peak > f32::EPSILON {
+        ceiling / peak
+    } else {
+        1.0
+    }
+}
+
+#[inline]
+fn limit_stereo_peak(frame: [f32; 2], ceiling: f32) -> [f32; 2] {
+    let peak = frame[0].abs().max(frame[1].abs());
+    let gain = frame_limit_gain(peak, ceiling);
+    [
+        (frame[0] * gain).clamp(-1.0, 1.0),
+        (frame[1] * gain).clamp(-1.0, 1.0),
+    ]
+}
+
+#[inline]
+fn soft_limit_sample(sample: f32, start: f32, ceiling: f32) -> f32 {
+    if !sample.is_finite() {
+        return 0.0;
+    }
+    let start = start.clamp(0.0, 1.0);
+    let ceiling = ceiling.clamp(start + f32::EPSILON, 1.0);
+    let abs = sample.abs();
+    if abs <= start {
+        return sample;
+    }
+    let excess = (abs - start) / (ceiling - start);
+    let limited = start + (ceiling - start) * (1.0 - (-excess).exp());
+    sample.signum() * limited.min(ceiling)
 }
 
 #[inline]
@@ -1723,6 +2084,7 @@ fn run_playback(
     total_frames: u64,
     duration_s: f64,
     mix_vocal: bool,
+    auto_balance: bool,
     output_device_idx: Option<usize>,
     latency_ms: f64,
     shared: SharedState,
@@ -1765,6 +2127,28 @@ fn run_playback(
         vocal_buffer.lock().ok().map(|v| Arc::new(v.clone()))
     } else {
         None
+    };
+    let playback_backing_gain = auto_balance_backing_gain(auto_balance);
+    let playback_vocal_gain = if auto_balance {
+        vocal_snapshot
+            .as_ref()
+            .map(|vocal| {
+                let latency_frames = (latency_ms / 1000.0 * source_sr as f64).round() as isize;
+                let frame_count = (total_frames as usize).min(vocal.len());
+                let initial_backing_gain =
+                    f32::from_bits(shared.backing_volume.load(Ordering::Relaxed))
+                        * playback_backing_gain;
+                compute_auto_balance_vocal_gain(
+                    backing.as_slice(),
+                    backing_channels,
+                    frame_count,
+                    initial_backing_gain,
+                    |i| sample_vocal_with_latency(vocal.as_slice(), i, latency_frames),
+                )
+            })
+            .unwrap_or(1.0)
+    } else {
+        1.0
     };
     let guide_snapshot: Option<GuideVocalTrack> = guide_vocal.lock().ok().and_then(|g| g.clone());
 
@@ -1899,11 +2283,11 @@ fn run_playback(
         &config,
         move |data: &mut [f32], _info| {
             let cur_pos = pos.load(Ordering::Relaxed);
-            let vol = f32::from_bits(volume.load(Ordering::Relaxed));
+            let vol =
+                f32::from_bits(volume.load(Ordering::Relaxed)) * playback_backing_gain;
             let cur_speed = (f32::from_bits(speed_atomic.load(Ordering::Relaxed)) as f64).max(0.1);
             let cur_pitch_st = pitch_atomic.load(Ordering::Relaxed) as i32;
             let pitch_ratio = 2.0_f64.powf(cur_pitch_st as f64 / 12.0);
-
             // P0: pitch 變動 = transport discontinuity
             //   ring 裡 buffered 的是用舊 pitch_ratio 拉伸的音訊，consumer 改用新的
             //   combined_resample 去讀會輸出錯誤的 pitch/timing（~128-314ms glitch）。
@@ -1987,6 +2371,7 @@ fn run_playback(
                     cur_pos,
                     vol,
                     vocal_ref,
+                    playback_vocal_gain,
                     guide_ref,
                     guide_vol,
                     latency_ms,
@@ -2095,6 +2480,16 @@ fn run_playback(
                     // timeline_pos：原 source frame 軸（給 vocal mix 對齊用）
                     // 注意：producer path 只在 cur_speed=1.0 運行，所以 source 推進 = frame × rate_ratio
                     let timeline_pos = stretch_play_pos + frame as f64 * rate_ratio * cur_speed;
+                    let vocal_mix = if let Some(vocal) = vocal_ref {
+                        let vocal_pos = timeline_pos + latency_frames;
+                        if vocal_pos >= 0.0 && vocal_pos + 1.0 < vocal.len() as f64 {
+                            process_vocal_for_mix(sample_linear_mono(vocal, vocal_pos), playback_vocal_gain)
+                        } else {
+                            [0.0, 0.0]
+                        }
+                    } else {
+                        [0.0, 0.0]
+                    };
 
                     if local_pos + 1.0 >= available_frames as f64 {
                         // Ring buffer 暫時不足——平滑 hold 最後一個有效幀
@@ -2110,6 +2505,8 @@ fn run_playback(
                         }
                     }
 
+                    let frame_base = frame * out_channels;
+                    let mut frame_peak = 0.0_f32;
                     for ch in 0..out_channels {
                         let src_ch = ch.min(backing_channels - 1);
                         // 與 HouseLoop 搭配實測：cubic 的 -14dB stopband 反而比 Lanczos-3
@@ -2122,19 +2519,21 @@ fn run_playback(
                             src_ch,
                         ) * vol;
 
-                        if let Some(vocal) = vocal_ref {
-                            let vocal_pos = timeline_pos + latency_frames;
-                            if vocal_pos >= 0.0 && vocal_pos + 1.0 < vocal.len() as f64 {
-                                s += sample_linear_mono(vocal, vocal_pos);
-                            }
-                        }
+                        s += vocal_mix_for_channel(vocal_mix, ch, out_channels);
                         if let Some(guide) = guide_ref {
                             s += sample_guide_at_source_frame(guide, timeline_pos, source_sr)
                                 * guide_vol;
                         }
 
-                        let s = s.clamp(-1.0, 1.0);
-                        data[frame * out_channels + ch] = s;
+                        let s = if s.is_finite() { s } else { 0.0 };
+                        frame_peak = frame_peak.max(s.abs());
+                        data[frame_base + ch] = s;
+                    }
+
+                    let gain = frame_limit_gain(frame_peak, OUTPUT_LIMIT_CEILING);
+                    for ch in 0..out_channels {
+                        let s = (data[frame_base + ch] * gain).clamp(-1.0, 1.0);
+                        data[frame_base + ch] = s;
                         sum_sq += s * s;
                         sample_count += 1;
                     }
@@ -2329,6 +2728,8 @@ fn run_playback(
                 // Resample + 寫入 output（含音量、channel mapping）
                 let mut sum_sq = 0.0_f32;
                 let mut sample_count = 0_usize;
+                let vocal_ref = vocal_cb.as_ref().map(|v| v.as_slice());
+                let latency_frames = latency_ms / 1000.0 * source_sr as f64;
                 let guide_vol = f32::from_bits(guide_volume.load(Ordering::Relaxed));
                 let guide_ref = if guide_enabled.load(Ordering::Relaxed) && guide_vol > 0.0 {
                     guide_cb.as_ref()
@@ -2347,6 +2748,19 @@ fn run_playback(
                         continue;
                     }
 
+                    let vocal_mix = if let Some(vocal) = vocal_ref {
+                        let vocal_pos = timeline_pos + latency_frames;
+                        if vocal_pos >= 0.0 && vocal_pos + 1.0 < vocal.len() as f64 {
+                            process_vocal_for_mix(sample_linear_mono(vocal, vocal_pos), playback_vocal_gain)
+                        } else {
+                            [0.0, 0.0]
+                        }
+                    } else {
+                        [0.0, 0.0]
+                    };
+
+                    let frame_base = frame * out_channels;
+                    let mut frame_peak = 0.0_f32;
                     for ch in 0..out_channels {
                         let src_ch = ch.min(backing_channels - 1);
                         // 仍用 cubic（Catmull-Rom）：短支撐避免把 WSOLA hop 邊界的
@@ -2356,12 +2770,20 @@ fn run_playback(
                             sample_cubic_interleaved(&wsola_buf, backing_channels, src_f, src_ch);
 
                         s *= vol;
+                        s += vocal_mix_for_channel(vocal_mix, ch, out_channels);
                         if let Some(guide) = guide_ref {
                             s += sample_guide_at_source_frame(guide, timeline_pos, source_sr)
                                 * guide_vol;
                         }
-                        let s = s.clamp(-1.0, 1.0);
-                        data[frame * out_channels + ch] = s;
+                        let s = if s.is_finite() { s } else { 0.0 };
+                        frame_peak = frame_peak.max(s.abs());
+                        data[frame_base + ch] = s;
+                    }
+
+                    let gain = frame_limit_gain(frame_peak, OUTPUT_LIMIT_CEILING);
+                    for ch in 0..out_channels {
+                        let s = (data[frame_base + ch] * gain).clamp(-1.0, 1.0);
+                        data[frame_base + ch] = s;
                         sum_sq += s * s;
                         sample_count += 1;
                     }
@@ -2492,8 +2914,12 @@ fn run_playback(
 
     drop(_input_stream);
     drop(output_stream);
+    let manual_stop =
+        shared.stop_reason.swap(STOP_REASON_NONE, Ordering::Relaxed) == STOP_REASON_MANUAL;
     events::emit_state(&app, "idle");
-    events::emit_finished(&app);
+    if !manual_stop {
+        events::emit_finished(&app);
+    }
 }
 
 /// Stretch producer 背景線程：持續預先生成 stretched 音訊並寫入 ring buffer。
@@ -2839,7 +3265,11 @@ fn build_preview_pitch_stream(
                     for ch in 0..in_channels {
                         mono += data[frame * in_channels + ch];
                     }
-                    mono = ((mono / in_channels as f32) * gain).clamp(-1.0, 1.0);
+                    mono = soft_limit_sample(
+                        (mono / in_channels as f32) * gain,
+                        INPUT_SOFT_LIMIT_START,
+                        INPUT_SOFT_LIMIT_CEILING,
+                    );
                     sum_sq += mono * mono;
                     sample_count += 1;
                     raw_mono_batch.push(mono);
@@ -3100,6 +3530,7 @@ fn run_recording(
                 cur_pos,
                 vol,
                 None, // 錄音模式：不混入人聲
+                1.0,
                 guide_ref,
                 guide_vol,
                 0.0,
@@ -3303,8 +3734,11 @@ fn run_recording(
                 for ch in 0..in_channels {
                     mono += data[frame * in_channels + ch];
                 }
-                mono = (mono / in_channels as f32) * gain;
-                let mono = mono.clamp(-1.0, 1.0);
+                let mono = soft_limit_sample(
+                    (mono / in_channels as f32) * gain,
+                    INPUT_SOFT_LIMIT_START,
+                    INPUT_SOFT_LIMIT_CEILING,
+                );
 
                 sum_sq += mono * mono;
                 sample_count += 1;
@@ -3522,8 +3956,12 @@ fn run_recording(
 
     drop(input_stream);
     drop(output_stream);
+    let manual_stop =
+        shared.stop_reason.swap(STOP_REASON_NONE, Ordering::Relaxed) == STOP_REASON_MANUAL;
     events::emit_state(&app, "idle");
-    events::emit_finished(&app);
+    if !manual_stop {
+        events::emit_finished(&app);
+    }
 }
 
 // ── CPAL 設定輔助 ─────────────────────────────────────────────────
@@ -3676,6 +4114,97 @@ mod tests {
     }
 
     #[test]
+    fn auto_increment_export_paths_skip_existing_pair() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("vocalsync-export-{unique}"));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let prefix = "song_2026-05-19";
+        let (vocal_path, mix_path) = export_output_paths(&dir, prefix);
+        std::fs::write(&vocal_path, b"vocal").unwrap();
+        std::fs::write(&mix_path, b"mix").unwrap();
+
+        let (resolved, next_vocal, next_mix) =
+            resolve_export_paths(dir.to_str().unwrap(), prefix, true).unwrap();
+
+        assert_eq!(resolved, "song_2026-05-19 (1)");
+        assert_eq!(
+            next_vocal.file_name().and_then(|name| name.to_str()),
+            Some("song_2026-05-19 (1)_vocal.wav")
+        );
+        assert_eq!(
+            next_mix.file_name().and_then(|name| name.to_str()),
+            Some("song_2026-05-19 (1)_mix.wav")
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn normalized_export_wav_keeps_peak_headroom_under_loud_backing() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("vocalsync-normalized-export-{unique}"));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let frame_count = 12_000_usize;
+        let mut engine = AudioEngine::new();
+        engine.sample_rate = 48_000;
+        engine.backing_channels = 2;
+        engine.export_volume = 1.0;
+        let mut backing = Vec::with_capacity(frame_count * 2);
+        let mut vocal_samples = Vec::with_capacity(frame_count);
+        for frame in 0..frame_count {
+            let phase =
+                2.0 * std::f32::consts::PI * 220.0 * frame as f32 / engine.sample_rate as f32;
+            let sample = phase.sin();
+            backing.push(0.6 * sample);
+            backing.push(0.6 * sample);
+            vocal_samples.push(0.05 * sample);
+        }
+        engine.backing_data = Some(Arc::new(backing));
+        engine.duration = frame_count as f64 / engine.sample_rate as f64;
+        {
+            let mut vocal = engine.vocal_buffer.lock().unwrap();
+            *vocal = vocal_samples;
+        }
+
+        let paths = engine
+            .export(dir.to_str().unwrap(), "normalized-stress", false, true, 0.0)
+            .unwrap();
+        let reader = hound::WavReader::open(paths.mix_path).unwrap();
+        let samples: Vec<f32> = reader
+            .into_samples::<f32>()
+            .map(|sample| sample.unwrap())
+            .collect();
+        let stats = analyze_signal(&samples, EXPORT_MIX_LIMIT_CEILING);
+
+        assert_eq!(samples.len(), frame_count * 2);
+        assert!(samples.iter().all(|sample| sample.is_finite()));
+        assert_eq!(
+            stats.over_ceiling_samples, 0,
+            "normalized export should not exceed export ceiling"
+        );
+        assert!(
+            stats.peak <= AUTO_BALANCE_MIX_SUM_CEILING + 0.03,
+            "normalized export should keep peak headroom, got {:.3}",
+            stats.peak
+        );
+        assert!(
+            stats.rms < EXPORT_MIX_LIMIT_CEILING * 0.85,
+            "normalized export should avoid brickwall-like RMS, got {:.3}",
+            stats.rms
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn sample_cubic_interleaved_hits_exact_sample_on_integer_position() {
         let frames = vec![0.1_f32, 0.3, 0.5, 0.7, 0.9];
         let out = sample_cubic_interleaved(&frames, 1, 3.0, 0);
@@ -3694,6 +4223,220 @@ mod tests {
         let frames = vec![1.0_f32, -1.0, 0.25, 0.75];
         let mono = downmix_interleaved_to_mono(&frames, 2);
         assert_eq!(mono, vec![0.0, 0.5]);
+    }
+
+    #[test]
+    fn sample_vocal_with_latency_returns_zero_outside_recording() {
+        let vocal = vec![0.2_f32, 0.4, 0.6];
+        assert_eq!(sample_vocal_with_latency(&vocal, 0, -1), 0.0);
+        assert_eq!(sample_vocal_with_latency(&vocal, 1, -1), 0.2);
+        assert_eq!(sample_vocal_with_latency(&vocal, 2, 2), 0.0);
+    }
+
+    #[test]
+    fn auto_balance_gain_matches_backing_ratio() {
+        let backing = vec![0.1_f32, 0.1, 0.1, 0.1];
+        let vocal = [0.05_f32, 0.05];
+        let gain = compute_auto_balance_vocal_gain(&backing, 2, 2, 1.0, |i| vocal[i]);
+        assert!(
+            (gain - 6.7).abs() < 0.02,
+            "expected 0.1 * 3.35 / 0.05 = 6.7, got {gain}"
+        );
+    }
+
+    #[test]
+    fn auto_balance_uses_robust_peak_headroom() {
+        let backing = vec![0.5_f32; 24_000];
+        let gain = compute_auto_balance_vocal_gain(&backing, 2, 12_000, 1.0, |_| 0.3);
+
+        assert!(
+            gain <= (AUTO_BALANCE_ROBUST_PEAK_CEILING / 0.3) + 0.05,
+            "normalized vocals should reserve peak headroom, got {gain}"
+        );
+    }
+
+    #[test]
+    fn auto_balance_lifts_quiet_vocal_without_excessive_gain() {
+        let backing = vec![0.4_f32; 24_000];
+        let backing_gain = AUTO_BALANCE_BACKING_GAIN;
+        let gain = compute_auto_balance_vocal_gain(&backing, 2, 12_000, backing_gain, |_| 0.02);
+        let mut sum_sq = 0.0_f32;
+
+        for _ in 0..12_000 {
+            let out = process_vocal_for_mix(0.02, gain);
+            sum_sq += (out[0] * out[0] + out[1] * out[1]) * 0.5;
+        }
+
+        let vocal_rms = (sum_sq / 12_000.0).sqrt();
+        assert!(
+            (4.0..=AUTO_BALANCE_MAX_VOCAL_GAIN).contains(&gain),
+            "quiet vocals should be lifted within the safe gain range, got {gain}"
+        );
+        assert!(
+            vocal_rms < VOCAL_MIX_LIMIT_CEILING * 0.75,
+            "normalized quiet vocal should keep headroom, got {vocal_rms}"
+        );
+        assert!(
+            vocal_rms >= 0.4 * backing_gain * 3.00,
+            "normalized quiet vocal should sit slightly above backing, got vocal_rms={vocal_rms}"
+        );
+    }
+
+    #[test]
+    fn auto_balance_peak_guard_prevents_overblown_vocal_waveform() {
+        let backing = vec![0.5_f32; 24_000];
+        let gain = compute_auto_balance_vocal_gain(&backing, 2, 12_000, 1.0, |_| 0.7);
+        let out = process_vocal_for_mix(0.7, gain);
+        let mix_peak = 0.5 + out[0].abs().max(out[1].abs());
+
+        assert!(
+            gain <= (AUTO_BALANCE_ROBUST_PEAK_CEILING / 0.7) + 0.05,
+            "peaky vocals should stay under robust peak headroom, got {gain}"
+        );
+        assert!(
+            mix_peak <= AUTO_BALANCE_MIX_SUM_CEILING + 0.02,
+            "normalized mix should keep summed peak headroom, got mix_peak={mix_peak}"
+        );
+        assert!(out[0].abs() <= VOCAL_MIX_LIMIT_CEILING + 1e-6);
+        assert!(out[1].abs() <= VOCAL_MIX_LIMIT_CEILING + 1e-6);
+    }
+
+    #[test]
+    fn auto_balance_ducked_mix_keeps_vocal_forward_without_limiter_hit() {
+        let backing = vec![0.6_f32; 24_000];
+        let backing_gain = AUTO_BALANCE_BACKING_GAIN;
+        let vocal_sample = 0.05;
+        let gain =
+            compute_auto_balance_vocal_gain(&backing, 2, 12_000, backing_gain, |_| vocal_sample);
+        let out = process_vocal_for_mix(vocal_sample, gain);
+        let backing_sample = 0.6 * backing_gain;
+        let vocal_peak = out[0].abs().max(out[1].abs());
+        let mix_peak = backing_sample + vocal_peak;
+
+        assert!(
+            vocal_peak >= backing_sample * 2.30,
+            "normalized vocal should stay in front of ducked backing, got vocal={vocal_peak}, backing={backing_sample}"
+        );
+        assert!(
+            mix_peak <= AUTO_BALANCE_MIX_SUM_CEILING + 0.02,
+            "normalized mix should avoid limiter-driving summed peaks, got {mix_peak}"
+        );
+        assert!(
+            mix_peak < EXPORT_MIX_LIMIT_CEILING,
+            "normalized mix should leave export headroom, got {mix_peak}"
+        );
+    }
+
+    #[test]
+    fn auto_balance_ducks_backing_only_when_enabled() {
+        assert!((auto_balance_backing_gain(true) - AUTO_BALANCE_BACKING_GAIN).abs() < 1e-6);
+        assert!((auto_balance_backing_gain(false) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn vocal_mix_keeps_dry_vocal_centered_and_limited() {
+        let out = process_vocal_for_mix(0.95, 2.0);
+
+        assert!((out[0] - out[1]).abs() < 1e-6);
+        assert!(out[0].is_finite() && out[1].is_finite());
+        assert!(out[0].abs() <= VOCAL_MIX_LIMIT_CEILING + 1e-6);
+        assert!(out[1].abs() <= VOCAL_MIX_LIMIT_CEILING + 1e-6);
+    }
+
+    #[test]
+    fn frame_limiter_scales_instead_of_hard_clipping() {
+        let frame = limit_stereo_peak([1.2, -0.6], OUTPUT_LIMIT_CEILING);
+        assert!((frame[0] - OUTPUT_LIMIT_CEILING).abs() < 1e-6);
+        assert!((frame[1] + OUTPUT_LIMIT_CEILING * 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn input_soft_limiter_smooths_overrange_samples() {
+        let below = soft_limit_sample(0.5, INPUT_SOFT_LIMIT_START, INPUT_SOFT_LIMIT_CEILING);
+        let over = soft_limit_sample(1.6, INPUT_SOFT_LIMIT_START, INPUT_SOFT_LIMIT_CEILING);
+
+        assert!((below - 0.5).abs() < 1e-6);
+        assert!(over > INPUT_SOFT_LIMIT_START);
+        assert!(over <= INPUT_SOFT_LIMIT_CEILING);
+    }
+
+    #[test]
+    fn recording_seek_forward_pads_vocal_timeline() {
+        let mut engine = AudioEngine::new();
+        engine.sample_rate = 10;
+        engine.state = EngineState::Recording;
+        if let Ok(mut v) = engine.vocal_buffer.lock() {
+            v.extend_from_slice(&[0.1, 0.2, 0.3]);
+        }
+        if let Ok(mut p) = engine.shared.current_pitch.lock() {
+            *p = Some(PitchSample {
+                timestamp: 0.2,
+                freq: 440.0,
+                confidence: 0.9,
+                note: "A".to_string(),
+                octave: 4,
+                cent: 0.0,
+            });
+        }
+
+        engine.seek(1.0);
+
+        let vocal = engine.vocal_buffer.lock().unwrap().clone();
+        assert_eq!(engine.shared.playback_pos.load(Ordering::Relaxed), 10);
+        assert_eq!(vocal.len(), 10);
+        assert_eq!(&vocal[..3], &[0.1, 0.2, 0.3]);
+        assert!(vocal[3..].iter().all(|&sample| sample == 0.0));
+        assert!(engine.shared.current_pitch.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn recording_seek_backward_truncates_vocal_and_pitch_timeline() {
+        let mut engine = AudioEngine::new();
+        engine.sample_rate = 10;
+        engine.state = EngineState::Recording;
+        if let Ok(mut v) = engine.vocal_buffer.lock() {
+            v.extend_from_slice(&[0.1; 20]);
+        }
+        if let Ok(mut t) = engine.pitch_track.lock() {
+            t.append(PitchSample {
+                timestamp: 0.5,
+                freq: 330.0,
+                confidence: 0.8,
+                note: "E".to_string(),
+                octave: 4,
+                cent: 0.0,
+            });
+            t.append(PitchSample {
+                timestamp: 1.5,
+                freq: 440.0,
+                confidence: 0.9,
+                note: "A".to_string(),
+                octave: 4,
+                cent: 0.0,
+            });
+        }
+
+        engine.seek(0.8);
+
+        assert_eq!(engine.shared.playback_pos.load(Ordering::Relaxed), 8);
+        assert_eq!(engine.vocal_buffer.lock().unwrap().len(), 8);
+        let pitch = engine.pitch_track.lock().unwrap().clone();
+        assert_eq!(pitch.samples.len(), 1);
+        assert!((pitch.samples[0].timestamp - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn idle_seek_does_not_rewrite_recorded_vocal_timeline() {
+        let mut engine = AudioEngine::new();
+        engine.sample_rate = 10;
+        if let Ok(mut v) = engine.vocal_buffer.lock() {
+            v.extend_from_slice(&[0.1, 0.2, 0.3]);
+        }
+
+        engine.seek(1.0);
+
+        assert_eq!(engine.shared.playback_pos.load(Ordering::Relaxed), 10);
+        assert_eq!(engine.vocal_buffer.lock().unwrap().len(), 3);
     }
 
     #[test]

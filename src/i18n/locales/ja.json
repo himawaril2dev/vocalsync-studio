@@ -19,7 +19,6 @@
   "app.error.title": "予期しないエラーが発生しました",
   "app.error.unknown": "不明なエラー",
   "app.error.retry": "ページを再読み込み",
-
   "startupGuide.title": "使い方ガイド",
   "startupGuide.subtitle": "VocalSync は「原曲だけ」でも練習を始められます。音源分離は UVR5 に任せ、VocalSync は録音、ピッチカーブ、ガイドボーカル、書き出しに集中します。",
   "startupGuide.step1.title": "原曲または伴奏を取得",
@@ -36,7 +35,6 @@
   "startupGuide.tip.body": "まずは UVR5 の一般的な MDX/UVR モデルで分離状態を確認できます。よりきれいなボーカル参照が欲しい場合は、UVR5 で二段階目の分離を行い、最終的な vocals.wav を VocalSync に読み込みます。",
   "startupGuide.showAgain": "次回起動時もこのガイドを表示",
   "startupGuide.close": "使い始める",
-
   "uvrGuide.entry.title": "UVR5 とは？",
   "uvrGuide.entry.body": "UVR5 はボーカル / 伴奏分離でよく使われるツールです。原曲を vocals.wav と instrumental.wav に分け、VocalSync に戻ってピッチカーブ、ガイドボーカル、録音に使います。",
   "uvrGuide.entry.action": "UVR5 ガイドを開く",
@@ -67,10 +65,8 @@
   "uvrGuide.faq.noise.body": "別のモデル、よりきれいな原曲、または UVR5 のボーカル清掃向けモデルで二段階目の分離を試してください。VocalSync には、発売音源レベルの乾いた声よりも、旋律が追いやすい参照が重要です。",
   "uvrGuide.faq.sync.title": "伴奏とボーカルが合わない",
   "uvrGuide.faq.sync.body": "同じ原曲から作った instrumental.wav と vocals.wav を使うと合わせやすくなります。別バージョンの伴奏を使う場合、VocalSync の自動整列と fine-tune で調整できます。",
-
   "language.switcher.label": "言語",
   "language.switcher.aria": "表示言語を切り替え",
-
   "setup.section.download": "YouTube ダウンロード",
   "setup.section.song": "曲とピッチソース",
   "setup.section.backing": "練習用伴奏",
@@ -79,11 +75,9 @@
   "setup.section.separation": "UVR5 ボーカル準備",
   "setup.section.device": "デバイス選択",
   "setup.section.calibration": "レイテンシ校正",
-
   "setup.song.hint": "まず録音時に聴く練習用伴奏を選び、次に vocals.wav または MIDI をピッチカーブとガイドボーカルのソースとして読み込みます。原曲だけがある場合は、先に UVR5 で instrumental.wav と vocals.wav を作成してください。",
   "setup.song.backing.title": "練習用伴奏",
   "setup.song.melody.title": "ピッチカーブとガイド",
-
   "setup.backing.hint.empty": "伴奏ファイルを読み込んで練習を始めましょう",
   "setup.backing.hint.loading": "読み込み中...",
   "setup.backing.hint.loaded": "{kind}を読み込みました: {name}（{min}:{sec}）",
@@ -94,7 +88,6 @@
   "setup.backing.kind.video": "動画",
   "setup.backing.dialog.title": "伴奏ファイルを選択",
   "setup.backing.dialog.filter": "オーディオ/動画",
-
   "setup.lyrics.status.empty": "歌詞が読み込まれていません",
   "setup.lyrics.status.parsing": "解析中...",
   "setup.lyrics.status.loaded": "{n} 行の歌詞を読み込みました（{name}）",
@@ -109,7 +102,6 @@
   "setup.lyrics.action.clear": "歌詞をクリア",
   "setup.lyrics.dialog.title": "歌詞ファイルを選択",
   "setup.lyrics.dialog.filter": "歌詞ファイル",
-
   "setup.melody.hint.empty.prefix": "",
   "setup.melody.hint.empty.vocals": "分離済みのボーカルトラック",
   "setup.melody.hint.empty.or": " または ",
@@ -139,7 +131,6 @@
   "setup.guide.toggle": "ガイドボーカルとして再生: {name}",
   "setup.guide.hint": "ガイドボーカルはモニター専用で、エクスポート音声には混ざりません。",
   "setup.guide.status.loadFailedAppend": "{status}（ガイドボーカルの読み込みに失敗: {error}）",
-
   "setup.separation.hint": "UVR5 で原曲を vocals.wav と instrumental.wav に分離し、VocalSync に戻って伴奏とボーカルトラックを読み込みます。VocalSync は録音、ピッチカーブ、ガイドボーカル、歌詞、書き出しを担当します。",
   "setup.separation.external.step1.title": "UVR5 で原曲を分離",
   "setup.separation.external.step1.body": "原曲を UVR5 に入れて vocals.wav と instrumental.wav を出力します。よりきれいなボーカルが必要な場合は、UVR5 内で二段階目の分離を行います。",
@@ -165,7 +156,6 @@
   "setup.alignment.fineTune.reset.title": "微調整をリセット",
   "setup.alignment.fineTune.reset.text": "リセット",
   "setup.alignment.offset.seconds": "秒",
-
   "setup.device.input.label": "マイク (Input):",
   "setup.device.output.label": "ヘッドホン (Output):",
   "setup.device.pitch.label": "ピッチ検出エンジン:",
@@ -176,7 +166,6 @@
   "setup.device.modelFolder.openCrepe": "CREPE モデルフォルダーを開く",
   "setup.device.modelFolder.opened": "モデルフォルダーを開きました: {path}",
   "setup.device.modelFolder.failed": "モデルフォルダーを開けませんでした: {error}",
-
   "setup.calibration.hint": "録音時のハードウェア/ソフトウェアレイテンシを補正します（再起動時に前回の校正値を自動読み込み）",
   "setup.calibration.auto.title": "自動ビート校正",
   "setup.calibration.auto.hint": "ヘッドホンを装着してから下のボタンをクリックしてください。システムが木魚の音を 8 回再生します（最初の 2 回はウォームアップ、後半 6 回が計測）。リズムに合わせてマイクに向かって手拍子や短い音を出してください。",
@@ -187,7 +176,6 @@
   "setup.calibration.result.success": "校正完了！レイテンシ {ms} ms（標準偏差 {std} ms）",
   "setup.calibration.result.successNoStd": "校正完了！レイテンシ {ms} ms",
   "setup.calibration.result.failed": "校正に失敗しました: {error}",
-
   "calibration.canvas.title": "ボールがガイドラインに触れた瞬間、マイクに手拍子！",
   "calibration.canvas.warmup": "最初の {n} 拍はウォームアップで、リズムを掴むためのもの、計算には含まれません",
   "calibration.canvas.measuring": "計測中（全 {n} 拍）",
@@ -197,7 +185,6 @@
   "calibration.canvas.stdDev": "標準偏差 {ms} ms（小さいほど安定）",
   "calibration.canvas.warmupBadge": "ウォームアップ",
   "calibration.canvas.warmupLabel": "W{n}",
-
   "download.tool.ytdlp.installed": "yt-dlp {version}",
   "download.tool.ytdlp.notInstalled": "未インストール",
   "download.tool.ffmpeg.installed": "インストール済み",
@@ -248,7 +235,6 @@
   "download.tool.ffmpeg.localDetectFailed": "ローカル FFmpeg の検出に失敗しました：{error}",
   "download.tool.ffmpeg.localTrustFailed": "ローカル FFmpeg の信頼設定に失敗しました：{error}",
   "download.tool.ytdlp.manualHint": "Windows 版は、確認済みのローカルツールを信頼します。自動インストールはポータブル版のルートを優先し、ダウンロード済みファイルを検証します。",
-
   "download.form.url.label": "YouTube URL",
   "download.form.url.placeholder": "https://www.youtube.com/watch?v=...",
   "download.form.format.label": "形式",
@@ -271,30 +257,24 @@
   "download.form.outputDir.placeholder": "ダウンロード先を選択...",
   "download.form.outputDir.browse": "参照",
   "download.form.outputDir.dialog": "ダウンロード先フォルダを選択",
-
   "download.action.download": "ダウンロード開始",
   "download.action.downloadSubtitle": "字幕をダウンロード",
   "download.action.cancel": "ダウンロードをキャンセル",
   "download.confirm.batch": "これは {type} のダウンロードです。大量ダウンロードを防ぐため、VocalSync は先頭 {limit} 件まで取得します。開始しますか？",
-
   "download.urlType.video": "動画",
   "download.urlType.playlist": "プレイリスト",
   "download.urlType.channel": "チャンネル",
-
   "download.progress.postprocessing": "変換中...",
   "download.progress.eta": "残り {eta}",
-
   "download.result.cancelled": "ダウンロードをキャンセルしました",
   "download.result.noOutputDir": "先に出力先フォルダを選択してください",
   "download.result.initFailed": "ダウンロードツールの初期化に失敗しました: {error}",
   "download.result.installFailed": "インストールに失敗しました: {error}",
-
   "download.subtitle.foundCount": "{n} 個の字幕ファイルが見つかりました",
   "download.subtitle.loadAsLyrics": "歌詞として読み込む",
   "download.subtitle.loadingAsLyrics": "読み込み中...",
   "download.subtitle.loadedAsLyrics": "{n} 行の歌詞を読み込みました",
   "download.subtitle.loadFailed": "読み込みに失敗しました: {error}",
-
   "recording.transport.state.idle": "待機中",
   "recording.transport.state.previewing": "試聴中",
   "recording.transport.state.recording": "録音中",
@@ -303,7 +283,6 @@
   "recording.transport.resume.previewing": "（試聴）",
   "recording.transport.resume.recording": "（録音）",
   "recording.transport.resume.playingBack": "（再生）",
-
   "recording.action.play.title": "試聴 (Space)",
   "recording.action.play.aria": "試聴",
   "recording.action.resume.title": "再開 (Space)",
@@ -315,14 +294,11 @@
   "recording.action.record.title": "録音 (R)",
   "recording.action.record.aria": "録音",
   "recording.action.record.dot.aria": "録音中",
-
   "recording.panel.lyrics": "歌詞",
   "recording.panel.sync": "同期",
-
   "recording.video.audioOnly": "音声のみモード",
   "recording.video.audioInfo": "{min} 分 · {rate} Hz",
   "recording.video.noBacking": "先に伴奏を読み込んでください",
-
   "recording.toast.previewFailed": "試聴に失敗しました: {error}",
   "recording.toast.playbackFailed": "再生に失敗しました: {error}",
   "recording.toast.recordingFailed": "録音に失敗しました: {error}",
@@ -331,17 +307,14 @@
   "recording.toast.clearFailed": "クリアに失敗しました: {error}",
   "recording.toast.exportFailed": "エクスポートに失敗しました: {error}",
   "recording.toast.clearedCanRerecord": "録音をクリアしました、最初から録り直せます",
-  "recording.toast.exportSuccess": "エクスポート成功\nボーカル: {vocal}\nミックス: {mix}",
+  "recording.toast.exportSuccess": "エクスポート成功\nボーカルファイル: {vocal}\nミックスファイル（有効なエフェクトを含む）: {mix}",
   "recording.toast.loopBAfterA": "B 点は A 点より後にしてください",
-
   "recording.dialog.forwardRecord.message": "現在の再生位置（{now} 秒）は一時停止時（{baseline} 秒）より前に進んでいます。このまま録音を続けると、{now} 秒以降の既録音内容が破棄されます。続行しますか？",
   "recording.dialog.forwardRecord.title": "前進録音の確認",
   "recording.dialog.clearRecord.message": "クリア後は現在の録音を復元できません。本当にクリアしますか？",
   "recording.dialog.clearRecord.title": "録音をクリア",
-
   "recording.export.dialog.title": "エクスポート先を選択",
   "recording.export.dialog.filter": "WAV",
-
   "recording.volume.backing": "伴奏",
   "recording.volume.mic": "マイク",
   "recording.volume.guide": "ガイド",
@@ -356,43 +329,41 @@
   "recording.volume.mic.reset.title": "マイクを {pct}% にリセット",
   "recording.volume.guide.reset.aria": "ガイドボーカル音量を既定値 {pct}% にリセット",
   "recording.volume.guide.reset.title": "ガイドボーカルを {pct}% にリセット",
-
   "recording.speed.label": "速度",
   "recording.speed.decrease.title": "速度を一段下げる",
   "recording.speed.increase.title": "速度を一段上げる",
   "recording.speed.reset.aria": "速度を既定値 1.00x にリセット",
   "recording.speed.reset.title": "速度を 1.00x にリセット",
-
   "recording.pitch.label": "移調",
   "recording.pitch.decrease.title": "半音下げる (-)",
   "recording.pitch.increase.title": "半音上げる (+)",
   "recording.pitch.reset.aria": "移調を既定値 0 半音にリセット",
   "recording.pitch.reset.title": "移調を 0 半音にリセット",
-
   "recording.loop.badge": "ループ",
   "recording.loop.a.set": "A: {time}",
   "recording.loop.a.default": "A 点を設定 (A)",
   "recording.loop.b.set": "B: {time}",
   "recording.loop.b.default": "B 点を設定 (B)",
   "recording.loop.clear.title": "ループをクリア",
-
   "recording.export.button": "エクスポート",
+  "recording.export.naming.label": "自動命名",
+  "recording.export.naming.title": "伴奏名と日付で自動命名します。オフにすると毎回手動で指定します",
+  "recording.export.naming.manual": "毎回指定",
+  "recording.export.naming.auto": "伴奏+日付",
+  "recording.export.error.noBackingPath": "自動エクスポート用の伴奏ファイルパスが見つかりません",
   "recording.playback.button": "再生",
   "recording.playback.title": "録音を再生",
   "recording.clearRecord.button": "録音をクリア",
   "recording.clearRecord.title": "現在の録音をクリアして最初から録音",
-
-  "recording.autoBalance.tooltip": "オンにすると、ミックスをエクスポートする際にマイクを伴奏よりも少し前に出します（約 +2 dB）。オフにすると、現在の伴奏/マイクスライダー比率のまま出力します。",
+  "recording.autoBalance.tooltip": "オンにすると、再生とミックス書き出しの両方でマイクと伴奏の音量を自動調整し、声が聞こえやすくなります。オフにすると、現在の伴奏/マイクスライダー比率で再生・出力します。",
   "recording.autoBalance.aria": "正規化の説明",
   "recording.autoBalance.label": "正規化",
-
   "pitch.header.title": "ピッチカーブ",
   "pitch.header.alignment": "整列 {sign}{offset}s",
   "pitch.header.noMelody": "「準備」ページで練習用伴奏とボーカルトラックを読み込んでください",
   "pitch.transport.pause": "一時停止",
   "pitch.transport.play": "再生",
   "pitch.transport.needBacking": "再生するには先に練習用伴奏を読み込む必要があります",
-
   "pitchTimeline.legend.melody": "ピッチカーブのソース",
   "pitchTimeline.legend.yourPitch": "あなたのピッチ",
   "pitchTimeline.banner.analyzing.tag": "解析中",
@@ -404,19 +375,16 @@
   "pitchTimeline.view.up": "音域を上へ",
   "pitchTimeline.view.down": "音域を下へ",
   "pitchTimeline.view.auto": "自動フォーカスに戻す",
-
   "pitchIndicator.status.inTune": "ジャスト",
   "pitchIndicator.status.high": "シャープ",
   "pitchIndicator.status.low": "フラット",
   "pitchIndicator.empty": "声が検出されていません",
-
   "lyricsPanel.empty.title": "歌詞が読み込まれていません",
   "lyricsPanel.empty.hint": "準備ページで .lrc または .srt ファイルを読み込んでください",
   "lyricsPanel.toast.loopCancelled": "ループをキャンセルしました",
   "lyricsPanel.toast.loopStarted": "この行をループ再生",
   "lyricsPanel.loop.cancel": "ループを解除",
   "lyricsPanel.loop.set": "この行をループ再生",
-
   "lyricsSync.empty.title": "歌詞が読み込まれていません",
   "lyricsSync.empty.hint": "先に準備ページで歌詞ファイルを読み込んでください",
   "lyricsSync.action.undo": "元に戻す",
@@ -499,11 +467,9 @@
   "lyricsSync.export.dialog.title": "LRC 歌詞をエクスポート",
   "lyricsSync.status.saved": "保存しました: {path}",
   "lyricsSync.status.saveFailed": "保存に失敗しました: {error}",
-
   "about.tagline": "デスクトップのボーカル練習室——歌を練習したい、自分の声をちゃんと聴きたいあなたのために。練習のたびに、上達を耳で実感できる",
   "about.disclosure.title": "開示事項",
   "about.disclosure.body": "作者にはプログラミングの経験がありません。本プロジェクトは AI（Claude / Codex）との協働により開発され、アーキテクチャ・コード・UI まですべて AI によって生成されました。すべての機能は実テストとマルチモデルのコードレビュー（Claude による実装 + Codex による独立監査）を経ています。ご自身の用途に応じてリスクをご判断の上ご利用ください。",
-
   "about.notes.title": "使い方",
   "about.workflow.title": "おすすめの流れ",
   "about.workflow.1": "準備タブで伴奏を読み込むか、YouTube から伴奏音声をダウンロードします。",
@@ -537,7 +503,6 @@
   "about.notes.4.body": "初回利用時は、録音のタイムラインを伴奏と正確に合わせるため、レイテンシ校正（準備ページ下部）の実行を推奨します。校正値は自動で保存されます。",
   "about.notes.5.title": "歌詞同期",
   "about.notes.5.body": "LRC / SRT / VTT / TXT の読み込み、同梱 whisper.cpp runner、app 内公式モデルダウンロード、進階モデルの手動指定、vocals.wav からの Whisper タイム付き文字起こし生成、LRC / SRT / ASS の書き出しに対応しています。",
-
   "about.shortcuts.title": "ショートカット",
   "about.shortcuts.playPause": "再生 / 一時停止",
   "about.shortcuts.record": "録音開始",
@@ -546,7 +511,6 @@
   "about.shortcuts.loopB": "ループ B 点を設定",
   "about.shortcuts.pitchUp": "半音上げる",
   "about.shortcuts.pitchDown": "半音下げる",
-
   "about.license.title": "ライセンス",
   "about.license.main.body1": "VocalSync Studio は ",
   "about.license.main.mit": "MIT License",
@@ -561,11 +525,9 @@
   "about.license.ffmpeg.body.middle": " は既定で ",
   "about.license.ffmpeg.body.after": " ライセンスですが、libx264 / libx265 などの特定のエンコーダを有効化すると GPL-2.0-or-later になります。本プログラムは ffmpeg / ffprobe を CLI サブプロセスとして呼び出すのみで、libav* ライブラリに静的リンクしていません。本リポジトリには FFmpeg バイナリは同梱していません。利用する build のライセンス版本にご注意ください（essentials build は通常 LGPL、full build には GPL コンポーネントが含まれます）。",
   "about.license.disclaimer": "免責事項：本ツールはローカルでの練習サポートを目的としています。本ツールで処理/ダウンロードした音声コンテンツの著作権および合法的利用の責任はすべてユーザー本人に帰属し、開発者は不適切な利用について一切の責任を負いません。",
-
   "about.creator.title": "制作者",
   "about.creator.desc": "このツールが練習のお役に立てたなら、開発を続けるためにコーヒーを一杯おごっていただけると嬉しいです。",
   "about.creator.donate": "Support on Ko-fi",
-
   "about.feedback.title": "お問い合わせ",
   "about.feedback.desc": "不具合、機能のご要望、使い方のご質問など、お気軽にどうぞ。以下の 2 つの方法で連絡できます:",
   "about.feedback.githubIssues": "GitHub Issues",
@@ -573,13 +535,11 @@
   "about.feedback.emailLabel": "メール",
   "about.feedback.emailCopyTitle": "クリックでコピー",
   "about.feedback.mailSubject": "[VocalSync Studio v{version}] 不具合報告",
-
   "about.links.title": "リンクとアップデート",
   "about.links.github": "GitHub",
   "about.links.checkUpdate": "アップデートを確認",
   "about.links.checking": "確認中...",
   "about.links.footer": "Built with Tauri + Svelte + Rust",
-
   "about.toast.emailCopied": "メールアドレスをクリップボードにコピーしました",
   "about.toast.emailCopyFailed": "コピーに失敗しました: {error}",
   "about.toast.updateAvailable": "新バージョン {version} が利用可能です。GitHub リンクからダウンロードしてください",

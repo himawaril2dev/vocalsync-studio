@@ -34,6 +34,9 @@
   {:else if name === "export"}
     <path d="M12 3v12m0 0l-4-4m4 4l4-4" />
     <path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
+  {:else if name === "reset"}
+    <path d="M3 12a9 9 0 101.7-5.3" />
+    <path d="M3 4v5h5" />
   {/if}
 </svg>
 

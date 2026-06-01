@@ -4,6 +4,7 @@
  */
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import { get } from "svelte/store";
 import {
   transportState,
   pausedResumeMode,
@@ -201,6 +202,7 @@ export async function setupEventListeners(): Promise<void> {
 
   unlisteners.push(
     await listen("audio:finished", () => {
+      if (get(transportState) === "paused") return;
       transportState.set("idle");
       pausedResumeMode.set(null);
       pausedAtElapsed.set(null);

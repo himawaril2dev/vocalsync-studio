@@ -11,7 +11,7 @@
     duration,
     transportState,
   } from "../stores/transport";
-  import { outputDeviceIndex, latencyMs } from "../stores/settings";
+  import { outputDeviceIndex, latencyMs, autoBalanceMixin } from "../stores/settings";
   import { t, tSync } from "../i18n";
 
   /** 是否正在播放（從 transport state 推導） */
@@ -55,6 +55,7 @@
           startFrame: null,
           outputDevice: $outputDeviceIndex,
           latencyMs: $latencyMs,
+          autoBalance: $autoBalanceMixin,
         });
       }
     } catch (err) {

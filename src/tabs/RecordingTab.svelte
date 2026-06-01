@@ -43,14 +43,24 @@
     guideVolume,
     guideVocalEnabled,
     autoBalanceMixin,
+    exportNamingMode,
     resetBackingVolume,
     resetMicGain,
     resetGuideVolume,
     DEFAULT_BACKING_VOLUME,
     DEFAULT_MIC_GAIN,
     DEFAULT_GUIDE_VOLUME,
+    type ExportNamingMode,
   } from "../stores/settings";
-  import { guideVocalPath } from "../stores/melody";
+  import {
+    alignmentConfidence,
+    alignmentFineTuneMs,
+    alignmentResult,
+    currentMelody,
+    finalOffsetSecs,
+    guideVocalPath,
+    melodySourcePath,
+  } from "../stores/melody";
   import { showToast } from "../stores/toast";
   import Icon from "../components/Icon.svelte";
   import LyricsPanel from "../components/LyricsPanel.svelte";
@@ -65,6 +75,7 @@
     mic_gain?: number;
     guide_volume?: number;
     auto_balance?: boolean;
+    export_naming_mode?: string;
     mixer_settings_version?: number;
   }
 
@@ -78,12 +89,19 @@
     return Math.max(0, Math.min(maxPercent, value)) / 100;
   }
 
-  function saveMixerSettings(backing: number, mic: number, guide: number, autoBalance: boolean): void {
+  function saveMixerSettings(
+    backing: number,
+    mic: number,
+    guide: number,
+    autoBalance: boolean,
+    exportNaming: ExportNamingMode,
+  ): void {
     void invoke("update_mixer_settings", {
       backing,
       mic,
       guide,
       autoBalance,
+      exportNamingMode: exportNaming,
     }).catch((err) => console.warn("[settings] mixer save failed:", err));
   }
 
@@ -92,6 +110,7 @@
     mic: number,
     guide: number,
     autoBalance: boolean,
+    exportNaming: ExportNamingMode,
   ): void {
     if (!mixerSettingsLoaded) return;
     if (mixerSettingsSaveTimer !== null) {
@@ -99,7 +118,13 @@
     }
     mixerSettingsSaveTimer = window.setTimeout(() => {
       mixerSettingsSaveTimer = null;
-      saveMixerSettings(backing, mic, guide, autoBalance);
+      saveMixerSettings(
+        backing,
+        mic,
+        guide,
+        autoBalance,
+        exportNaming,
+      );
     }, 250);
   }
 
@@ -114,6 +139,34 @@
       get(micGain),
       get(guideVolume),
       get(autoBalanceMixin),
+      get(exportNamingMode),
+    );
+  }
+
+  function applyMixerRuntimeSettings(
+    backing: number,
+    mic: number,
+    guide: number,
+    guideVocalOn: boolean,
+  ): Promise<void> {
+    return Promise.all([
+      invoke("set_volume", {
+        backing,
+        mic,
+        guide,
+      }),
+      invoke("set_guide_vocal_enabled", {
+        enabled: guideVocalOn,
+      }),
+    ]).then(() => undefined);
+  }
+
+  function syncMixerRuntimeSettings(): Promise<void> {
+    return applyMixerRuntimeSettings(
+      get(backingVolume),
+      get(micGain),
+      get(guideVolume),
+      Boolean(get(guideVocalPath) && get(guideVocalEnabled)),
     );
   }
 
@@ -128,6 +181,12 @@
           guideVolume.set(percentToRatio(settings.guide_volume, DEFAULT_GUIDE_VOLUME, 100));
           if (typeof settings.auto_balance === "boolean") {
             autoBalanceMixin.set(settings.auto_balance);
+          }
+          if (
+            settings.export_naming_mode === "manual" ||
+            settings.export_naming_mode === "auto"
+          ) {
+            exportNamingMode.set(settings.export_naming_mode);
           }
         }
       })
@@ -226,15 +285,19 @@
 
   // 音量改變時即時更新後端
   $effect(() => {
-    invoke("set_volume", {
-      backing: $backingVolume,
-      mic: $micGain,
-      guide: $guideVolume,
-    }).catch(() => {});
-    invoke("set_guide_vocal_enabled", {
-      enabled: Boolean($guideVocalPath && $guideVocalEnabled),
-    }).catch(() => {});
-    scheduleMixerSettingsSave($backingVolume, $micGain, $guideVolume, $autoBalanceMixin);
+    void applyMixerRuntimeSettings(
+      $backingVolume,
+      $micGain,
+      $guideVolume,
+      Boolean($guideVocalPath && $guideVocalEnabled),
+    ).catch(() => {});
+    scheduleMixerSettingsSave(
+      $backingVolume,
+      $micGain,
+      $guideVolume,
+      $autoBalanceMixin,
+      $exportNamingMode,
+    );
   });
 
   function onSeekInput(e: Event) {
@@ -307,10 +370,12 @@
       resetVideo();
     }
     try {
+      await syncMixerRuntimeSettings();
       await invoke("start_playback", {
         startFrame,
         outputDevice: $outputDeviceIndex,
         latencyMs: $latencyMs,
+        autoBalance: $autoBalanceMixin,
       });
       pausedResumeMode.set(null);
       pausedAtElapsed.set(null);
@@ -374,13 +439,24 @@
     if (current === "idle" || current === "paused") return;
 
     const resumeMode = current as ResumeMode;
+    const pausedElapsed = get(elapsed);
+    videoEl?.pause();
+    pausedResumeMode.set(resumeMode);
+    pausedAtElapsed.set(pausedElapsed);
+    transportState.set("paused");
+
     try {
-      await invoke("pause_playback");
-      videoEl?.pause();
-      pausedResumeMode.set(resumeMode);
-      pausedAtElapsed.set(get(elapsed));
-      transportState.set("paused");
+      const pausedFrame = await invoke<number>("pause_playback");
+      const media = get(loadedMedia);
+      if (media && Number.isFinite(pausedFrame)) {
+        const pausedSeconds = pausedFrame / media.sample_rate;
+        elapsed.set(pausedSeconds);
+        pausedAtElapsed.set(pausedSeconds);
+      }
     } catch (e) {
+      pausedResumeMode.set(null);
+      pausedAtElapsed.set(null);
+      transportState.set(current);
       showToast(tSync("recording.toast.pauseFailed", { error: String(e) }), "error");
     }
   }
@@ -434,34 +510,103 @@
 
   async function exportAudio() {
     try {
-      const filePath = await save({
-        title: tSync("recording.export.dialog.title"),
-        filters: [{ name: tSync("recording.export.dialog.filter"), extensions: ["wav"] }],
-        defaultPath: "vocalsync_recording",
-      });
-      if (!filePath) return;
+      const media = get(loadedMedia);
+      const defaultPrefix = buildAutoExportPrefix(media?.file_name);
+      let dir: string;
+      let prefix: string;
+      let autoIncrement = false;
 
-      const slashIdx = Math.max(
-        filePath.lastIndexOf("\\"),
-        filePath.lastIndexOf("/"),
-      );
-      const dir = filePath.substring(0, slashIdx);
-      let prefix = filePath.substring(slashIdx + 1);
-      if (prefix.endsWith(".wav")) prefix = prefix.slice(0, -4);
+      if ($exportNamingMode === "manual") {
+        const filePath = await save({
+          title: tSync("recording.export.dialog.title"),
+          filters: [{ name: tSync("recording.export.dialog.filter"), extensions: ["wav"] }],
+          defaultPath: `${defaultPrefix}.wav`,
+        });
+        if (!filePath) return;
 
-      const result = await invoke<{ vocal_path: string; mix_path: string }>(
+        const savePath = splitSavePath(filePath);
+        dir = savePath.dir;
+        prefix = savePath.prefix;
+      } else {
+        if (!media) {
+          throw new Error(tSync("recording.export.error.noBackingPath"));
+        }
+        dir = directoryName(media.file_path);
+        prefix = defaultPrefix;
+        autoIncrement = true;
+      }
+
+      await syncMixerRuntimeSettings();
+      const result = await invoke<{
+        vocal_path: string;
+        mix_path: string;
+      }>(
         "export_audio",
         {
           dir,
           prefix,
+          autoIncrement,
           autoBalance: $autoBalanceMixin,
           latencyMs: $latencyMs,
         },
       );
-      showToast(tSync("recording.toast.exportSuccess", { vocal: result.vocal_path, mix: result.mix_path }), "success", 5000);
+      showToast(
+        tSync("recording.toast.exportSuccess", {
+          vocal: result.vocal_path,
+          mix: result.mix_path,
+        }),
+        "success",
+        5000,
+      );
     } catch (e) {
       showToast(tSync("recording.toast.exportFailed", { error: String(e) }), "error");
     }
+  }
+
+  function splitSavePath(filePath: string): { dir: string; prefix: string } {
+    const slashIdx = Math.max(filePath.lastIndexOf("\\"), filePath.lastIndexOf("/"));
+    if (slashIdx < 0) {
+      throw new Error(tSync("recording.export.error.noBackingPath"));
+    }
+    let prefix = filePath.substring(slashIdx + 1);
+    if (prefix.toLowerCase().endsWith(".wav")) prefix = prefix.slice(0, -4);
+    return { dir: filePath.substring(0, slashIdx), prefix };
+  }
+
+  function directoryName(filePath: string): string {
+    const slashIdx = Math.max(filePath.lastIndexOf("\\"), filePath.lastIndexOf("/"));
+    if (slashIdx < 0) {
+      throw new Error(tSync("recording.export.error.noBackingPath"));
+    }
+    return filePath.substring(0, slashIdx);
+  }
+
+  function buildAutoExportPrefix(fileName?: string | null): string {
+    const baseName = sanitizeExportName(stripExtension(fileName ?? ""));
+    return `${baseName}_${localDateStamp()}`;
+  }
+
+  function stripExtension(fileName: string): string {
+    const dotIdx = fileName.lastIndexOf(".");
+    return dotIdx > 0 ? fileName.substring(0, dotIdx) : fileName;
+  }
+
+  function sanitizeExportName(fileName: string): string {
+    const cleaned = fileName
+      .replace(/[<>:"/\\|?*\x00-\x1f]/g, " ")
+      .replace(/\s+/g, " ")
+      .replace(/\.{2,}/g, ".")
+      .trim()
+      .replace(/^[.\s]+|[.\s]+$/g, "");
+    return cleaned.length > 0 ? cleaned.slice(0, 140) : "vocalsync_recording";
+  }
+
+  function localDateStamp(): string {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
   }
 
   let stateLabelText = $derived.by(() => {
@@ -594,6 +739,33 @@
   let hasNonDefaultGuide = $derived(
     Math.abs($guideVolume - DEFAULT_GUIDE_VOLUME) > 0.001,
   );
+  let finalAlignmentMs = $derived.by(() =>
+    Math.round(finalOffsetSecs($alignmentResult, $alignmentFineTuneMs) * 1000),
+  );
+
+  function describeRecordingAlignmentOffset(): string {
+    if (!$alignmentResult) return "";
+    const secs = $alignmentResult.offset_secs;
+    const sign = secs >= 0 ? "+" : "";
+    return `${sign}${secs.toFixed(3)} ${tSync("setup.alignment.offset.seconds")}`;
+  }
+
+  function alignmentBadgeText(): string {
+    if ($melodySourcePath === null) return tSync("setup.alignment.badge.noNeed");
+    if (!$alignmentResult) return tSync("setup.alignment.badge.notAligned");
+    const confidence = alignmentConfidence($alignmentResult);
+    if (confidence === "high") return tSync("setup.alignment.badge.high");
+    if (confidence === "medium") return tSync("setup.alignment.badge.medium");
+    return tSync("setup.alignment.badge.low");
+  }
+
+  function alignmentBadgeClass(): string {
+    if ($melodySourcePath === null || !$alignmentResult) return "badge-muted";
+    const confidence = alignmentConfidence($alignmentResult);
+    if (confidence === "high") return "badge-high";
+    if (confidence === "medium") return "badge-medium";
+    return "badge-low";
+  }
 </script>
 
 <svelte:window
@@ -679,6 +851,53 @@
     <!-- 下半：全寬音高曲線 -->
     <div class="pitch-area" style="flex: {1 - topFlex};">
       <div class="panel-content">
+        {#if $currentMelody}
+          <div class="recording-alignment-bar">
+            <div class="alignment-summary">
+              <span class="alignment-title">{$t("setup.alignment.title")}</span>
+              <span
+                class="alignment-badge"
+                class:badge-muted={alignmentBadgeClass() === "badge-muted"}
+                class:badge-high={alignmentBadgeClass() === "badge-high"}
+                class:badge-medium={alignmentBadgeClass() === "badge-medium"}
+                class:badge-low={alignmentBadgeClass() === "badge-low"}
+              >
+                {alignmentBadgeText()}
+              </span>
+              {#if $alignmentResult}
+                <span class="alignment-offset">
+                  {$t("setup.alignment.hint.offset", {
+                    offset: describeRecordingAlignmentOffset(),
+                    ratio: $alignmentResult.peak_to_mean_ratio.toFixed(1),
+                  })}
+                </span>
+              {/if}
+            </div>
+            <div class="alignment-controls">
+              <label for="recording_fine_tune">{$t("setup.alignment.fineTune.label")}</label>
+              <input
+                id="recording_fine_tune"
+                type="range"
+                min="-500"
+                max="500"
+                step="1"
+                bind:value={$alignmentFineTuneMs}
+              />
+              <span class="alignment-value">
+                {finalAlignmentMs >= 0 ? "+" : ""}{finalAlignmentMs} ms
+              </span>
+              <button
+                class="alignment-reset"
+                onclick={() => alignmentFineTuneMs.set(0)}
+                disabled={$alignmentFineTuneMs === 0}
+                title={$t("setup.alignment.fineTune.reset.title")}
+                aria-label={$t("setup.alignment.fineTune.reset.title")}
+              >
+                <Icon name="reset" size={12} />
+              </button>
+            </div>
+          </div>
+        {/if}
         <PitchTimeline />
       </div>
     </div>
@@ -919,6 +1138,18 @@
       {$t("recording.clearRecord.button")}
     </button>
 
+    <label class="export-naming-group" title={$t("recording.export.naming.title")}>
+      <input
+        type="checkbox"
+        checked={$exportNamingMode === "auto"}
+        aria-label={$t("recording.export.naming.label")}
+        onchange={(event) => {
+          exportNamingMode.set(event.currentTarget.checked ? "auto" : "manual");
+        }}
+      />
+      {$t("recording.export.naming.label")}
+    </label>
+
     <div class="auto-balance-group">
       <button
         type="button"
@@ -1069,6 +1300,111 @@
     flex-direction: column;
     padding: var(--space-sm) var(--space-md) var(--space-md) var(--space-md);
     overflow: hidden;
+  }
+
+  .recording-alignment-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--space-md);
+    padding: 6px 0 var(--space-sm);
+    flex-shrink: 0;
+  }
+
+  .alignment-summary,
+  .alignment-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    min-width: 0;
+  }
+
+  .alignment-summary {
+    flex: 1;
+  }
+
+  .alignment-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--color-text);
+    white-space: nowrap;
+  }
+
+  .alignment-badge {
+    padding: 2px 7px;
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .badge-muted {
+    background: var(--color-bg-hover);
+    color: var(--color-text-muted);
+  }
+
+  .badge-high {
+    background: rgba(34, 197, 94, 0.16);
+    color: #15803d;
+  }
+
+  .badge-medium {
+    background: rgba(245, 158, 11, 0.18);
+    color: #92400e;
+  }
+
+  .badge-low {
+    background: rgba(239, 68, 68, 0.14);
+    color: #b91c1c;
+  }
+
+  .alignment-offset {
+    font-size: 11px;
+    color: var(--color-text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .alignment-controls label {
+    font-size: 11px;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+  }
+
+  .alignment-controls input[type="range"] {
+    width: 170px;
+    accent-color: var(--color-brand);
+  }
+
+  .alignment-value {
+    min-width: 64px;
+    text-align: right;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--color-text);
+  }
+
+  .alignment-reset {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: var(--color-bg-hover);
+    color: var(--color-text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .alignment-reset:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
   }
 
   .video-placeholder {
@@ -1442,6 +1778,20 @@
     padding: 1px var(--space-xs);
     border-radius: var(--radius-sm);
     white-space: nowrap;
+  }
+
+  .export-naming-group {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+  }
+
+  .export-naming-group input {
+    margin: 0;
   }
 
   .auto-balance-group {

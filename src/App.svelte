@@ -20,12 +20,16 @@
   import {
     alignmentFineTuneMs,
     alignmentResult,
+    applyAlignmentToMelody,
     currentMelody,
+    finalOffsetSecs,
     guideVocalPath,
+    melodyToPitchTrack,
     melodySourcePath,
     type AlignmentResult,
     type MelodyTrack,
   } from "./stores/melody";
+  import { backingPitchTrack } from "./stores/pitch";
   import { guideVocalEnabled } from "./stores/settings";
   import { projectSessionReady } from "./stores/projectSession";
 
@@ -35,6 +39,8 @@
   let showStartupGuide = $state(false);
   let showStartupGuideNextLaunch = $state(true);
   let projectSessionSaveTimer: number | null = null;
+  let lastPitchAlignmentSyncKey = "";
+  let lastGuideTimingSyncKey = "";
 
   const PROJECT_SESSION_VERSION = 1;
 
@@ -141,6 +147,40 @@
     void $alignmentResult;
     void $alignmentFineTuneMs;
     scheduleProjectSessionSave();
+  });
+
+  $effect(() => {
+    const melody = $currentMelody;
+    if (!melody) {
+      lastPitchAlignmentSyncKey = "";
+      return;
+    }
+    const offsetSecs = finalOffsetSecs($alignmentResult, $alignmentFineTuneMs);
+    const syncKey = `${melody.source.type}|${melody.total_duration_secs ?? 0}|${offsetSecs.toFixed(6)}`;
+    if (syncKey === lastPitchAlignmentSyncKey) return;
+    lastPitchAlignmentSyncKey = syncKey;
+
+    backingPitchTrack.set(melodyToPitchTrack(applyAlignmentToMelody(melody, offsetSecs)));
+  });
+
+  $effect(() => {
+    const path = $guideVocalPath;
+    const offsetSecs = finalOffsetSecs($alignmentResult, $alignmentFineTuneMs);
+    const enabled = $guideVocalEnabled;
+    const syncKey = `${path ?? ""}|${offsetSecs.toFixed(6)}|${enabled}`;
+    if (syncKey === lastGuideTimingSyncKey) return;
+    lastGuideTimingSyncKey = syncKey;
+
+    if (!path) {
+      void invoke("set_guide_vocal_enabled", { enabled: false }).catch(() => {});
+      return;
+    }
+    void invoke("set_guide_vocal_offset", { offsetSecs }).catch((err) =>
+      console.warn("[guide] offset sync failed:", err),
+    );
+    void invoke("set_guide_vocal_enabled", { enabled }).catch((err) =>
+      console.warn("[guide] enabled sync failed:", err),
+    );
   });
 
   async function closeStartupGuide(showNextLaunch: boolean): Promise<void> {

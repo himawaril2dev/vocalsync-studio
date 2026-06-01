@@ -16,6 +16,9 @@ export const micGain = writable<number>(DEFAULT_MIC_GAIN);
 export const DEFAULT_GUIDE_VOLUME = 0.25;
 export const guideVolume = writable<number>(DEFAULT_GUIDE_VOLUME);
 export const guideVocalEnabled = writable<boolean>(false);
+export type ExportNamingMode = "manual" | "auto";
+export const DEFAULT_EXPORT_NAMING_MODE: ExportNamingMode = "auto";
+export const exportNamingMode = writable<ExportNamingMode>(DEFAULT_EXPORT_NAMING_MODE);
 
 /** 重設伴奏音量回到預設值 */
 export function resetBackingVolume(): void {

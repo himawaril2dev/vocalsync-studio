@@ -19,7 +19,6 @@
   "app.error.title": "發生了未預期的錯誤",
   "app.error.unknown": "未知錯誤",
   "app.error.retry": "重新載入頁面",
-
   "startupGuide.title": "使用須知",
   "startupGuide.subtitle": "VocalSync 可以用「只有原曲」開始練唱，也可以用「伴奏 + 原曲人聲」的方式練唱。人聲分離建議交給 UVR5，VocalSync 專心處理錄音、音高曲線、導唱與匯出。",
   "startupGuide.step1.title": "取得原曲或伴奏",
@@ -36,7 +35,6 @@
   "startupGuide.tip.body": "想要快速確認歌曲可分離程度，可先用常見的 MDX/UVR 模型做一次分離。想得到更乾淨的人聲參考，可在 UVR5 裡做二次分離，再把最後的 vocals.wav 匯入 VocalSync。",
   "startupGuide.showAgain": "下次啟動仍顯示這份說明",
   "startupGuide.close": "開始使用",
-
   "uvrGuide.entry.title": "什麼是 UVR5？",
   "uvrGuide.entry.body": "UVR5 是常用的人聲 / 伴奏分離工具。先用它把原曲分成 vocals.wav 與 instrumental.wav，再回到 VocalSync 做音高曲線、導唱與錄音。",
   "uvrGuide.entry.action": "打開 UVR5 使用指南",
@@ -67,10 +65,8 @@
   "uvrGuide.faq.noise.body": "可換模型、提高原曲音質，或在 UVR5 內用另一個人聲清理模型做二次分離。VocalSync 需要的是足夠清楚的旋律參考，不一定要達到發行級乾聲。",
   "uvrGuide.faq.sync.title": "伴奏和人聲對不齊",
   "uvrGuide.faq.sync.body": "優先使用同一首原曲分離出的 instrumental.wav 與 vocals.wav。使用不同版本伴奏時，VocalSync 會自動對齊，也可以用 fine-tune 手動微調。",
-
   "language.switcher.label": "語言",
   "language.switcher.aria": "切換介面語言",
-
   "setup.section.download": "YouTube 下載",
   "setup.section.song": "歌曲與音高來源",
   "setup.section.backing": "練唱伴奏",
@@ -79,11 +75,9 @@
   "setup.section.separation": "UVR5 人聲準備",
   "setup.section.device": "裝置選擇",
   "setup.section.calibration": "延遲校準",
-
   "setup.song.hint": "先選錄音時要聽的練唱伴奏，再匯入 vocals.wav 或 MIDI 作為音高曲線與導唱來源。只有原曲時，先用 UVR5 產生 instrumental.wav 與 vocals.wav。",
   "setup.song.backing.title": "練唱伴奏",
   "setup.song.melody.title": "音高曲線與導唱",
-
   "setup.backing.hint.empty": "請載入伴奏檔案開始練唱",
   "setup.backing.hint.loading": "載入中...",
   "setup.backing.hint.loaded": "已載入{kind}：{name}（{min}:{sec}）",
@@ -94,7 +88,6 @@
   "setup.backing.kind.video": "影片",
   "setup.backing.dialog.title": "選擇伴奏檔案",
   "setup.backing.dialog.filter": "音訊/影片",
-
   "setup.lyrics.status.empty": "尚未載入歌詞",
   "setup.lyrics.status.parsing": "解析中...",
   "setup.lyrics.status.loaded": "已載入 {n} 行歌詞（{name}）",
@@ -109,7 +102,6 @@
   "setup.lyrics.action.clear": "清除歌詞",
   "setup.lyrics.dialog.title": "選擇歌詞檔案",
   "setup.lyrics.dialog.filter": "歌詞檔",
-
   "setup.melody.hint.empty.prefix": "請匯入",
   "setup.melody.hint.empty.vocals": "預先分離好的人聲軌",
   "setup.melody.hint.empty.or": "或",
@@ -139,7 +131,6 @@
   "setup.guide.toggle": "作為導唱播放：{name}",
   "setup.guide.hint": "導唱只會進耳機監聽，匯出時不會混進成品。",
   "setup.guide.status.loadFailedAppend": "{status}（導唱載入失敗：{error}）",
-
   "setup.separation.hint": "使用 UVR5 先把原曲分離成 vocals.wav 與 instrumental.wav，再回到 VocalSync 匯入伴奏與人聲軌。VocalSync 專心處理錄音、音高曲線、導唱、歌詞與匯出。",
   "setup.separation.external.step1.title": "在 UVR5 分離原曲",
   "setup.separation.external.step1.body": "把原曲丟進 UVR5，輸出 vocals.wav 與 instrumental.wav。想要乾淨人聲時，可在 UVR5 裡做二次分離。",
@@ -165,7 +156,6 @@
   "setup.alignment.fineTune.reset.title": "重置微調",
   "setup.alignment.fineTune.reset.text": "歸零",
   "setup.alignment.offset.seconds": "秒",
-
   "setup.device.input.label": "麥克風 (Input):",
   "setup.device.output.label": "耳機 (Output):",
   "setup.device.pitch.label": "音高偵測引擎:",
@@ -176,7 +166,6 @@
   "setup.device.modelFolder.openCrepe": "開啟 CREPE 模型資料夾",
   "setup.device.modelFolder.opened": "已開啟模型資料夾：{path}",
   "setup.device.modelFolder.failed": "開啟模型資料夾失敗：{error}",
-
   "setup.calibration.hint": "補償錄音時的軟硬體延遲（重啟後會自動載入上次校準值）",
   "setup.calibration.auto.title": "自動打拍子校準",
   "setup.calibration.auto.hint": "戴上耳機後點擊下方按鈕。系統會發出 8 次木魚聲（前 2 次暖身、後 6 次量測），請跟著節奏對著麥克風拍手或發出短促音。",
@@ -187,7 +176,6 @@
   "setup.calibration.result.success": "校準完成！延遲 {ms} ms（標準差 {std} ms）",
   "setup.calibration.result.successNoStd": "校準完成！延遲 {ms} ms",
   "setup.calibration.result.failed": "校準失敗：{error}",
-
   "calibration.canvas.title": "當球碰到準線時，對麥克風拍手！",
   "calibration.canvas.warmup": "前 {n} 拍是暖身，幫你抓節奏,不會納入計算",
   "calibration.canvas.measuring": "量測中（共 {n} 拍）",
@@ -197,7 +185,6 @@
   "calibration.canvas.stdDev": "標準差 {ms} ms（越小越穩）",
   "calibration.canvas.warmupBadge": "暖身",
   "calibration.canvas.warmupLabel": "暖{n}",
-
   "download.tool.ytdlp.installed": "yt-dlp {version}",
   "download.tool.ytdlp.notInstalled": "未安裝",
   "download.tool.ffmpeg.installed": "已安裝",
@@ -248,7 +235,6 @@
   "download.tool.ffmpeg.localDetectFailed": "偵測本機 FFmpeg 失敗：{error}",
   "download.tool.ffmpeg.localTrustFailed": "信任本機 FFmpeg 失敗：{error}",
   "download.tool.ytdlp.manualHint": "Windows 版會信任你確認過的本機工具；自動安裝會優先放在免安裝包根目錄，並驗證下載檔案。",
-
   "download.form.url.label": "YouTube 網址",
   "download.form.url.placeholder": "https://www.youtube.com/watch?v=...",
   "download.form.format.label": "格式",
@@ -271,30 +257,24 @@
   "download.form.outputDir.placeholder": "選擇下載位置...",
   "download.form.outputDir.browse": "瀏覽",
   "download.form.outputDir.dialog": "選擇下載目錄",
-
   "download.action.download": "開始下載",
   "download.action.downloadSubtitle": "下載字幕",
   "download.action.cancel": "取消下載",
   "download.confirm.batch": "這是 {type} 下載。為了避免誤抓大量影片，VocalSync 這次最多會下載前 {limit} 個項目。確認開始？",
-
   "download.urlType.video": "影片",
   "download.urlType.playlist": "播放清單",
   "download.urlType.channel": "頻道",
-
   "download.progress.postprocessing": "轉檔中...",
   "download.progress.eta": "ETA {eta}",
-
   "download.result.cancelled": "下載已取消",
   "download.result.noOutputDir": "請先選擇輸出目錄",
   "download.result.initFailed": "初始化下載工具失敗：{error}",
   "download.result.installFailed": "安裝失敗：{error}",
-
   "download.subtitle.foundCount": "找到 {n} 個字幕檔案",
   "download.subtitle.loadAsLyrics": "載入為歌詞",
   "download.subtitle.loadingAsLyrics": "載入中...",
   "download.subtitle.loadedAsLyrics": "已載入 {n} 行歌詞",
   "download.subtitle.loadFailed": "載入失敗：{error}",
-
   "recording.transport.state.idle": "待命",
   "recording.transport.state.previewing": "試聽中",
   "recording.transport.state.recording": "錄音中",
@@ -303,7 +283,6 @@
   "recording.transport.resume.previewing": "（試聽）",
   "recording.transport.resume.recording": "（錄音）",
   "recording.transport.resume.playingBack": "（回放）",
-
   "recording.action.play.title": "試聽 (Space)",
   "recording.action.play.aria": "試聽",
   "recording.action.resume.title": "繼續播放 (Space)",
@@ -315,14 +294,11 @@
   "recording.action.record.title": "錄音 (R)",
   "recording.action.record.aria": "錄音",
   "recording.action.record.dot.aria": "錄音中",
-
   "recording.panel.lyrics": "歌詞",
   "recording.panel.sync": "同步",
-
   "recording.video.audioOnly": "純音訊模式",
   "recording.video.audioInfo": "{min} 分鐘 · {rate} Hz",
   "recording.video.noBacking": "請先載入伴奏",
-
   "recording.toast.previewFailed": "試聽失敗：{error}",
   "recording.toast.playbackFailed": "回放失敗：{error}",
   "recording.toast.recordingFailed": "錄音失敗：{error}",
@@ -331,17 +307,14 @@
   "recording.toast.clearFailed": "清除失敗：{error}",
   "recording.toast.exportFailed": "導出失敗：{error}",
   "recording.toast.clearedCanRerecord": "已清除錄音，可從頭重錄",
-  "recording.toast.exportSuccess": "導出成功\n人聲：{vocal}\n混音：{mix}",
+  "recording.toast.exportSuccess": "導出成功\n人聲檔：{vocal}\n混音檔（含已啟用效果）：{mix}",
   "recording.toast.loopBAfterA": "B 點必須在 A 點之後",
-
   "recording.dialog.forwardRecord.message": "目前播放位置（{now} 秒）比暫停時（{baseline} 秒）更前，繼續錄音會捨棄 {now} 秒之後已錄的內容，確定要繼續嗎？",
   "recording.dialog.forwardRecord.title": "向前錄音確認",
   "recording.dialog.clearRecord.message": "清除後目前這段錄音將無法恢復,確定要清除嗎？",
   "recording.dialog.clearRecord.title": "清除錄音",
-
   "recording.export.dialog.title": "選擇導出位置",
   "recording.export.dialog.filter": "WAV",
-
   "recording.volume.backing": "伴奏",
   "recording.volume.mic": "麥克風",
   "recording.volume.guide": "導唱",
@@ -356,43 +329,41 @@
   "recording.volume.mic.reset.title": "重設麥克風為 {pct}%",
   "recording.volume.guide.reset.aria": "重設導唱音量為預設值 {pct}%",
   "recording.volume.guide.reset.title": "重設導唱為 {pct}%",
-
   "recording.speed.label": "速度",
   "recording.speed.decrease.title": "降低速度檔位",
   "recording.speed.increase.title": "提高速度檔位",
   "recording.speed.reset.aria": "重設速度為預設值 1.00x",
   "recording.speed.reset.title": "重設速度為 1.00x",
-
   "recording.pitch.label": "移調",
   "recording.pitch.decrease.title": "降半音 (-)",
   "recording.pitch.increase.title": "升半音 (+)",
   "recording.pitch.reset.aria": "重設移調為預設值 0 半音",
   "recording.pitch.reset.title": "重設移調為 0 半音",
-
   "recording.loop.badge": "循環",
   "recording.loop.a.set": "A: {time}",
   "recording.loop.a.default": "設定 A 點 (A)",
   "recording.loop.b.set": "B: {time}",
   "recording.loop.b.default": "設定 B 點 (B)",
   "recording.loop.clear.title": "清除循環",
-
   "recording.export.button": "導出",
+  "recording.export.naming.label": "自動命名",
+  "recording.export.naming.title": "勾選後依伴奏名稱與日期自動命名；取消勾選時每次手動命名",
+  "recording.export.naming.manual": "手動命名",
+  "recording.export.naming.auto": "伴奏+日期",
+  "recording.export.error.noBackingPath": "找不到伴奏路徑，無法自動匯出",
   "recording.playback.button": "回放",
   "recording.playback.title": "回放錄音",
   "recording.clearRecord.button": "清除錄音",
   "recording.clearRecord.title": "清除目前錄音，從頭開始錄",
-
-  "recording.autoBalance.tooltip": "勾選後，匯出混音時會自動把麥克風音量稍微蓋過伴奏（約 +2 dB），讓歌聲清楚主導。關閉則完全依目前的伴奏/麥克風滑桿比例輸出。",
+  "recording.autoBalance.tooltip": "勾選後，回放與匯出混音都會自動平衡麥克風和伴奏，讓歌聲更清楚。關閉則依目前的伴奏/麥克風滑桿比例播放與輸出。",
   "recording.autoBalance.aria": "標準化說明",
   "recording.autoBalance.label": "標準化",
-
   "pitch.header.title": "音高曲線",
   "pitch.header.alignment": "對齊 {sign}{offset}s",
   "pitch.header.noMelody": "請到「設定」頁載入練唱伴奏與人聲音軌",
   "pitch.transport.pause": "暫停",
   "pitch.transport.play": "播放",
   "pitch.transport.needBacking": "需先載入練唱伴奏才能播放",
-
   "pitchTimeline.legend.melody": "音高曲線來源",
   "pitchTimeline.legend.yourPitch": "你的音高",
   "pitchTimeline.banner.analyzing.tag": "分析中",
@@ -404,19 +375,16 @@
   "pitchTimeline.view.up": "音域上移",
   "pitchTimeline.view.down": "音域下移",
   "pitchTimeline.view.auto": "回到自動聚焦",
-
   "pitchIndicator.status.inTune": "音準",
   "pitchIndicator.status.high": "偏高",
   "pitchIndicator.status.low": "偏低",
   "pitchIndicator.empty": "未偵測到聲音",
-
   "lyricsPanel.empty.title": "尚未載入歌詞",
   "lyricsPanel.empty.hint": "在設定頁載入 .lrc 或 .srt 檔案",
   "lyricsPanel.toast.loopCancelled": "已取消循環",
   "lyricsPanel.toast.loopStarted": "循環播放此句",
   "lyricsPanel.loop.cancel": "取消循環",
   "lyricsPanel.loop.set": "循環播放此句",
-
   "lyricsSync.empty.title": "尚未載入歌詞",
   "lyricsSync.empty.hint": "請先在設定頁載入歌詞檔案",
   "lyricsSync.action.undo": "復原",
@@ -499,11 +467,9 @@
   "lyricsSync.export.dialog.title": "匯出 LRC 歌詞",
   "lyricsSync.status.saved": "已儲存：{path}",
   "lyricsSync.status.saveFailed": "儲存失敗：{error}",
-
   "about.tagline": "一間桌面練唱室，為想練習唱歌、聽見自己聲音的你打造，每次練習都聽得見進步",
   "about.disclosure.title": "透明度聲明",
   "about.disclosure.body": "作者沒有程式開發背景，本專案由 AI（Claude / Codex）協作完成——從架構、程式碼到 UI 全部由 AI 生成。所有功能皆經實測與跨模型 code review（Claude 實作 + Codex 獨立審查）。請依你的使用情境評估風險後採用。",
-
   "about.notes.title": "使用須知",
   "about.workflow.title": "推薦操作流程",
   "about.workflow.1": "在準備頁匯入伴奏，或從 YouTube 下載伴奏音檔。",
@@ -537,7 +503,6 @@
   "about.notes.4.body": "首次使用建議進行延遲校準（準備頁底部），讓錄音的時間軸與伴奏精確對齊。校準值會自動儲存。",
   "about.notes.5.title": "歌詞同步",
   "about.notes.5.body": "支援 LRC / SRT / VTT / TXT 載入、內建 whisper.cpp runner、app 內官方模型下載、手動指定進階模型、從 vocals.wav 產生 Whisper 時間稿，以及 LRC / SRT / ASS 匯出。",
-
   "about.shortcuts.title": "快捷鍵",
   "about.shortcuts.playPause": "播放 / 暫停",
   "about.shortcuts.record": "開始錄音",
@@ -546,7 +511,6 @@
   "about.shortcuts.loopB": "設定循環 B 點",
   "about.shortcuts.pitchUp": "升半音",
   "about.shortcuts.pitchDown": "降半音",
-
   "about.license.title": "授權",
   "about.license.main.body1": "VocalSync Studio 以 ",
   "about.license.main.mit": "MIT License",
@@ -561,11 +525,9 @@
   "about.license.ffmpeg.body.middle": " 預設以 ",
   "about.license.ffmpeg.body.after": " 授權；若啟用 libx264 / libx265 等特定編碼器則改為 GPL-2.0-or-later。本程式以 CLI subprocess 方式呼叫 ffmpeg / ffprobe，不靜態連結 libav* 函式庫；本倉庫內未附帶 FFmpeg binaries。請自行留意所用 build 的具體授權版本（essentials build 通常為 LGPL；full build 含 GPL 組件）。",
   "about.license.disclaimer": "免責聲明：本工具僅為本地練唱輔助。透過本工具處理、下載的音訊內容，其著作權與合法使用責任均歸使用者本人，開發者不對任何不當使用負責。",
-
   "about.creator.title": "製作者",
   "about.creator.desc": "如果這個工具對你的練唱有幫助，歡迎請我喝杯咖啡，讓開發可以持續下去。",
   "about.creator.donate": "Support on Ko-fi",
-
   "about.feedback.title": "問題回報",
   "about.feedback.desc": "使用遇到問題、想回報 bug 或有功能建議都很歡迎，可以透過以下兩種方式聯絡我：",
   "about.feedback.githubIssues": "GitHub Issues",
@@ -573,13 +535,11 @@
   "about.feedback.emailLabel": "信箱",
   "about.feedback.emailCopyTitle": "點一下複製",
   "about.feedback.mailSubject": "[VocalSync Studio v{version}] 問題回報",
-
   "about.links.title": "連結與更新",
   "about.links.github": "GitHub",
   "about.links.checkUpdate": "檢查更新",
   "about.links.checking": "檢查中...",
   "about.links.footer": "Built with Tauri + Svelte + Rust",
-
   "about.toast.emailCopied": "已複製電子信箱到剪貼簿",
   "about.toast.emailCopyFailed": "複製失敗：{error}",
   "about.toast.updateAvailable": "有新版本 {version} 可用，點選 GitHub 連結前往下載",

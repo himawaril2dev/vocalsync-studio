@@ -11,7 +11,6 @@
   "app.error.title": "An unexpected error occurred",
   "app.error.unknown": "Unknown error",
   "app.error.retry": "Reload page",
-
   "startupGuide.title": "User Guide",
   "startupGuide.subtitle": "VocalSync can start from only the original song, or from a backing track plus the original vocal. Use UVR5 for source separation; VocalSync focuses on recording, pitch curves, guide vocal, and export.",
   "startupGuide.step1.title": "Get the original song or backing track",
@@ -28,7 +27,6 @@
   "startupGuide.tip.body": "For a quick check, start with a common MDX/UVR model in UVR5. For a cleaner vocal reference, run a second separation pass in UVR5, then import the final vocals.wav into VocalSync.",
   "startupGuide.showAgain": "Show this guide on next launch",
   "startupGuide.close": "Start using",
-
   "uvrGuide.entry.title": "What is UVR5?",
   "uvrGuide.entry.body": "UVR5 is a common vocal / instrumental separation tool. Use it to split the original song into vocals.wav and instrumental.wav, then return to VocalSync for pitch curves, guide vocal, and recording.",
   "uvrGuide.entry.action": "Open UVR5 guide",
@@ -59,10 +57,8 @@
   "uvrGuide.faq.noise.body": "Try another model, use a cleaner source, or run a second pass with a vocal-cleaning model in UVR5. VocalSync mainly needs a clear melody reference, not release-ready dry vocals.",
   "uvrGuide.faq.sync.title": "Backing and vocals are not aligned",
   "uvrGuide.faq.sync.body": "The easiest path is using instrumental.wav and vocals.wav from the same original song. When using a different backing version, VocalSync can auto-align and you can fine-tune manually.",
-
   "language.switcher.label": "Language",
   "language.switcher.aria": "Switch interface language",
-
   "setup.section.download": "YouTube Download",
   "setup.section.song": "Song And Pitch Source",
   "setup.section.backing": "Practice Backing Track",
@@ -71,11 +67,9 @@
   "setup.section.separation": "UVR5 Vocal Prep",
   "setup.section.device": "Device Selection",
   "setup.section.calibration": "Latency Calibration",
-
   "setup.song.hint": "Choose the backing you will sing to first, then import vocals.wav or MIDI as the pitch curve and guide vocal source. If you only have the original song, use UVR5 first to create instrumental.wav and vocals.wav.",
   "setup.song.backing.title": "Practice Backing",
   "setup.song.melody.title": "Pitch Curve And Guide",
-
   "setup.backing.hint.empty": "Please load a backing track to start practicing",
   "setup.backing.hint.loading": "Loading...",
   "setup.backing.hint.loaded": "Loaded {kind}: {name} ({min}:{sec})",
@@ -88,7 +82,6 @@
   "setup.backing.kind.video": "video",
   "setup.backing.dialog.title": "Select backing file",
   "setup.backing.dialog.filter": "Audio/Video",
-
   "setup.lyrics.status.empty": "No lyrics loaded",
   "setup.lyrics.status.parsing": "Parsing...",
   "setup.lyrics.status.loaded": "Loaded {n} lyric lines ({name})",
@@ -104,7 +97,6 @@
   "setup.lyrics.action.clear": "Clear lyrics",
   "setup.lyrics.dialog.title": "Select lyrics file",
   "setup.lyrics.dialog.filter": "Lyrics files",
-
   "setup.melody.hint.empty.prefix": "Please import ",
   "setup.melody.hint.empty.vocals": "a pre-separated vocals track",
   "setup.melody.hint.empty.or": " or ",
@@ -139,7 +131,6 @@
   "setup.guide.hint": "Guide vocal is monitor-only and will not be mixed into exported files.",
   "setup.guide.status.cleared": "Vocals track cleared",
   "setup.guide.status.loadFailedAppend": "{status} (guide vocal load failed: {error})",
-
   "setup.separation.hint": "Use UVR5 to separate the original song into vocals.wav and instrumental.wav, then return to VocalSync and import the backing and vocals track. VocalSync focuses on recording, pitch curves, guide vocal, lyrics, and export.",
   "setup.separation.external.step1.title": "Separate the original in UVR5",
   "setup.separation.external.step1.body": "Drop the original song into UVR5 and export vocals.wav plus instrumental.wav. For cleaner vocals, run a second separation pass inside UVR5.",
@@ -165,7 +156,6 @@
   "setup.alignment.fineTune.reset.title": "Reset fine-tune",
   "setup.alignment.fineTune.reset.text": "Reset",
   "setup.alignment.offset.seconds": "s",
-
   "setup.device.input.label": "Microphone (Input):",
   "setup.device.output.label": "Headphones (Output):",
   "setup.device.pitch.label": "Pitch detection engine:",
@@ -176,7 +166,6 @@
   "setup.device.modelFolder.openCrepe": "Open CREPE model folder",
   "setup.device.modelFolder.opened": "Opened model folder: {path}",
   "setup.device.modelFolder.failed": "Failed to open model folder: {error}",
-
   "setup.calibration.hint": "Compensates for hardware and software latency during recording (last calibrated value is auto-loaded on restart)",
   "setup.calibration.auto.title": "Automatic beat-tap calibration",
   "setup.calibration.auto.hint": "Put on your headphones and click the button below. The system plays 8 wood-block beats (first 2 warm-up, last 6 measured). Clap or make a short sound into the mic on each beat.",
@@ -187,7 +176,6 @@
   "setup.calibration.result.success": "Calibration complete! Latency {ms} ms (std dev {std} ms)",
   "setup.calibration.result.successNoStd": "Calibration complete! Latency {ms} ms",
   "setup.calibration.result.failed": "Calibration failed: {error}",
-
   "calibration.canvas.title": "When the ball hits the guide line, clap into the mic!",
   "calibration.canvas.warmup": "The first {n} beats are warm-up to help you find the rhythm, and will not be counted",
   "calibration.canvas.measuring": "Measuring ({n} beats total)",
@@ -197,7 +185,6 @@
   "calibration.canvas.stdDev": "Std dev {ms} ms (lower is more stable)",
   "calibration.canvas.warmupBadge": "Warm-up",
   "calibration.canvas.warmupLabel": "W{n}",
-
   "download.tool.ytdlp.installed": "yt-dlp {version}",
   "download.tool.ytdlp.notInstalled": "not installed",
   "download.tool.ffmpeg.installed": "installed",
@@ -248,7 +235,6 @@
   "download.tool.ffmpeg.localDetectFailed": "Local FFmpeg detection failed: {error}",
   "download.tool.ffmpeg.localTrustFailed": "Local FFmpeg trust failed: {error}",
   "download.tool.ytdlp.manualHint": "On Windows, VocalSync trusts tools you approve locally. Auto-install prefers the portable root and verifies downloaded files.",
-
   "download.form.url.label": "YouTube URL",
   "download.form.url.placeholder": "https://www.youtube.com/watch?v=...",
   "download.form.format.label": "Format",
@@ -271,30 +257,24 @@
   "download.form.outputDir.placeholder": "Choose download location...",
   "download.form.outputDir.browse": "Browse",
   "download.form.outputDir.dialog": "Choose download folder",
-
   "download.action.download": "Start download",
   "download.action.downloadSubtitle": "Download subtitles",
   "download.action.cancel": "Cancel download",
   "download.confirm.batch": "This is a {type} download. To prevent accidental bulk downloads, VocalSync will download at most the first {limit} items. Continue?",
-
   "download.urlType.video": "Video",
   "download.urlType.playlist": "Playlist",
   "download.urlType.channel": "Channel",
-
   "download.progress.postprocessing": "Converting...",
   "download.progress.eta": "ETA {eta}",
-
   "download.result.cancelled": "Download cancelled",
   "download.result.noOutputDir": "Please choose an output folder first",
   "download.result.initFailed": "Failed to initialize download tools: {error}",
   "download.result.installFailed": "Install failed: {error}",
-
   "download.subtitle.foundCount": "Found {n} subtitle file(s)",
   "download.subtitle.loadAsLyrics": "Load as lyrics",
   "download.subtitle.loadingAsLyrics": "Loading...",
   "download.subtitle.loadedAsLyrics": "Loaded {n} lyric lines",
   "download.subtitle.loadFailed": "Load failed: {error}",
-
   "recording.transport.state.idle": "Idle",
   "recording.transport.state.previewing": "Previewing",
   "recording.transport.state.recording": "Recording",
@@ -303,7 +283,6 @@
   "recording.transport.resume.previewing": " (preview)",
   "recording.transport.resume.recording": " (recording)",
   "recording.transport.resume.playingBack": " (playback)",
-
   "recording.action.play.title": "Preview (Space)",
   "recording.action.play.aria": "Preview",
   "recording.action.resume.title": "Resume (Space)",
@@ -315,14 +294,11 @@
   "recording.action.record.title": "Record (R)",
   "recording.action.record.aria": "Record",
   "recording.action.record.dot.aria": "Recording",
-
   "recording.panel.lyrics": "Lyrics",
   "recording.panel.sync": "Sync",
-
   "recording.video.audioOnly": "Audio-only mode",
   "recording.video.audioInfo": "{min} min · {rate} Hz",
   "recording.video.noBacking": "Please load a backing track first",
-
   "recording.toast.previewFailed": "Preview failed: {error}",
   "recording.toast.playbackFailed": "Playback failed: {error}",
   "recording.toast.recordingFailed": "Recording failed: {error}",
@@ -331,17 +307,14 @@
   "recording.toast.clearFailed": "Clear failed: {error}",
   "recording.toast.exportFailed": "Export failed: {error}",
   "recording.toast.clearedCanRerecord": "Recording cleared, you can record again from the start",
-  "recording.toast.exportSuccess": "Export succeeded\nVocal: {vocal}\nMix: {mix}",
+  "recording.toast.exportSuccess": "Export succeeded\nVocal file: {vocal}\nMix file (enabled effects included): {mix}",
   "recording.toast.loopBAfterA": "Point B must be after point A",
-
   "recording.dialog.forwardRecord.message": "The current playback position ({now}s) is ahead of the pause point ({baseline}s). Continuing to record will discard everything already recorded after {now}s. Continue?",
   "recording.dialog.forwardRecord.title": "Forward-record confirmation",
   "recording.dialog.clearRecord.message": "This recording cannot be recovered after clearing. Are you sure?",
   "recording.dialog.clearRecord.title": "Clear recording",
-
   "recording.export.dialog.title": "Choose export location",
   "recording.export.dialog.filter": "WAV",
-
   "recording.volume.backing": "Backing",
   "recording.volume.mic": "Microphone",
   "recording.volume.guide": "Guide",
@@ -356,43 +329,41 @@
   "recording.volume.mic.reset.title": "Reset microphone to {pct}%",
   "recording.volume.guide.reset.aria": "Reset guide vocal volume to default {pct}%",
   "recording.volume.guide.reset.title": "Reset guide vocal to {pct}%",
-
   "recording.speed.label": "Speed",
   "recording.speed.decrease.title": "Decrease speed step",
   "recording.speed.increase.title": "Increase speed step",
   "recording.speed.reset.aria": "Reset speed to default 1.00x",
   "recording.speed.reset.title": "Reset speed to 1.00x",
-
   "recording.pitch.label": "Transpose",
   "recording.pitch.decrease.title": "Down a semitone (-)",
   "recording.pitch.increase.title": "Up a semitone (+)",
   "recording.pitch.reset.aria": "Reset transpose to default 0 semitones",
   "recording.pitch.reset.title": "Reset transpose to 0 semitones",
-
   "recording.loop.badge": "Loop",
   "recording.loop.a.set": "A: {time}",
   "recording.loop.a.default": "Set point A (A)",
   "recording.loop.b.set": "B: {time}",
   "recording.loop.b.default": "Set point B (B)",
   "recording.loop.clear.title": "Clear loop",
-
   "recording.export.button": "Export",
+  "recording.export.naming.label": "Auto name",
+  "recording.export.naming.title": "Use backing name and date automatically; turn off to name each export manually",
+  "recording.export.naming.manual": "Ask each time",
+  "recording.export.naming.auto": "Backing + date",
+  "recording.export.error.noBackingPath": "Could not find the backing file path for automatic export",
   "recording.playback.button": "Playback",
   "recording.playback.title": "Play back recording",
   "recording.clearRecord.button": "Clear recording",
   "recording.clearRecord.title": "Clear current recording and start over",
-
-  "recording.autoBalance.tooltip": "When enabled, the exported mix slightly pushes your microphone above the backing (~+2 dB) so the voice leads clearly. When disabled, the exported mix follows the backing/microphone slider ratio exactly.",
+  "recording.autoBalance.tooltip": "When enabled, playback and exported mixes automatically balance the microphone against the backing so the voice stays clear. When disabled, playback and export follow the current backing/microphone slider ratio.",
   "recording.autoBalance.aria": "Normalization info",
   "recording.autoBalance.label": "Normalize",
-
   "pitch.header.title": "Pitch Curve",
   "pitch.header.alignment": "Align {sign}{offset}s",
   "pitch.header.noMelody": "Please load a backing track and vocals track on the Setup page",
   "pitch.transport.pause": "Pause",
   "pitch.transport.play": "Play",
   "pitch.transport.needBacking": "A backing track must be loaded before playback",
-
   "pitchTimeline.legend.melody": "Pitch curve source",
   "pitchTimeline.legend.yourPitch": "Your pitch",
   "pitchTimeline.banner.analyzing.tag": "Analyzing",
@@ -404,19 +375,16 @@
   "pitchTimeline.view.up": "Move range up",
   "pitchTimeline.view.down": "Move range down",
   "pitchTimeline.view.auto": "Return to auto focus",
-
   "pitchIndicator.status.inTune": "In tune",
   "pitchIndicator.status.high": "Sharp",
   "pitchIndicator.status.low": "Flat",
   "pitchIndicator.empty": "No voice detected",
-
   "lyricsPanel.empty.title": "No lyrics loaded",
   "lyricsPanel.empty.hint": "Load a .lrc or .srt file on the Setup page",
   "lyricsPanel.toast.loopCancelled": "Loop cancelled",
   "lyricsPanel.toast.loopStarted": "Looping this line",
   "lyricsPanel.loop.cancel": "Cancel loop",
   "lyricsPanel.loop.set": "Loop this line",
-
   "lyricsSync.empty.title": "No lyrics loaded",
   "lyricsSync.empty.hint": "Please load a lyrics file on the Setup page first",
   "lyricsSync.action.undo": "Undo",
@@ -499,11 +467,9 @@
   "lyricsSync.export.dialog.title": "Export LRC lyrics",
   "lyricsSync.status.saved": "Saved: {path}",
   "lyricsSync.status.saveFailed": "Save failed: {error}",
-
   "about.tagline": "A desktop practice room — built for anyone who wants to sing, truly hear their own voice, and make every rehearsal audibly better",
   "about.disclosure.title": "Disclosure",
   "about.disclosure.body": "The author has no prior programming background. This project was built through AI collaboration (Claude / Codex) — architecture, code, and UI were all AI-generated. All features have been tested and cross-model reviewed (Claude for implementation, Codex for independent audit). Please evaluate the risk against your own use case before adopting.",
-
   "about.notes.title": "Getting Started",
   "about.workflow.title": "Recommended workflow",
   "about.workflow.1": "Import a backing track on the Setup tab, or download one from YouTube.",
@@ -537,7 +503,6 @@
   "about.notes.4.body": "First-time users should run the latency calibration (bottom of the Setup page) so the recording timeline aligns precisely with the backing track. The value is saved automatically.",
   "about.notes.5.title": "Lyrics sync",
   "about.notes.5.body": "Supports LRC / SRT / VTT / TXT import, bundled whisper.cpp runner, in-app official model downloads, manually selected advanced models, Whisper timed transcripts from vocals.wav, and LRC / SRT / ASS export.",
-
   "about.shortcuts.title": "Shortcuts",
   "about.shortcuts.playPause": "Play / Pause",
   "about.shortcuts.record": "Start recording",
@@ -546,7 +511,6 @@
   "about.shortcuts.loopB": "Set loop point B",
   "about.shortcuts.pitchUp": "Up a semitone",
   "about.shortcuts.pitchDown": "Down a semitone",
-
   "about.license.title": "License",
   "about.license.main.body1": "VocalSync Studio is open-sourced under the ",
   "about.license.main.mit": "MIT License",
@@ -561,11 +525,9 @@
   "about.license.ffmpeg.body.middle": " defaults to ",
   "about.license.ffmpeg.body.after": " licensing; enabling specific encoders such as libx264 / libx265 switches it to GPL-2.0-or-later. This program invokes ffmpeg / ffprobe as a CLI subprocess without static linking against libav* libraries; no FFmpeg binaries are bundled in this repository. Please check the specific license version of your build (essentials builds are typically LGPL; full builds include GPL components).",
   "about.license.disclaimer": "Disclaimer: This tool is intended solely as a local singing-practice companion. Copyright responsibility and lawful use of any audio content processed or downloaded with this tool rests entirely with the user. The developer assumes no responsibility for misuse.",
-
   "about.creator.title": "Creator",
   "about.creator.desc": "If this tool helps your practice, you are warmly welcome to buy me a coffee so development can continue.",
   "about.creator.donate": "Support on Ko-fi",
-
   "about.feedback.title": "Feedback",
   "about.feedback.desc": "Bug reports, feature suggestions, and general questions are all welcome. You can reach me in two ways:",
   "about.feedback.githubIssues": "GitHub Issues",
@@ -573,13 +535,11 @@
   "about.feedback.emailLabel": "Email",
   "about.feedback.emailCopyTitle": "Click to copy",
   "about.feedback.mailSubject": "[VocalSync Studio v{version}] Bug report",
-
   "about.links.title": "Links & Updates",
   "about.links.github": "GitHub",
   "about.links.checkUpdate": "Check for updates",
   "about.links.checking": "Checking...",
   "about.links.footer": "Built with Tauri + Svelte + Rust",
-
   "about.toast.emailCopied": "Email address copied to clipboard",
   "about.toast.emailCopyFailed": "Copy failed: {error}",
   "about.toast.updateAvailable": "New version {version} is available. Click the GitHub link to download.",

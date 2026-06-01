@@ -71,6 +71,7 @@
 //! 這些 case 在 UI 層應顯示「信心度低，請手動微調」，並提供 offset slider。
 
 use crate::core::media_loader::load_media;
+use crate::core::resampler;
 use crate::error::AppError;
 use rustfft::num_complex::Complex;
 use rustfft::FftPlanner;
@@ -78,6 +79,9 @@ use serde::Serialize;
 
 /// 對齊計算時的目標取樣率（Hz）。降到這個值大幅加速 FFT，精度仍足夠。
 const TARGET_SAMPLE_RATE: u32 = 11_025;
+const ENVELOPE_SAMPLE_RATE: u32 = 100;
+const ENVELOPE_WINDOW_MS: f32 = 30.0;
+const ENVELOPE_HOP_MS: f32 = 10.0;
 
 /// 對齊結果。
 #[derive(Debug, Clone, Serialize)]
@@ -113,20 +117,21 @@ pub fn align_files(reference_path: &str, target_path: &str) -> Result<AlignmentR
         )));
     }
 
-    let (lag_samples, peak, mean_abs) = cross_correlate_peak(&reference.mono, &target.mono);
+    let reference_wave = normalize_for_correlation(&reference.mono);
+    let target_wave = normalize_for_correlation(&target.mono);
+    let waveform = correlation_candidate(&reference_wave, &target_wave, effective_sr);
 
-    let offset_secs = lag_samples as f64 / effective_sr as f64;
-    let peak_to_mean_ratio = if mean_abs > f32::EPSILON {
-        peak.abs() / mean_abs
-    } else {
-        0.0
-    };
+    let reference_envelope = build_alignment_envelope(&reference.mono, effective_sr);
+    let target_envelope = build_alignment_envelope(&target.mono, effective_sr);
+    let envelope =
+        correlation_candidate(&reference_envelope, &target_envelope, ENVELOPE_SAMPLE_RATE);
+    let selected = select_alignment_candidate(waveform, envelope);
 
     Ok(AlignmentResult {
-        offset_secs,
-        peak_correlation: peak,
-        peak_to_mean_ratio,
-        sample_rate: effective_sr,
+        offset_secs: selected.lag_samples as f64 / selected.sample_rate as f64,
+        peak_correlation: selected.peak,
+        peak_to_mean_ratio: selected.peak_to_mean_ratio,
+        sample_rate: selected.sample_rate,
         reference_duration_secs: reference.original_duration,
         target_duration_secs: target.original_duration,
     })
@@ -143,18 +148,57 @@ struct PreparedAudio {
 fn load_and_prepare(path: &str) -> Result<PreparedAudio, AppError> {
     let media = load_media(path)?;
     let mono = stereo_to_mono(&media.samples, media.channels as usize);
-
-    let factor = ((media.sample_rate as f64) / (TARGET_SAMPLE_RATE as f64))
-        .round()
-        .max(1.0) as usize;
-    let downsampled = downsample_boxcar(&mono, factor);
-    let effective_sr = media.sample_rate / factor as u32;
+    let prepared = resampler::resample_offline(&mono, media.sample_rate, TARGET_SAMPLE_RATE);
 
     Ok(PreparedAudio {
-        mono: downsampled,
-        sample_rate: effective_sr,
+        mono: prepared,
+        sample_rate: TARGET_SAMPLE_RATE,
         original_duration: media.duration,
     })
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CorrelationCandidate {
+    lag_samples: i64,
+    peak: f32,
+    peak_to_mean_ratio: f32,
+    sample_rate: u32,
+}
+
+fn correlation_candidate(
+    reference: &[f32],
+    target: &[f32],
+    sample_rate: u32,
+) -> CorrelationCandidate {
+    let (lag_samples, peak, mean_abs) = cross_correlate_peak(reference, target);
+    let peak_to_mean_ratio = if mean_abs > f32::EPSILON {
+        peak.abs() / mean_abs
+    } else {
+        0.0
+    };
+    CorrelationCandidate {
+        lag_samples,
+        peak,
+        peak_to_mean_ratio,
+        sample_rate,
+    }
+}
+
+fn select_alignment_candidate(
+    waveform: CorrelationCandidate,
+    envelope: CorrelationCandidate,
+) -> CorrelationCandidate {
+    if waveform.peak_to_mean_ratio < 2.0
+        && envelope.peak_to_mean_ratio > waveform.peak_to_mean_ratio
+    {
+        return envelope;
+    }
+    if envelope.peak_to_mean_ratio >= 2.0
+        && envelope.peak_to_mean_ratio > waveform.peak_to_mean_ratio * 1.25
+    {
+        return envelope;
+    }
+    waveform
 }
 
 /// 把交錯樣本 down-mix 成 mono。支援任意聲道數 ≥ 1。
@@ -170,6 +214,7 @@ fn stereo_to_mono(interleaved: &[f32], channels: usize) -> Vec<f32> {
 
 /// Boxcar average down-sample：等同於簡易 low-pass + decimation，
 /// 足以避免嚴重 aliasing 影響 correlation peak 清晰度。
+#[cfg(test)]
 fn downsample_boxcar(samples: &[f32], factor: usize) -> Vec<f32> {
     if factor <= 1 {
         return samples.to_vec();
@@ -178,6 +223,82 @@ fn downsample_boxcar(samples: &[f32], factor: usize) -> Vec<f32> {
         .chunks(factor)
         .map(|chunk| chunk.iter().sum::<f32>() / chunk.len() as f32)
         .collect()
+}
+
+fn normalize_for_correlation(samples: &[f32]) -> Vec<f32> {
+    if samples.is_empty() {
+        return Vec::new();
+    }
+    let mean = samples.iter().sum::<f32>() / samples.len() as f32;
+    let centered: Vec<f32> = samples.iter().map(|sample| sample - mean).collect();
+    let rms =
+        (centered.iter().map(|sample| sample * sample).sum::<f32>() / centered.len() as f32).sqrt();
+    if rms <= 1e-6 {
+        return centered;
+    }
+    centered
+        .into_iter()
+        .map(|sample| (sample / rms).clamp(-6.0, 6.0))
+        .collect()
+}
+
+fn build_alignment_envelope(samples: &[f32], sample_rate: u32) -> Vec<f32> {
+    if samples.is_empty() {
+        return Vec::new();
+    }
+
+    let window =
+        ((sample_rate.max(1) as f32 * ENVELOPE_WINDOW_MS / 1000.0).round() as usize).max(1);
+    let hop = ((sample_rate.max(1) as f32 * ENVELOPE_HOP_MS / 1000.0).round() as usize).max(1);
+    let mut energy = Vec::with_capacity(samples.len() / hop + 1);
+    let mut start = 0;
+    while start < samples.len() {
+        let end = (start + window).min(samples.len());
+        let sum_sq = samples[start..end]
+            .iter()
+            .map(|sample| sample * sample)
+            .sum::<f32>();
+        energy.push((sum_sq / (end - start).max(1) as f32).sqrt());
+        start += hop;
+    }
+
+    normalize_unit(&mut energy);
+    let mut smoothed = 0.0_f32;
+    let mut onset = Vec::with_capacity(energy.len());
+    for &value in energy.iter() {
+        smoothed = smoothed * 0.86 + value * 0.14;
+        onset.push((value - smoothed).max(0.0));
+    }
+    normalize_unit(&mut onset);
+
+    energy
+        .iter()
+        .zip(onset.iter())
+        .map(|(&e, &o)| e * 0.38 + o * 0.72)
+        .collect()
+}
+
+fn normalize_unit(values: &mut [f32]) {
+    if values.is_empty() {
+        return;
+    }
+    let floor = percentile(values, 0.20);
+    let high = percentile(values, 0.95);
+    let scale = (high - floor).max(1e-6);
+    for value in values {
+        *value = ((*value - floor) / scale).clamp(0.0, 1.0).sqrt();
+    }
+}
+
+fn percentile(values: &[f32], percentile: f32) -> f32 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_by(|a, b| a.total_cmp(b));
+    let index =
+        ((sorted.len().saturating_sub(1)) as f32 * percentile.clamp(0.0, 1.0)).round() as usize;
+    sorted[index.min(sorted.len().saturating_sub(1))]
 }
 
 /// 計算 `reference` 與 `target` 的 FFT-based linear cross-correlation，
@@ -230,13 +351,15 @@ fn cross_correlate_peak(reference: &[f32], target: &[f32]) -> (i64, f32, f32) {
     //                          → lag = k - fft_len （reference 落後 target）
     // 我們搜尋整個 cyclic 範圍，找最大絕對值 peak。
     let mut peak_idx: usize = 0;
-    let mut peak_val: f32 = f32::NEG_INFINITY;
+    let mut peak_val: f32 = 0.0;
+    let mut peak_abs: f32 = f32::NEG_INFINITY;
     let mut sum_abs: f64 = 0.0;
     for (i, c) in ref_buf.iter().enumerate() {
         let val = c.re;
         sum_abs += val.abs() as f64;
-        if val > peak_val {
+        if val.abs() > peak_abs {
             peak_val = val;
+            peak_abs = val.abs();
             peak_idx = i;
         }
     }
@@ -324,6 +447,20 @@ mod tests {
     }
 
     #[test]
+    fn cross_correlate_handles_inverted_signal() {
+        let noise = make_noise(4096, 43);
+        let inverted: Vec<f32> = noise.iter().map(|sample| -*sample).collect();
+        let (lag, peak, mean) = cross_correlate_peak(&noise, &inverted);
+        assert_eq!(lag, 0, "inverted stems should still align at zero lag");
+        assert!(peak < 0.0);
+        assert!(
+            peak.abs() / mean > 10.0,
+            "peak/mean = {}",
+            peak.abs() / mean
+        );
+    }
+
+    #[test]
     fn cross_correlate_detects_target_with_padding() {
         // Target 多了 100 samples 的 silence padding（像是 count-in）
         // → target 的 t=0 對應 reference 的 t=-100 → offset 應為 -100
@@ -369,6 +506,63 @@ mod tests {
         let (_lag, peak, mean) = cross_correlate_peak(&noise, &noise);
         // 自相關 peak 應該遠大於平均能量
         assert!(peak / mean > 10.0, "peak/mean = {}", peak / mean);
+    }
+
+    #[test]
+    fn envelope_alignment_detects_stem_like_padding() {
+        let sr = TARGET_SAMPLE_RATE;
+        let mut reference = vec![0.0_f32; sr as usize * 3];
+        for &start in &[2_000_usize, 8_000, 18_000, 26_000] {
+            for i in 0..700 {
+                let t = i as f32 / sr as f32;
+                reference[start + i] =
+                    (2.0 * std::f32::consts::PI * 330.0 * t).sin() * (1.0 - i as f32 / 700.0) * 0.7;
+            }
+        }
+
+        let pad_samples = (sr as f32 * 0.37).round() as usize;
+        let mut target = vec![0.0_f32; pad_samples];
+        target.extend(reference.iter().enumerate().map(|(i, sample)| {
+            let t = i as f32 / sr as f32;
+            let carrier = (2.0 * std::f32::consts::PI * 95.0 * t).sin().signum();
+            sample.abs() * carrier * 0.6
+        }));
+
+        let reference_envelope = build_alignment_envelope(&reference, sr);
+        let target_envelope = build_alignment_envelope(&target, sr);
+        let candidate =
+            correlation_candidate(&reference_envelope, &target_envelope, ENVELOPE_SAMPLE_RATE);
+        let detected_secs = candidate.lag_samples as f32 / ENVELOPE_SAMPLE_RATE as f32;
+
+        assert!(
+            (detected_secs + 0.37).abs() < 0.03,
+            "expected -0.37s padding alignment, got {detected_secs}"
+        );
+        assert!(
+            candidate.peak_to_mean_ratio > 2.0,
+            "expected useful envelope confidence, got {}",
+            candidate.peak_to_mean_ratio
+        );
+    }
+
+    #[test]
+    fn select_alignment_candidate_uses_envelope_when_waveform_is_weak() {
+        let waveform = CorrelationCandidate {
+            lag_samples: 123,
+            peak: 1.0,
+            peak_to_mean_ratio: 1.2,
+            sample_rate: TARGET_SAMPLE_RATE,
+        };
+        let envelope = CorrelationCandidate {
+            lag_samples: -37,
+            peak: 1.0,
+            peak_to_mean_ratio: 2.4,
+            sample_rate: ENVELOPE_SAMPLE_RATE,
+        };
+        let selected = select_alignment_candidate(waveform, envelope);
+
+        assert_eq!(selected.lag_samples, -37);
+        assert_eq!(selected.sample_rate, ENVELOPE_SAMPLE_RATE);
     }
 
     #[test]

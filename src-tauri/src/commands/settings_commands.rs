@@ -85,12 +85,20 @@ fn ratio_to_percent(value: f32, max_percent: u16) -> u16 {
     percent.clamp(0.0, max_percent as f32) as u16
 }
 
+fn normalize_export_naming_mode(value: &str) -> String {
+    match value {
+        "auto" => "auto".to_string(),
+        _ => "manual".to_string(),
+    }
+}
+
 #[tauri::command]
 pub fn update_mixer_settings(
     backing: f32,
     mic: f32,
     guide: f32,
     auto_balance: bool,
+    export_naming_mode: String,
     settings: State<'_, Mutex<AppSettings>>,
 ) -> Result<(), AppError> {
     let mut current = settings
@@ -100,7 +108,8 @@ pub fn update_mixer_settings(
     current.mic_gain = ratio_to_percent(mic, 300);
     current.guide_volume = ratio_to_percent(guide, 100);
     current.auto_balance = auto_balance;
-    current.mixer_settings_version = 1;
+    current.export_naming_mode = normalize_export_naming_mode(&export_naming_mode);
+    current.mixer_settings_version = 6;
     current
         .save()
         .map_err(|e| AppError::Settings(e.to_string()))

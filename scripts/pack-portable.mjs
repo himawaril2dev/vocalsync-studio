@@ -393,7 +393,15 @@ async function removeStaleReleaseWorkers(releaseDir) {
 }
 
 async function assemble(plan, common) {
-  const { version, releaseDir, portableRoot, exePath, dllPath, modelsSrc, whisperRunnerDir } = common;
+  const {
+    version,
+    releaseDir,
+    portableRoot,
+    exePath,
+    dllPath,
+    modelsSrc,
+    whisperRunnerDir,
+  } = common;
   const portableDir = join(portableRoot, plan.folderName);
   const zipPath = join(portableRoot, plan.zipName);
 
