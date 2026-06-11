@@ -3,6 +3,17 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LatencyCalibrationProfile {
+    pub key: String,
+    pub input_device: String,
+    pub output_device: String,
+    pub sample_rate: u32,
+    pub latency_ms: f64,
+    pub confidence: String,
+    pub updated_at_unix: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     pub theme: String,
     pub download_folder: String,
@@ -16,12 +27,16 @@ pub struct AppSettings {
     #[serde(default = "default_export_naming_mode")]
     pub export_naming_mode: String,
     pub auto_balance: bool,
+    #[serde(default = "default_auto_balance_vocal_preset")]
+    pub auto_balance_vocal_preset: String,
     #[serde(default)]
     pub mixer_settings_version: u8,
     pub playback_speed: f32,
     pub transpose_semitones: i8,
     pub window_geometry: Option<String>,
     pub calibrated_latency_ms: Option<f64>,
+    #[serde(default)]
+    pub calibrated_latency_profiles: Vec<LatencyCalibrationProfile>,
     pub manual_offset_ms: i32,
     #[serde(default = "default_pitch_engine")]
     pub pitch_engine: String,
@@ -45,6 +60,10 @@ fn default_export_naming_mode() -> String {
     "auto".to_string()
 }
 
+fn default_auto_balance_vocal_preset() -> String {
+    "forward".to_string()
+}
+
 fn default_download_folder() -> String {
     portable_paths::ensure_dir("downloads")
         .unwrap_or_else(|_| portable_paths::path("downloads"))
@@ -65,11 +84,13 @@ impl Default for AppSettings {
             export_prefix: String::new(),
             export_naming_mode: default_export_naming_mode(),
             auto_balance: true,
+            auto_balance_vocal_preset: default_auto_balance_vocal_preset(),
             mixer_settings_version: 0,
             playback_speed: 1.0,
             transpose_semitones: 0,
             window_geometry: None,
             calibrated_latency_ms: None,
+            calibrated_latency_profiles: Vec::new(),
             manual_offset_ms: 0,
             pitch_engine: default_pitch_engine(),
             show_startup_guide: default_show_startup_guide(),
@@ -133,9 +154,8 @@ impl AppSettings {
             std::fs::create_dir_all(parent)?;
         }
         let persisted = self.to_persisted_paths();
-        let content = serde_json::to_string_pretty(&persisted)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-        std::fs::write(path, content)
+        let content = serde_json::to_string_pretty(&persisted).map_err(std::io::Error::other)?;
+        write_atomic(&path, &content)
     }
 
     fn into_runtime_paths(mut self) -> Self {
@@ -174,4 +194,14 @@ fn encode_settings_path(value: &str) -> String {
         return String::new();
     }
     portable_paths::encode_path_for_storage(Path::new(value))
+}
+
+fn write_atomic(path: &Path, contents: &str) -> Result<(), std::io::Error> {
+    let tmp_path = path.with_extension("json.tmp");
+    std::fs::write(&tmp_path, contents)?;
+    #[cfg(windows)]
+    if path.exists() {
+        std::fs::remove_file(path)?;
+    }
+    std::fs::rename(&tmp_path, path)
 }

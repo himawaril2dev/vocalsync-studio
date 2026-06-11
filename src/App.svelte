@@ -3,6 +3,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { get } from "svelte/store";
   import SetupTab from "./tabs/SetupTab.svelte";
+  import SongLibraryTab from "./tabs/SongLibraryTab.svelte";
   import RecordingTab from "./tabs/RecordingTab.svelte";
   import PitchAnalysisTab from "./tabs/PitchAnalysisTab.svelte";
   import AboutTab from "./tabs/AboutTab.svelte";
@@ -16,7 +17,7 @@
   import { t } from "./i18n";
   import { invoke } from "@tauri-apps/api/core";
   import { loadedMedia } from "./stores/media";
-  import { lyricsFileName, lyricsLines, type LyricLine } from "./stores/lyrics";
+  import { lyricsFileName, lyricsLines } from "./stores/lyrics";
   import {
     alignmentFineTuneMs,
     alignmentResult,
@@ -26,14 +27,19 @@
     guideVocalPath,
     melodyToPitchTrack,
     melodySourcePath,
-    type AlignmentResult,
-    type MelodyTrack,
   } from "./stores/melody";
   import { backingPitchTrack } from "./stores/pitch";
   import { guideVocalEnabled } from "./stores/settings";
-  import { projectSessionReady } from "./stores/projectSession";
+  import {
+    createProjectSessionSnapshot,
+    projectSessionReady,
+  } from "./stores/projectSession";
+  import {
+    markActiveSongProfileDirty,
+    songProfileApplying,
+  } from "./stores/songProfiles";
+  import { activeTab } from "./stores/navigation";
 
-  let activeTab = $state<"setup" | "recording" | "pitch" | "about">("setup");
   let boundaryError = $state<Error | null>(null);
   let isMaximized = $state(false);
   let showStartupGuide = $state(false);
@@ -41,38 +47,9 @@
   let projectSessionSaveTimer: number | null = null;
   let lastPitchAlignmentSyncKey = "";
   let lastGuideTimingSyncKey = "";
-
-  const PROJECT_SESSION_VERSION = 1;
+  let dirtyTrackingReady = false;
 
   const appWindow = getCurrentWindow();
-
-  interface ProjectSession {
-    version: typeof PROJECT_SESSION_VERSION;
-    backingPath: string | null;
-    lyricsFileName: string;
-    lyricsLines: LyricLine[];
-    melody: MelodyTrack | null;
-    melodySourcePath: string | null;
-    guideVocalPath: string | null;
-    guideVocalEnabled: boolean;
-    alignmentResult: AlignmentResult | null;
-    alignmentFineTuneMs: number;
-  }
-
-  function createProjectSessionSnapshot(): ProjectSession {
-    return {
-      version: PROJECT_SESSION_VERSION,
-      backingPath: get(loadedMedia)?.file_path ?? null,
-      lyricsFileName: get(lyricsFileName),
-      lyricsLines: get(lyricsLines),
-      melody: get(currentMelody),
-      melodySourcePath: get(melodySourcePath),
-      guideVocalPath: get(guideVocalPath),
-      guideVocalEnabled: get(guideVocalEnabled),
-      alignmentResult: get(alignmentResult),
-      alignmentFineTuneMs: get(alignmentFineTuneMs),
-    };
-  }
 
   async function saveProjectSessionNow(): Promise<void> {
     if (!get(projectSessionReady)) return;
@@ -147,12 +124,21 @@
     void $alignmentResult;
     void $alignmentFineTuneMs;
     scheduleProjectSessionSave();
+    if (!$projectSessionReady) return;
+    if (!dirtyTrackingReady) {
+      dirtyTrackingReady = true;
+      return;
+    }
+    if (!$songProfileApplying) {
+      markActiveSongProfileDirty();
+    }
   });
 
   $effect(() => {
     const melody = $currentMelody;
     if (!melody) {
       lastPitchAlignmentSyncKey = "";
+      backingPitchTrack.set(null);
       return;
     }
     const offsetSecs = finalOffsetSecs($alignmentResult, $alignmentFineTuneMs);
@@ -233,31 +219,41 @@
     <nav class="sidebar-nav" role="tablist" aria-label={$t("app.nav.aria")}>
       <button
         class="nav-btn"
-        class:active={activeTab === "setup"}
-        onclick={() => (activeTab = "setup")}
+        class:active={$activeTab === "setup"}
+        onclick={() => activeTab.set("setup")}
         role="tab"
-        aria-selected={activeTab === "setup"}
-        tabindex={activeTab === "setup" ? 0 : -1}
+        aria-selected={$activeTab === "setup"}
+        tabindex={$activeTab === "setup" ? 0 : -1}
       >
         {$t("app.nav.setup")}
       </button>
       <button
         class="nav-btn"
-        class:active={activeTab === "recording"}
-        onclick={() => (activeTab = "recording")}
+        class:active={$activeTab === "songs"}
+        onclick={() => activeTab.set("songs")}
         role="tab"
-        aria-selected={activeTab === "recording"}
-        tabindex={activeTab === "recording" ? 0 : -1}
+        aria-selected={$activeTab === "songs"}
+        tabindex={$activeTab === "songs" ? 0 : -1}
+      >
+        {$t("app.nav.songs")}
+      </button>
+      <button
+        class="nav-btn"
+        class:active={$activeTab === "recording"}
+        onclick={() => activeTab.set("recording")}
+        role="tab"
+        aria-selected={$activeTab === "recording"}
+        tabindex={$activeTab === "recording" ? 0 : -1}
       >
         {$t("app.nav.recording")}
       </button>
       <button
         class="nav-btn"
-        class:active={activeTab === "pitch"}
-        onclick={() => (activeTab = "pitch")}
+        class:active={$activeTab === "pitch"}
+        onclick={() => activeTab.set("pitch")}
         role="tab"
-        aria-selected={activeTab === "pitch"}
-        tabindex={activeTab === "pitch" ? 0 : -1}
+        aria-selected={$activeTab === "pitch"}
+        tabindex={$activeTab === "pitch" ? 0 : -1}
       >
         {$t("app.nav.pitch")}
       </button>
@@ -266,11 +262,11 @@
 
       <button
         class="nav-btn about-btn"
-        class:active={activeTab === "about"}
-        onclick={() => (activeTab = "about")}
+        class:active={$activeTab === "about"}
+        onclick={() => activeTab.set("about")}
         role="tab"
-        aria-selected={activeTab === "about"}
-        tabindex={activeTab === "about" ? 0 : -1}
+        aria-selected={$activeTab === "about"}
+        tabindex={$activeTab === "about" ? 0 : -1}
       >
         {$t("app.nav.about")}
       </button>
@@ -280,11 +276,13 @@
   <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
   <main class="main-content" role="tabpanel">
     <svelte:boundary onerror={(e: unknown) => { boundaryError = e instanceof Error ? e : new Error(String(e)); console.error('[App] 未預期的錯誤:', e); }}>
-      {#if activeTab === "setup"}
+      {#if $activeTab === "setup"}
         <SetupTab />
-      {:else if activeTab === "recording"}
+      {:else if $activeTab === "songs"}
+        <SongLibraryTab />
+      {:else if $activeTab === "recording"}
         <RecordingTab />
-      {:else if activeTab === "pitch"}
+      {:else if $activeTab === "pitch"}
         <PitchAnalysisTab />
       {:else}
         <AboutTab />

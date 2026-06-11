@@ -43,6 +43,7 @@
     guideVolume,
     guideVocalEnabled,
     autoBalanceMixin,
+    autoBalanceVocalPreset,
     exportNamingMode,
     resetBackingVolume,
     resetMicGain,
@@ -50,6 +51,8 @@
     DEFAULT_BACKING_VOLUME,
     DEFAULT_MIC_GAIN,
     DEFAULT_GUIDE_VOLUME,
+    DEFAULT_AUTO_BALANCE_VOCAL_PRESET,
+    type AutoBalanceVocalPreset,
     type ExportNamingMode,
   } from "../stores/settings";
   import {
@@ -64,29 +67,50 @@
   import { showToast } from "../stores/toast";
   import Icon from "../components/Icon.svelte";
   import LyricsPanel from "../components/LyricsPanel.svelte";
-  import LyricsSyncEditor from "../components/LyricsSyncEditor.svelte";
+  import LatencyFineTuneControl from "../components/LatencyFineTuneControl.svelte";
   import PitchTimeline from "../components/PitchTimeline.svelte";
   import { t, tSync } from "../i18n";
-
-  type PanelView = "lyrics" | "sync";
+  import { activeTab } from "../stores/navigation";
+  import {
+    activeSongProfileId,
+    activeSongProfileTitle,
+    loadSongProfile,
+    refreshSongProfiles,
+    songProfileDirty,
+    songProfiles,
+    updateActiveSongProfile,
+  } from "../stores/songProfiles";
 
   interface MixerSettings {
     backing_volume?: number;
     mic_gain?: number;
     guide_volume?: number;
     auto_balance?: boolean;
+    auto_balance_vocal_preset?: string;
     export_naming_mode?: string;
     mixer_settings_version?: number;
   }
+
+  const AUTO_BALANCE_VOCAL_PRESETS: AutoBalanceVocalPreset[] = [
+    "natural",
+    "clear",
+    "forward",
+  ];
 
   // 已遷移至全域 toast 系統
   let videoEl = $state<HTMLVideoElement | null>(null);
   let mixerSettingsLoaded = false;
   let mixerSettingsSaveTimer: number | null = null;
+  let songProfileBusy = $state(false);
 
   function percentToRatio(value: unknown, fallback: number, maxPercent: number): number {
     if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
     return Math.max(0, Math.min(maxPercent, value)) / 100;
+  }
+
+  function normalizeAutoBalanceVocalPreset(value: unknown): AutoBalanceVocalPreset {
+    if (value === "natural" || value === "clear" || value === "forward") return value;
+    return DEFAULT_AUTO_BALANCE_VOCAL_PRESET;
   }
 
   function saveMixerSettings(
@@ -94,6 +118,7 @@
     mic: number,
     guide: number,
     autoBalance: boolean,
+    vocalPreset: AutoBalanceVocalPreset,
     exportNaming: ExportNamingMode,
   ): void {
     void invoke("update_mixer_settings", {
@@ -101,6 +126,7 @@
       mic,
       guide,
       autoBalance,
+      autoBalanceVocalPreset: vocalPreset,
       exportNamingMode: exportNaming,
     }).catch((err) => console.warn("[settings] mixer save failed:", err));
   }
@@ -110,6 +136,7 @@
     mic: number,
     guide: number,
     autoBalance: boolean,
+    vocalPreset: AutoBalanceVocalPreset,
     exportNaming: ExportNamingMode,
   ): void {
     if (!mixerSettingsLoaded) return;
@@ -123,6 +150,7 @@
         mic,
         guide,
         autoBalance,
+        vocalPreset,
         exportNaming,
       );
     }, 250);
@@ -139,6 +167,7 @@
       get(micGain),
       get(guideVolume),
       get(autoBalanceMixin),
+      get(autoBalanceVocalPreset),
       get(exportNamingMode),
     );
   }
@@ -182,6 +211,9 @@
           if (typeof settings.auto_balance === "boolean") {
             autoBalanceMixin.set(settings.auto_balance);
           }
+          autoBalanceVocalPreset.set(
+            normalizeAutoBalanceVocalPreset(settings.auto_balance_vocal_preset),
+          );
           if (
             settings.export_naming_mode === "manual" ||
             settings.export_naming_mode === "auto"
@@ -194,6 +226,9 @@
       .finally(() => {
         mixerSettingsLoaded = true;
       });
+    void refreshSongProfiles().catch((err) =>
+      console.warn("[song-library] list load failed:", err),
+    );
   });
 
   onDestroy(flushMixerSettingsSave);
@@ -204,9 +239,6 @@
   let isSeekDragging = $state(false);
   let seekDraftValue = $state(0);
   const sliderValue = $derived(isSeekDragging ? seekDraftValue : $elapsed);
-
-  /** 右上面板顯示：歌詞 or 同步編輯器 */
-  let panelView = $state<PanelView>("lyrics");
 
   // ── 水平分割（影片 | 歌詞）──
   let splitContainer = $state<HTMLDivElement | null>(null);
@@ -296,6 +328,7 @@
       $micGain,
       $guideVolume,
       $autoBalanceMixin,
+      $autoBalanceVocalPreset,
       $exportNamingMode,
     );
   });
@@ -304,6 +337,9 @@
     const val = parseFloat((e.target as HTMLInputElement).value);
     seekDraftValue = val;
     if (!isSeekDragging) isSeekDragging = true;
+    if (get(transportState) === "paused" || get(transportState) === "idle") {
+      elapsed.set(val);
+    }
   }
 
   function onSeekCommit(e: Event) {
@@ -376,6 +412,7 @@
         outputDevice: $outputDeviceIndex,
         latencyMs: $latencyMs,
         autoBalance: $autoBalanceMixin,
+        autoBalanceVocalPreset: $autoBalanceVocalPreset,
       });
       pausedResumeMode.set(null);
       pausedAtElapsed.set(null);
@@ -471,6 +508,7 @@
 
   /** 停止並回到最開頭（使用者要求：停止按鈕一律 seek 0）。*/
   async function stopAll() {
+    const wasRecording = get(transportState) === "recording";
     try {
       // pause_playback 對任何模式都適用（內部走 engine.pause → stop worker）
       await invoke("pause_playback").catch(() => {});
@@ -547,6 +585,7 @@
           prefix,
           autoIncrement,
           autoBalance: $autoBalanceMixin,
+          autoBalanceVocalPreset: $autoBalanceVocalPreset,
           latencyMs: $latencyMs,
         },
       );
@@ -635,9 +674,7 @@
   }
 
   function handleGlobalKeydown(e: KeyboardEvent) {
-    // 忽略在 input/textarea 中的按鍵
-    const tag = (e.target as HTMLElement)?.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    if (isTextEntryTarget(e.target)) return;
 
     switch (e.code) {
       case "Space":
@@ -688,6 +725,32 @@
         }
         break;
     }
+  }
+
+  function isTextEntryTarget(target: EventTarget | null): boolean {
+    const el = target as HTMLElement | null;
+    if (!el) return false;
+    if (el.isContentEditable) return true;
+
+    const tag = el.tagName;
+    if (tag === "TEXTAREA" || tag === "SELECT") return true;
+    if (tag !== "INPUT") return false;
+
+    const inputType = ((el as HTMLInputElement).type || "text").toLowerCase();
+    return [
+      "date",
+      "datetime-local",
+      "email",
+      "month",
+      "number",
+      "password",
+      "search",
+      "tel",
+      "text",
+      "time",
+      "url",
+      "week",
+    ].includes(inputType);
   }
 
   // ── Speed 檔位 ──
@@ -766,6 +829,48 @@
     if (confidence === "medium") return "badge-medium";
     return "badge-low";
   }
+
+  async function handleSongProfileSelect(event: Event): Promise<void> {
+    const select = event.currentTarget as HTMLSelectElement;
+    const profileId = select.value;
+    if (!profileId || songProfileBusy || $isTransportRunning) return;
+    const profile = $songProfiles.find((item) => item.id === profileId);
+    if ($hasRecording && profile) {
+      const confirmed = await ask(
+        tSync("songLibrary.load.confirmMessage", { title: profile.title }),
+        { title: tSync("songLibrary.load.confirmTitle"), kind: "warning" },
+      );
+      if (!confirmed) {
+        select.value = $activeSongProfileId ?? "";
+        return;
+      }
+    }
+    songProfileBusy = true;
+    try {
+      const payload = await loadSongProfile(profileId);
+      showToast(
+        tSync("songLibrary.toast.loaded", { title: payload.profile.title }),
+        "success",
+      );
+    } catch (error) {
+      showToast(tSync("songLibrary.toast.loadOneFailed", { error: String(error) }), "error");
+    } finally {
+      songProfileBusy = false;
+    }
+  }
+
+  async function updateCurrentSongProfile(): Promise<void> {
+    if (songProfileBusy || !$activeSongProfileId) return;
+    songProfileBusy = true;
+    try {
+      const profile = await updateActiveSongProfile();
+      showToast(tSync("songLibrary.toast.updated", { title: profile.title }), "success");
+    } catch (error) {
+      showToast(tSync("songLibrary.toast.updateFailed", { error: String(error) }), "error");
+    } finally {
+      songProfileBusy = false;
+    }
+  }
 </script>
 
 <svelte:window
@@ -776,6 +881,43 @@
 />
 
 <div class="recording-page">
+  <section class="song-profile-strip">
+    <div class="song-profile-current">
+      <span>{$t("recording.songProfile.label")}</span>
+      <strong>
+        {$activeSongProfileTitle || $t("recording.songProfile.none")}
+      </strong>
+      {#if $songProfileDirty}
+        <em>{$t("recording.songProfile.dirty")}</em>
+      {/if}
+    </div>
+    <select
+      value={$activeSongProfileId ?? ""}
+      onchange={handleSongProfileSelect}
+      disabled={$isTransportRunning || songProfileBusy}
+      aria-label={$t("recording.songProfile.select")}
+    >
+      <option value="">{$t("recording.songProfile.select")}</option>
+      {#each $songProfiles as profile}
+        <option value={profile.id}>{profile.title}</option>
+      {/each}
+    </select>
+    <button
+      class="song-profile-btn primary"
+      onclick={updateCurrentSongProfile}
+      disabled={!$activeSongProfileId || !$songProfileDirty || songProfileBusy}
+    >
+      {$t("recording.songProfile.update")}
+    </button>
+    <button
+      class="song-profile-btn"
+      onclick={() => activeTab.set("songs")}
+      disabled={$isTransportRunning}
+    >
+      {$t("recording.songProfile.manage")}
+    </button>
+  </section>
+
   <div class="main-panels" bind:this={mainContainer}>
     <!-- 上半：左影片 + 右歌詞 -->
     <div class="top-split" style="flex: {topFlex};" bind:this={splitContainer}>
@@ -811,30 +953,8 @@
       ></div>
 
       <div class="lyrics-area" style="flex: {1 - videoFlex};">
-        <div class="panel-toggle">
-          <button
-            class="toggle-btn"
-            class:active={panelView === "lyrics"}
-            onclick={() => (panelView = "lyrics")}
-            aria-pressed={panelView === "lyrics"}
-          >
-            {$t("recording.panel.lyrics")}
-          </button>
-          <button
-            class="toggle-btn"
-            class:active={panelView === "sync"}
-            onclick={() => (panelView = "sync")}
-            aria-pressed={panelView === "sync"}
-          >
-            {$t("recording.panel.sync")}
-          </button>
-        </div>
         <div class="panel-content">
-          {#if panelView === "lyrics"}
-            <LyricsPanel />
-          {:else}
-            <LyricsSyncEditor />
-          {/if}
+          <LyricsPanel />
         </div>
       </div>
     </div>
@@ -902,6 +1022,17 @@
       </div>
     </div>
   </div>
+
+  {#if $hasRecording}
+    <LatencyFineTuneControl
+      title={$t("recording.latencySync.title")}
+      description={$transportState === "playing_back"
+        ? $t("recording.latencySync.playingHint")
+        : $t("recording.latencySync.hint")}
+      disabled={$transportState === "recording"}
+      compact={true}
+    />
+  {/if}
 
   <!-- 播放列：核心操作 -->
   <div class="transport-row">
@@ -1161,12 +1292,102 @@
         <input type="checkbox" bind:checked={$autoBalanceMixin} />
         {$t("recording.autoBalance.label")}
       </label>
+      <div class="auto-balance-presets" aria-label={$t("recording.autoBalance.preset.aria")}>
+        {#each AUTO_BALANCE_VOCAL_PRESETS as preset}
+          <button
+            type="button"
+            class:active={$autoBalanceVocalPreset === preset}
+            disabled={!$autoBalanceMixin}
+            title={$t(`recording.autoBalance.preset.${preset}.title`)}
+            onclick={() => autoBalanceVocalPreset.set(preset)}
+          >
+            {$t(`recording.autoBalance.preset.${preset}`)}
+          </button>
+        {/each}
+      </div>
     </div>
   </div>
 
 </div>
 
 <style>
+  .song-profile-strip {
+    background: var(--color-bg-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-sm) var(--space-md);
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) minmax(180px, 260px) auto auto;
+    align-items: center;
+    gap: var(--space-sm);
+    flex-shrink: 0;
+  }
+
+  .song-profile-current {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    min-width: 0;
+  }
+
+  .song-profile-current span {
+    color: var(--color-text-secondary);
+    font-size: 0.8rem;
+    white-space: nowrap;
+  }
+
+  .song-profile-current strong {
+    color: var(--color-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .song-profile-current em {
+    border-radius: var(--radius-sm);
+    background: rgba(245, 158, 11, 0.16);
+    color: #92400e;
+    font-size: 0.75rem;
+    font-style: normal;
+    font-weight: 800;
+    padding: 2px 7px;
+    white-space: nowrap;
+  }
+
+  .song-profile-strip select {
+    min-width: 0;
+    height: 32px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-bg);
+    color: var(--color-text);
+    padding: 0 var(--space-sm);
+  }
+
+  .song-profile-btn {
+    height: 32px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-weight: 800;
+    padding: 0 var(--space-md);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .song-profile-btn.primary {
+    border-color: transparent;
+    background: var(--color-brand);
+    color: #fff;
+  }
+
+  .song-profile-btn:disabled,
+  .song-profile-strip select:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
   .recording-page {
     height: 100%;
     display: flex;
@@ -1261,36 +1482,6 @@
     background: var(--color-bg-surface);
     display: flex;
     flex-direction: column;
-  }
-
-  .panel-toggle {
-    display: flex;
-    gap: var(--space-xs);
-    padding: var(--space-sm) var(--space-md) 0 var(--space-md);
-    flex-shrink: 0;
-  }
-
-  .toggle-btn {
-    padding: var(--space-sm) 18px;
-    border: none;
-    background: var(--color-bg-hover);
-    color: var(--color-text-secondary);
-    font-size: 13px;
-    font-weight: 500;
-    border-radius: var(--radius-md) var(--radius-md) 0 0;
-    cursor: pointer;
-    transition: all var(--transition-fast);
-  }
-
-  .toggle-btn:hover {
-    background: var(--color-bg-active);
-    color: var(--color-text);
-  }
-
-  .toggle-btn.active {
-    background: var(--color-brand);
-    color: #fff;
-    font-weight: 600;
   }
 
   .panel-content {
@@ -1430,7 +1621,8 @@
     background: var(--color-bg-surface);
     border-radius: var(--radius-lg);
     padding: var(--space-sm) var(--space-lg);
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(280px, 430px) 48px minmax(180px, 1fr) 48px;
     align-items: center;
     gap: var(--space-md);
   }
@@ -1439,27 +1631,38 @@
     display: flex;
     align-items: center;
     gap: var(--space-md);
-    flex-shrink: 0;
+    min-width: 0;
+    overflow: hidden;
   }
 
   .transport-buttons {
     display: flex;
     gap: var(--space-xs);
+    flex: 0 0 auto;
   }
 
   .state-chip {
     display: flex;
     align-items: center;
     gap: var(--space-xs);
+    min-width: 0;
+    flex: 1 1 auto;
     font-size: 12px;
     color: var(--color-text-secondary);
     white-space: nowrap;
   }
 
+  .state-chip strong,
+  .rec-dot,
+  .loop-badge {
+    flex: 0 0 auto;
+  }
+
   .track-name {
+    min-width: 0;
+    flex: 1 1 auto;
     font-size: 12px;
     color: var(--color-text);
-    max-width: 220px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1481,8 +1684,7 @@
   }
 
   .progress-bar-container {
-    flex: 1;
-    min-width: 120px;
+    min-width: 0;
     display: flex;
     align-items: center;
     position: relative;
@@ -1869,6 +2071,40 @@
     gap: var(--space-xs);
     cursor: pointer;
     white-space: nowrap;
+  }
+
+  .auto-balance-presets {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-surface);
+  }
+
+  .auto-balance-presets button {
+    min-width: 42px;
+    height: 22px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: calc(var(--radius-sm) - 2px);
+    background: transparent;
+    color: var(--color-text-muted);
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .auto-balance-presets button.active {
+    background: var(--color-accent);
+    color: var(--color-text);
+    font-weight: 600;
+  }
+
+  .auto-balance-presets button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
   }
 
   /* ── 速度/移調 ── */

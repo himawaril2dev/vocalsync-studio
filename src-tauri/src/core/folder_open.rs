@@ -22,7 +22,7 @@ pub fn open_folder(path: &Path) -> Result<(), AppError> {
         command.arg(path);
         command.creation_flags(CREATE_NO_WINDOW);
         command.spawn().map_err(AppError::Io)?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(target_os = "macos")]
@@ -31,7 +31,7 @@ pub fn open_folder(path: &Path) -> Result<(), AppError> {
             .arg(path)
             .spawn()
             .map_err(AppError::Io)?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -40,6 +40,6 @@ pub fn open_folder(path: &Path) -> Result<(), AppError> {
             .arg(path)
             .spawn()
             .map_err(AppError::Io)?;
-        return Ok(());
+        Ok(())
     }
 }

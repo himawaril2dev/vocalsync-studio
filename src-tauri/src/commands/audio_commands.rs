@@ -3,6 +3,7 @@
 use crate::core::audio_engine::{AudioEngine, ExportPaths, LoadResult};
 use crate::core::pitch_data::PitchTrack;
 use crate::error::AppError;
+use crate::events::CalibrationCompletePayload;
 use crate::security;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, State};
@@ -13,7 +14,7 @@ pub fn load_backing(
     path: String,
     engine: State<'_, Mutex<AudioEngine>>,
 ) -> Result<LoadResult, AppError> {
-    security::validate_path_safe(&path)?;
+    security::validate_local_path_safe(&path)?;
     let mut engine = engine
         .lock()
         .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -103,12 +104,31 @@ pub fn start_playback(
     output_device: Option<usize>,
     latency_ms: f64,
     auto_balance: bool,
+    auto_balance_vocal_preset: Option<String>,
     engine: State<'_, Mutex<AudioEngine>>,
 ) -> Result<(), AppError> {
     let mut engine = engine
         .lock()
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    engine.start_playback(app, start_frame, output_device, latency_ms, auto_balance)
+    engine.start_playback(
+        app,
+        start_frame,
+        output_device,
+        latency_ms,
+        auto_balance,
+        auto_balance_vocal_preset.as_deref().unwrap_or("forward"),
+    )
+}
+
+#[tauri::command]
+pub fn update_runtime_latency(
+    latency_ms: f64,
+    engine: State<'_, Mutex<AudioEngine>>,
+) -> Result<(), AppError> {
+    let engine = engine
+        .lock()
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    engine.update_runtime_latency(latency_ms)
 }
 
 #[tauri::command]
@@ -148,7 +168,7 @@ pub fn load_guide_vocal(
     offset_secs: f64,
     engine: State<'_, Mutex<AudioEngine>>,
 ) -> Result<(), AppError> {
-    security::validate_path_safe(&path)?;
+    security::validate_local_path_safe(&path)?;
     let engine = engine
         .lock()
         .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -195,28 +215,49 @@ pub fn export_audio(
     prefix: String,
     auto_increment: bool,
     auto_balance: bool,
+    auto_balance_vocal_preset: Option<String>,
     latency_ms: f64,
     engine: State<'_, Mutex<AudioEngine>>,
 ) -> Result<ExportPaths, AppError> {
-    security::validate_path_safe(&dir)?;
+    security::validate_local_path_safe(&dir)?;
     security::validate_filename_prefix(&prefix)?;
     let engine = engine
         .lock()
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    engine.export(&dir, &prefix, auto_increment, auto_balance, latency_ms)
+    engine.export(
+        &dir,
+        &prefix,
+        auto_increment,
+        auto_balance,
+        auto_balance_vocal_preset.as_deref().unwrap_or("forward"),
+        latency_ms,
+    )
 }
 
 #[tauri::command]
-pub fn calibrate_latency(
-    app: AppHandle,
+pub fn estimate_system_latency(
     input_device: Option<usize>,
     output_device: Option<usize>,
+    sample_rate: Option<u32>,
     engine: State<'_, Mutex<AudioEngine>>,
-) -> Result<u64, AppError> {
+) -> Result<CalibrationCompletePayload, AppError> {
     let mut engine = engine
         .lock()
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    engine.calibrate_latency(app, input_device, output_device)
+    engine.estimate_system_latency(input_device, output_device, sample_rate)
+}
+
+#[tauri::command]
+pub fn calibrate_latency_rhythm_voice(
+    input_device: Option<usize>,
+    output_device: Option<usize>,
+    sample_rate: Option<u32>,
+    engine: State<'_, Mutex<AudioEngine>>,
+) -> Result<CalibrationCompletePayload, AppError> {
+    let mut engine = engine
+        .lock()
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    engine.calibrate_latency_rhythm_voice(input_device, output_device, sample_rate)
 }
 
 #[tauri::command]

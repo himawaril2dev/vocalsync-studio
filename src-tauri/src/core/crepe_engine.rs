@@ -42,7 +42,7 @@ const CENTS_PER_BIN: f64 = 20.0;
 /// 而 freq = 10.0 * 2^(cent / 1200) 中 cent 0 = 10 Hz，
 /// 所以 bin 0 的絕對 cent = 1200 * log2(32.703 / 10.0) ≈ 1997.38。
 /// 來源：marl/crepe 官方 Python 實作的 `to_local_average_cents()`。
-const CENT_OFFSET: f64 = 1997.3794084376191;
+const CENT_OFFSET: f64 = 1_997.379_408_437_619;
 
 /// 全域 ONNX session（OnceLock + Mutex：OnceLock 保證只初始化一次，
 /// Mutex 提供 run() 需要的 &mut 存取）
@@ -104,8 +104,7 @@ fn get_or_init_session(model_dir: &Path) -> Result<&'static Mutex<Session>, Stri
 
 /// 取得 CREPE 模型目錄（dev 模式在 src-tauri/models/，production 在 exe 同目錄）。
 ///
-/// 與 `melody_commands::get_model_dir` 邏輯相同，但提升為公開函式供
-/// `audio_engine` 等模組使用。
+/// 這是 app 內查找 CREPE 模型位置的單一入口。
 pub fn find_crepe_model_dir() -> Option<std::path::PathBuf> {
     let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
 
@@ -124,6 +123,12 @@ pub fn find_crepe_model_dir() -> Option<std::path::PathBuf> {
     let prod_path = exe_dir.join("models");
     if prod_path.join("crepe-tiny.onnx").exists() {
         return Some(prod_path);
+    }
+
+    // 其他 bundle layout 可能會把模型放在 resources/models 內
+    let resource_path = exe_dir.join("resources").join("models");
+    if resource_path.join("crepe-tiny.onnx").exists() {
+        return Some(resource_path);
     }
 
     // 最後嘗試 exe 同目錄
@@ -215,7 +220,7 @@ pub fn detect_realtime(
     }
 
     // 硬音域邊界過濾
-    if freq < HARD_VOCAL_LOW_HZ || freq > HARD_VOCAL_HIGH_HZ {
+    if !(HARD_VOCAL_LOW_HZ..=HARD_VOCAL_HIGH_HZ).contains(&freq) {
         return Ok(None);
     }
 
@@ -424,13 +429,13 @@ fn run_inference(
 
             if rms < MIN_FRAME_RMS {
                 // 靜音/殘響/呼吸 frame，直接填零避免噪音被放大
-                flat.extend(std::iter::repeat(0.0_f32).take(FRAME_SIZE));
+                flat.resize(flat.len() + FRAME_SIZE, 0.0);
             } else {
                 let max_abs = frame.iter().fold(0.0_f32, |acc, &x| acc.max(x.abs()));
                 if max_abs > 1e-8 {
                     flat.extend(frame.iter().map(|&x| x / max_abs));
                 } else {
-                    flat.extend(std::iter::repeat(0.0_f32).take(FRAME_SIZE));
+                    flat.resize(flat.len() + FRAME_SIZE, 0.0);
                 }
             }
         }
@@ -651,7 +656,7 @@ fn median_filter_pitch(samples: Vec<PitchSample>, window: usize) -> Vec<PitchSam
 
     samples
         .into_iter()
-        .zip(keep.into_iter())
+        .zip(keep)
         .filter_map(|(s, k)| if k { Some(s) } else { None })
         .collect()
 }
@@ -686,8 +691,8 @@ fn decode_pitch(probabilities: &[f32]) -> (f64, f64) {
     let mut weight_sum = 0.0_f64;
     let mut cent_sum = 0.0_f64;
 
-    for i in lo..hi {
-        let w = probabilities[i] as f64;
+    for (i, probability) in probabilities.iter().enumerate().take(hi).skip(lo) {
+        let w = *probability as f64;
         let cent = i as f64 * CENTS_PER_BIN;
         cent_sum += cent * w;
         weight_sum += w;

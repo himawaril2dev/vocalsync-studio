@@ -8,9 +8,6 @@ VocalSync Studio 是一款桌面應用程式，結合伴奏播放、即時錄音
 
 📖 **使用說明**：[USER_GUIDE.md](docs/USER_GUIDE.md)｜[English](docs/USER_GUIDE.en.md)｜[日本語](docs/USER_GUIDE.ja.md)（portable zip 內另附離線 HTML 版）
 
-> 📢 **透明度聲明**
-> 作者沒有程式開發背景，本專案由 AI（Claude / Codex）協作完成——從架構、程式碼到 UI 全部由 AI 生成。所有功能皆經實測與跨模型 code review（Claude 實作 + Codex 獨立審查）。請依你的使用情境評估風險後採用。
-
 ## 功能特色
 
 - **YouTube 下載** — 直接輸入 URL 下載伴奏（自動安裝 yt-dlp + FFmpeg）
@@ -18,7 +15,8 @@ VocalSync Studio 是一款桌面應用程式，結合伴奏播放、即時錄音
 - **AI 音高偵測** — 使用 CREPE 神經網路模型分析演唱音高（離線運作，不需網路）
 - **音高曲線對比** — 將你的演唱與目標旋律並排顯示
 - **導唱監聽** — 匯入人聲軌後可低音量跟唱參考，匯出時不混入成品
-- **歌詞同步** — 支援 LRC / SRT / VTT 格式，含雙語自動偵測
+- **歌詞同步** — 支援 LRC / SRT / VTT / TXT，錄音頁可調整整體延遲並用每句 `起` / `終` 快速對時
+- **歌單管理** — 保存每首歌的伴奏、歌詞、旋律、導唱、同步、混音、loop、速度與升降 key；歌單頁可直接載入、修改、保存目前歌曲
 - **A-B 循環** — 重複練習特定段落
 - **變速播放** — WSOLA 時間拉伸，不改變音高
 
@@ -37,19 +35,19 @@ VocalSync Studio 是一款桌面應用程式，結合伴奏播放、即時錄音
 
 ### 從 Release 下載（推薦）
 
-1. 前往 [Releases](https://github.com/himawaril2dev/vocalsync-studio/releases) 頁面，下載最新的 `VocalSync.Studio.Portable.x.y.z.zip`
+1. 前往可信的 release 頁面，下載最新的 `VocalSync.Studio.Portable.x.y.z.zip`
 2. 解壓縮到任意位置（例如桌面或 `D:\Tools\`）
 3. 進入資料夾，雙擊 **`vocalsync-studio.exe`** 即可啟動
 
 > ⚠️ **資料夾結構請勿變動**
-> `DirectML.dll`、`yt-dlp.exe`、`models/` 都是 `vocalsync-studio.exe` 執行期會載入的依賴，**不可單獨搬移**到其他位置。若要換目錄，請整個資料夾一起搬。
+> `DirectML.dll`、`models/` 是 `vocalsync-studio.exe` 執行期會載入的依賴，**不可單獨搬移**到其他位置。yt-dlp / FFmpeg 透過自動安裝後會放在同一個 portable root；若要換目錄，請整個資料夾一起搬。
 
 | 檔案 | 說明 |
 |---|---|
 | **`vocalsync-studio.exe`** | 主程式 ← 點這個啟動 |
 | `DirectML.dll` | ONNX Runtime 的 DirectX ML 加速 DLL（CREPE 音高偵測需要）|
-| `yt-dlp.exe` | YouTube 伴奏下載 CLI |
 | `models/crepe-tiny.onnx` | CREPE 音高偵測模型 |
+| `yt-dlp.exe` / `ffmpeg.exe` / `ffprobe.exe` | 使用自動安裝工具後才會出現 |
 
 ### 已測試環境
 
@@ -65,7 +63,7 @@ macOS / Linux 的 Tauri build 理論上可行（原始碼多平台），但**尚
 > 因為目前還沒有做 code-signing 數位簽章，Windows SmartScreen 可能會跳出「已防止 Windows 保護您的電腦」的警告。
 > 點警告視窗左上的 **「其他資訊」**，再按下方出現的 **「仍要執行」** 按鈕即可啟動。
 > 之後同一個 exe 不會再跳此警告。
-> 若對來源仍有疑慮，可以在 Release 頁下載 zip 後用 `certutil -hashfile "檔名.zip" SHA256` 比對 GitHub 上顯示的 digest。
+> 若對來源仍有疑慮，可以在 release 頁下載 zip 後用 `certutil -hashfile "檔名.zip" SHA256` 比對同頁公布的 digest。
 
 ### 從原始碼建置
 
@@ -82,14 +80,15 @@ npm install
 npm run tauri dev
 
 # 3. 建置 Release
-npm run tauri build
+npm run tauri:build:release
 
-# 4.（可選）產生離線 USER_GUIDE HTML 並打包進 portable zip
-npm run build:docs          # 輸出到 dist-docs/*.html
-npm run pack:portable-docs  # 複製 HTML 進 portable 資料夾並重新壓縮 zip
+# 4. 產生離線 USER_GUIDE HTML 並打包 portable zip
+npm run pack:portable
 ```
 
 建置產物在 `src-tauri/target/release/bundle/` 中。
+`npm run tauri:build:release` 會輸出主程式：`src-tauri/target/release/vocalsync-studio.exe`。
+`npm run pack:portable` 會輸出唯一發行包：`src-tauri/target/release/bundle/portable/VocalSync.Studio.Portable.x.y.z.zip`。
 
 ## 專案結構
 
@@ -98,7 +97,7 @@ vocalsync-studio/
 ├── src/                    # Svelte 前端
 │   ├── components/         # UI 元件（音高曲線、歌詞面板、校準器...）
 │   ├── stores/             # 狀態管理（播放、錄音、歌詞、設定...）
-│   └── tabs/               # 頁面（準備、錄音、音高、關於）
+│   └── tabs/               # 頁面（準備、歌單、錄音、音高、關於）
 ├── src-tauri/
 │   └── src/
 │       ├── commands/       # Tauri IPC 指令
@@ -134,6 +133,8 @@ vocalsync-studio/
 - **電子信箱**：`himawaril2dev@gmail.com`
 
 回報時若能附上：作業系統版本、VocalSync Studio 版本、操作步驟與錯誤訊息截圖，會更容易定位問題。
+
+About 頁的「檢查更新」是手動觸發；只有按下按鈕時才會向 GitHub Releases 查詢最新版本。
 
 ## 授權
 
@@ -191,6 +192,6 @@ VocalSync Studio 僅為本地練唱輔助工具。使用者透過本工具下載
 
 ## 支持開發
 
-如果這個工具對你的練唱有幫助，歡迎請我喝杯咖啡：
+如果這個工具對你的練唱有幫助，歡迎請我喝杯咖啡，讓開發可以持續下去：
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/himawari168)
+[Support on Ko-fi](https://ko-fi.com/himawari168)

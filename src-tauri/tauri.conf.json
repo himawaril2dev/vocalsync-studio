@@ -1,6 +1,6 @@
 {
   "productName": "VocalSync Studio",
-  "version": "0.3.11",
+  "version": "0.4.0",
   "identifier": "com.vocalsync.studio",
   "build": {
     "frontendDist": "../dist",
@@ -9,25 +9,22 @@
     "beforeBuildCommand": "npm run build"
   },
   "bundle": {
-    "active": true,
-    "targets": [],
+    "active": false,
     "icon": [
       "icons/icon.ico",
       "icons/icon.png"
     ],
-    "resources": [],
-    "copyright": "Copyright (c) 2026 himawari168",
+    "resources": {
+      "target/release/DirectML.dll": "DirectML.dll",
+      "models/": "models"
+    },
+    "copyright": "Copyright (c) 2026 VocalSync Studio contributors",
     "shortDescription": "練唱輔助工具",
     "longDescription": "VocalSync Studio — 讓每一次練習都聽得見進步。支援伴奏播放、即時錄音、AI 音高偵測、歌詞同步顯示。",
     "windows": {
       "certificateThumbprint": null,
       "digestAlgorithm": "sha256",
-      "timestampUrl": "",
-      "nsis": {
-        "displayLanguageSelector": true,
-        "installerIcon": "icons/icon.ico",
-        "languages": ["English", "TradChinese", "Japanese", "Korean"]
-      }
+      "timestampUrl": ""
     }
   },
   "app": {

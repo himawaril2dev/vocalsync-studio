@@ -21,8 +21,7 @@ use crate::error::AppError;
 use crate::events;
 use crate::events::{
     BackingPitchAnalyzingPayload, BackingPitchNotDetectedPayload, BackingPitchQualityPayload,
-    CalibrationBeatPayload, CalibrationCompletePayload, CalibrationFailedPayload,
-    CalibrationStartedPayload,
+    CalibrationCompletePayload,
 };
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ringbuf::{traits::*, HeapCons, HeapProd, HeapRb};
@@ -31,13 +30,38 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::AppHandle;
 use timestretch::{EdmPreset, EnvelopePreset, StreamProcessor, StretchParams};
 
 const PITCH_BUF_SIZE: usize = 2048;
 const STOP_REASON_NONE: u32 = 0;
 const STOP_REASON_MANUAL: u32 = 1;
+const CALIBRATION_MODE_SYSTEM: &str = "system";
+const CALIBRATION_MODE_RHYTHM_VOICE: &str = "rhythm_voice";
+const SYSTEM_LATENCY_COLLECT_MS: u64 = 450;
+const SYSTEM_LATENCY_MAX_WAIT_MS: u64 = 900;
+const SYSTEM_LATENCY_MIN_CALLBACKS: u32 = 4;
+const SYSTEM_LATENCY_DEFAULT_MS: f64 = 80.0;
+const SYSTEM_LATENCY_MAX_MS: f64 = 500.0;
+const RHYTHM_VOICE_WARMUP_BEATS: usize = 2;
+const RHYTHM_VOICE_MEASUREMENT_BEATS: usize = 8;
+const RHYTHM_VOICE_TOTAL_BEATS: usize = RHYTHM_VOICE_WARMUP_BEATS + RHYTHM_VOICE_MEASUREMENT_BEATS;
+const RHYTHM_VOICE_PRE_ROLL_MS: f64 = 450.0;
+const RHYTHM_VOICE_BEAT_INTERVAL_MS: f64 = 650.0;
+const RHYTHM_VOICE_POST_ROLL_MS: f64 = 500.0;
+const RHYTHM_VOICE_INPUT_START_TIMEOUT_MS: u64 = 1_000;
+const RHYTHM_VOICE_MAX_EXTRA_WAIT_MS: u64 = 1_500;
+const RHYTHM_VOICE_SEARCH_EARLY_MS: f64 = 240.0;
+const RHYTHM_VOICE_SEARCH_LATE_MS: f64 = 520.0;
+
+fn selected_crepe_model_dir(pitch_engine_pref: &str) -> Option<PathBuf> {
+    if pitch_engine_pref == "yin" {
+        None
+    } else {
+        crepe_engine::find_crepe_model_dir()
+    }
+}
 
 // ── 型別 ──────────────────────────────────────────────────────────
 
@@ -137,8 +161,8 @@ fn unpack_loop(packed: u64) -> Option<(u64, u64)> {
     if packed == LOOP_PACKED_DISABLED {
         return None;
     }
-    let a = (packed >> 32) as u64;
-    let b = (packed & 0xFFFF_FFFF) as u64;
+    let a = packed >> 32;
+    let b = packed & 0xFFFF_FFFF;
     Some((a, b))
 }
 
@@ -170,6 +194,8 @@ struct SharedState {
     speed: Arc<AtomicU32>,
     /// 移調半音數（i32 以 AtomicU32 存放：0 = 不移調）
     pitch_semitones: Arc<AtomicU32>,
+    /// Runtime latency in milliseconds, stored as f64 bits for callback-safe reads.
+    runtime_latency_ms: Arc<AtomicU64>,
 }
 
 impl SharedState {
@@ -188,6 +214,7 @@ impl SharedState {
             loop_range: Arc::new(AtomicU64::new(LOOP_PACKED_DISABLED)),
             speed: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
             pitch_semitones: Arc::new(AtomicU32::new(0_i32 as u32)),
+            runtime_latency_ms: Arc::new(AtomicU64::new(0.0_f64.to_bits())),
         }
     }
 }
@@ -246,6 +273,17 @@ fn apply_highpass_80hz(mono: &[f32], sample_rate: u32) -> Vec<f32> {
     let mut stage2 = DirectForm1::<f32>::new(coeffs);
 
     mono.iter().map(|&s| stage2.run(stage1.run(s))).collect()
+}
+
+struct PlaybackWorkerOptions {
+    start_frame: Option<u64>,
+    mix_vocal: bool,
+    auto_balance: bool,
+    auto_balance_vocal_preset: String,
+    output_device: Option<usize>,
+    latency_ms: f64,
+    input_device: Option<usize>,
+    pitch_engine_pref: String,
 }
 
 impl AudioEngine {
@@ -710,13 +748,16 @@ impl AudioEngine {
         self.spawn_playback_worker(
             app,
             backing,
-            start_frame,
-            false,
-            false,
-            output_device,
-            0.0,
-            input_device,
-            pitch_engine_pref,
+            PlaybackWorkerOptions {
+                start_frame,
+                mix_vocal: false,
+                auto_balance: false,
+                auto_balance_vocal_preset: "forward".to_string(),
+                output_device,
+                latency_ms: 0.0,
+                input_device,
+                pitch_engine_pref: pitch_engine_pref.to_string(),
+            },
         );
         self.state = EngineState::Previewing;
         Ok(())
@@ -731,10 +772,12 @@ impl AudioEngine {
         output_device: Option<usize>,
         latency_ms: f64,
         auto_balance: bool,
+        auto_balance_vocal_preset: &str,
     ) -> Result<(), AppError> {
         if self.state != EngineState::Idle {
             return Err(AppError::Audio("引擎正忙，請先停止".to_string()));
         }
+        self.update_runtime_latency(latency_ms)?;
         let backing = self
             .backing_data
             .clone()
@@ -743,15 +786,30 @@ impl AudioEngine {
         self.spawn_playback_worker(
             app,
             backing,
-            start_frame,
-            true,
-            auto_balance,
-            output_device,
-            latency_ms,
-            None,
-            "auto",
+            PlaybackWorkerOptions {
+                start_frame,
+                mix_vocal: true,
+                auto_balance,
+                auto_balance_vocal_preset: auto_balance_vocal_preset.to_string(),
+                output_device,
+                latency_ms,
+                input_device: None,
+                pitch_engine_pref: "auto".to_string(),
+            },
         );
         self.state = EngineState::PlayingBack;
+        Ok(())
+    }
+
+    pub fn update_runtime_latency(&self, latency_ms: f64) -> Result<(), AppError> {
+        if !latency_ms.is_finite() || !(0.0..=5000.0).contains(&latency_ms) {
+            return Err(AppError::Audio(
+                "Latency value is outside the allowed range".to_string(),
+            ));
+        }
+        self.shared
+            .runtime_latency_ms
+            .store(latency_ms.to_bits(), Ordering::Relaxed);
         Ok(())
     }
 
@@ -759,13 +817,7 @@ impl AudioEngine {
         &mut self,
         app: AppHandle,
         backing: Arc<Vec<f32>>,
-        start_frame: Option<u64>,
-        mix_vocal: bool,
-        auto_balance: bool,
-        output_device: Option<usize>,
-        latency_ms: f64,
-        input_device: Option<usize>,
-        pitch_engine_pref: &str,
+        options: PlaybackWorkerOptions,
     ) {
         let backing_channels = self.backing_channels as usize;
         let source_sr = self.sample_rate;
@@ -778,14 +830,14 @@ impl AudioEngine {
 
         shared
             .playback_pos
-            .store(start_frame.unwrap_or(0), Ordering::Relaxed);
+            .store(options.start_frame.unwrap_or(0), Ordering::Relaxed);
         shared
             .stop_reason
             .store(STOP_REASON_NONE, Ordering::Relaxed);
         shared.running.store(true, Ordering::Relaxed);
         shared.backing_rms.store(0, Ordering::Relaxed);
 
-        let pitch_engine_pref = pitch_engine_pref.to_string();
+        let pitch_engine_pref = options.pitch_engine_pref;
         let handle = thread::spawn(move || {
             run_playback(
                 app,
@@ -796,12 +848,13 @@ impl AudioEngine {
                 source_sr,
                 total_frames,
                 duration_s,
-                mix_vocal,
-                auto_balance,
-                output_device,
-                latency_ms,
+                options.mix_vocal,
+                options.auto_balance,
+                options.auto_balance_vocal_preset,
+                options.output_device,
+                options.latency_ms,
                 shared,
-                input_device,
+                options.input_device,
                 &pitch_engine_pref,
             );
         });
@@ -999,6 +1052,7 @@ impl AudioEngine {
         prefix: &str,
         auto_increment: bool,
         auto_balance: bool,
+        auto_balance_vocal_preset: &str,
         latency_ms: f64,
     ) -> Result<ExportPaths, AppError> {
         let vocal = self
@@ -1061,23 +1115,25 @@ impl AudioEngine {
         // 參數：標準化/自動音量調整
         let mut vocal_gain = 1.0;
         let export_backing_gain = self.export_volume * auto_balance_backing_gain(auto_balance);
+        let export_vocal_target_ratio = auto_balance_vocal_target_ratio(auto_balance_vocal_preset);
         if auto_balance && n > 0 {
             vocal_gain = compute_auto_balance_vocal_gain(
                 backing.as_slice(),
                 backing_channels,
                 n,
                 export_backing_gain,
+                export_vocal_target_ratio,
                 |i| shifted_vocal[i],
             );
         }
 
         let mut max_peak = 0.0_f32;
         let mut mix_buffer = Vec::with_capacity(n * 2);
-        for i in 0..n {
+        for (i, sample) in shifted_vocal.iter().enumerate().take(n) {
             let bidx = i * backing_channels;
             let bl = backing[bidx] * export_backing_gain;
             let br = backing[bidx + (1.min(backing_channels - 1))] * export_backing_gain;
-            let v = process_vocal_for_mix(shifted_vocal[i], vocal_gain);
+            let v = process_vocal_for_mix(*sample, vocal_gain);
 
             let l = bl + v[0];
             let r = br + v[1];
@@ -1131,313 +1187,697 @@ impl AudioEngine {
         })
     }
 
-    // ── 互動式延遲校準 ────────────────────────────────────────────────
-
-    /// 互動式延遲校準（方向二改良版）。
-    ///
-    /// 流程：
-    /// 1. 產生 8 下木魚音 click（前 2 拍暖身，後 6 拍量測），70 BPM
-    /// 2. 透過 `run_recording` 同時播放 + 錄音
-    /// 3. 錄音結束後，對每一拍跑 onset detection（搜尋窗口 [-200ms, +400ms]，容許提前拍）
-    /// 4. 暖身拍丟棄；量測拍取 median，再剔除偏離 median > 80ms 的離群值
-    /// 5. 有效拍 < 3 拍視為失敗
-    /// 6. 每一拍都 emit `calibration:beat_detected` 事件給前端動畫補上即時回饋
-    ///
-    /// 修掉舊版 P0 bug：
-    /// - 不再寫入 `self.backing_channels`（避免污染後續 stereo 播放）
-    /// - 移除魔術 15ms 補償
-    /// - peak 搜尋窗對稱（容許負延遲，即提前拍）
-    /// - 動態 noise floor（從 prep 階段量測）
-    /// - 用 onset detection（能量上升）取代純 amplitude peak
-    pub fn calibrate_latency(
+    pub fn estimate_system_latency(
         &mut self,
-        app: AppHandle,
         input_device_idx: Option<usize>,
         output_device_idx: Option<usize>,
-    ) -> Result<u64, AppError> {
-        let source_sr = self.sample_rate;
-
-        // ── 校準參數 ──
-        const BPM: f32 = 70.0;
-        const WARMUP_BEATS: usize = 2;
-        const MEASUREMENT_BEATS: usize = 6;
-        const TOTAL_BEATS: usize = WARMUP_BEATS + MEASUREMENT_BEATS;
-        const PREP_MS: u32 = 1500; // 1.5s 給使用者抓節奏感
-        const TAIL_MS: u32 = 500; // 最後一拍後留 500ms 收尾錄音
-
-        let beat_interval_ms: u32 = (60_000.0 / BPM) as u32;
-        let frames_per_beat = (source_sr as f32 * 60.0 / BPM) as usize;
-        let prep_delay_frames = (source_sr as f32 * PREP_MS as f32 / 1000.0) as usize;
-        let tail_frames = (source_sr as f32 * TAIL_MS as f32 / 1000.0) as usize;
-        let total_frames = prep_delay_frames + TOTAL_BEATS * frames_per_beat + tail_frames;
-
-        // ── 產生 click track（兩段木魚式短音，比 sine beep 更易精準對拍）──
-        let click_buf = generate_woodblock_click(source_sr);
-        let mut click_track = vec![0.0_f32; total_frames];
-        for b in 0..TOTAL_BEATS {
-            let start = prep_delay_frames + b * frames_per_beat;
-            for (i, sample) in click_buf.iter().enumerate() {
-                if start + i < total_frames {
-                    click_track[start + i] = *sample;
-                }
-            }
+        preferred_sample_rate: Option<u32>,
+    ) -> Result<CalibrationCompletePayload, AppError> {
+        if self.state != EngineState::Idle {
+            return Err(AppError::Audio(
+                "請先停止播放或錄音，再執行延遲校準。".to_string(),
+            ));
         }
 
-        // ── 共享狀態（不污染 self.backing_channels）──
-        let calibration_channels: u16 = 1;
-        let shared = self.shared.clone();
-        let vocal_buffer = self.vocal_buffer.clone();
-        let pitch_track = self.pitch_track.clone();
+        let sample_rate = preferred_sample_rate
+            .filter(|sr| (8_000..=192_000).contains(sr))
+            .unwrap_or(48_000);
+        let capture = capture_system_latency(input_device_idx, output_device_idx, sample_rate)?;
+        Ok(summarize_system_latency_estimate(&capture))
+    }
 
-        if let Ok(mut v) = vocal_buffer.lock() {
-            v.clear();
-        }
-        if let Ok(mut t) = pitch_track.lock() {
-            t.clear();
-        }
-
-        shared.playback_pos.store(0, Ordering::Relaxed);
-        shared
-            .stop_reason
-            .store(STOP_REASON_NONE, Ordering::Relaxed);
-        shared.running.store(true, Ordering::Relaxed);
-
-        let dur_s = total_frames as f64 / source_sr as f64;
-
-        // 通知前端校準正式啟動（時間軸從這一刻開始）
-        events::emit_calibration_started(
-            &app,
-            CalibrationStartedPayload {
-                bpm: BPM,
-                warmup_beats: WARMUP_BEATS as u8,
-                measurement_beats: MEASUREMENT_BEATS as u8,
-                prep_ms: PREP_MS,
-                beat_interval_ms,
-            },
-        );
-
-        let app_thread = app.clone();
-        let handle = thread::spawn(move || {
-            run_recording(
-                app_thread,
-                Arc::new(click_track),
-                vocal_buffer,
-                Arc::new(Mutex::new(None::<GuideVocalTrack>)),
-                pitch_track,
-                calibration_channels as usize,
-                source_sr,
-                total_frames as u64,
-                dur_s,
-                input_device_idx,
-                output_device_idx,
-                shared,
-                "auto", // 校準不關心音高引擎偏好
-            );
-        });
-
-        let _ = handle.join();
-
-        // ── 取出錄音資料 ──
-        let recorded: Vec<f32> = match self.vocal_buffer.lock() {
-            Ok(v) => v.clone(),
-            Err(e) => {
-                let reason = format!("無法讀取錄音 buffer：{}", e);
-                events::emit_calibration_failed(
-                    &app,
-                    CalibrationFailedPayload {
-                        reason: reason.clone(),
-                    },
-                );
-                return Err(AppError::Audio(reason));
-            }
-        };
-
-        if recorded.is_empty() {
-            let reason = "錄音 buffer 空白，請確認麥克風裝置".to_string();
-            events::emit_calibration_failed(
-                &app,
-                CalibrationFailedPayload {
-                    reason: reason.clone(),
-                },
-            );
-            return Err(AppError::Audio(reason));
+    pub fn calibrate_latency_rhythm_voice(
+        &mut self,
+        input_device_idx: Option<usize>,
+        output_device_idx: Option<usize>,
+        preferred_sample_rate: Option<u32>,
+    ) -> Result<CalibrationCompletePayload, AppError> {
+        if self.state != EngineState::Idle {
+            return Err(AppError::Audio(
+                "請先停止播放或錄音，再執行節奏發聲校準。".to_string(),
+            ));
         }
 
-        // ── 動態 noise floor：從 prep 階段（前 1 秒）量測 ──
-        let noise_window = (source_sr as usize).min(recorded.len() / 2);
-        let noise_floor = compute_rms(&recorded[..noise_window]).max(0.0005);
+        let sample_rate = preferred_sample_rate
+            .filter(|sr| (8_000..=192_000).contains(sr))
+            .unwrap_or(48_000);
+        let capture =
+            capture_rhythm_voice_calibration(input_device_idx, output_device_idx, sample_rate)?;
+        Ok(summarize_rhythm_voice_latency(&capture))
+    }
+}
 
-        // ── 對每一拍跑 onset detection ──
-        // 搜尋窗口：[-200ms, +400ms]（容許使用者提前 200ms 拍）
-        let search_before = (source_sr as f32 * 0.200) as usize;
-        let search_after = (source_sr as f32 * 0.400) as usize;
-
-        let mut beat_results: Vec<BeatResult> = Vec::with_capacity(TOTAL_BEATS);
-
-        for b in 0..TOTAL_BEATS {
-            let expected = prep_delay_frames + b * frames_per_beat;
-            let win_start = expected.saturating_sub(search_before);
-            let win_end = (expected + search_after).min(recorded.len());
-
-            let onset = if win_end > win_start {
-                detect_onset_in_window(&recorded[win_start..win_end], source_sr, noise_floor)
-                    .map(|rel| win_start + rel)
-            } else {
-                None
-            };
-
-            let offset_samples: i64 = match onset {
-                Some(idx) => idx as i64 - expected as i64,
-                None => 0,
-            };
-            let offset_ms = offset_samples as f64 / source_sr as f64 * 1000.0;
-
-            beat_results.push(BeatResult {
-                beat_idx: b as u8,
-                is_warmup: b < WARMUP_BEATS,
-                detected: onset.is_some(),
-                offset_samples,
-                offset_ms,
-                accepted: false, // 後面再決定
-            });
-        }
-
-        // ── 量測拍取 median，剔除離群值（> 80ms）──
-        const OUTLIER_THRESHOLD_MS: f64 = 80.0;
-
-        let measurement_offsets: Vec<f64> = beat_results
-            .iter()
-            .filter(|r| !r.is_warmup && r.detected)
-            .map(|r| r.offset_ms)
-            .collect();
-
-        if measurement_offsets.len() < 3 {
-            let reason = format!(
-                "只偵測到 {} 拍有效回應，請確認麥克風音量或環境噪音後重試",
-                measurement_offsets.len()
-            );
-            events::emit_calibration_failed(
-                &app,
-                CalibrationFailedPayload {
-                    reason: reason.clone(),
-                },
-            );
-            return Err(AppError::Audio(reason));
-        }
-
-        let median_ms = compute_median(&measurement_offsets);
-
-        // 標記哪些拍被接受
-        for r in beat_results.iter_mut() {
-            r.accepted = !r.is_warmup
-                && r.detected
-                && (r.offset_ms - median_ms).abs() <= OUTLIER_THRESHOLD_MS;
-        }
-
-        // 逐拍 emit 事件（前端動畫補上即時回饋）
-        for r in &beat_results {
-            events::emit_calibration_beat(
-                &app,
-                CalibrationBeatPayload {
-                    beat_idx: r.beat_idx,
-                    is_warmup: r.is_warmup,
-                    detected: r.detected,
-                    accepted: r.accepted,
-                    offset_ms: r.offset_ms,
-                },
-            );
-        }
-
-        let accepted_offsets: Vec<f64> = beat_results
-            .iter()
-            .filter(|r| r.accepted)
-            .map(|r| r.offset_ms)
-            .collect();
-
-        if accepted_offsets.len() < 3 {
-            let reason = format!(
-                "離群值過多，僅 {} 拍合格（中位數 {:.0}ms）。請保持節奏穩定後重試",
-                accepted_offsets.len(),
-                median_ms
-            );
-            events::emit_calibration_failed(
-                &app,
-                CalibrationFailedPayload {
-                    reason: reason.clone(),
-                },
-            );
-            return Err(AppError::Audio(reason));
-        }
-
-        let mean_ms: f64 = accepted_offsets.iter().sum::<f64>() / accepted_offsets.len() as f64;
-
-        let variance: f64 = accepted_offsets
-            .iter()
-            .map(|&o| (o - mean_ms).powi(2))
-            .sum::<f64>()
-            / accepted_offsets.len() as f64;
-        let std_dev_ms = variance.sqrt();
-
-        // 最終延遲值：負數視為 0（人類提前拍不應補償成負）
-        let latency_ms = mean_ms.max(0.0).round() as u64;
-
-        events::emit_calibration_complete(
-            &app,
-            CalibrationCompletePayload {
-                latency_ms,
-                valid_beats: accepted_offsets.len() as u8,
-                measurement_beats: MEASUREMENT_BEATS as u8,
-                std_dev_ms,
-            },
-        );
-
-        Ok(latency_ms)
+impl Default for AudioEngine {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 // ── 校準輔助函式 ──────────────────────────────────────────────────
 
 /// 校準量測中單一拍的結果
-struct BeatResult {
-    beat_idx: u8,
-    is_warmup: bool,
-    detected: bool,
-    #[allow(dead_code)]
-    offset_samples: i64,
-    offset_ms: f64,
-    accepted: bool,
+#[derive(Debug, Clone)]
+struct SystemLatencyCapture {
+    input_latency_ms: Vec<f64>,
+    output_latency_ms: Vec<f64>,
+    input_buffer_ms: f64,
+    output_buffer_ms: f64,
 }
 
-/// 產生木魚式短促 click（40ms，雙頻 + 指數衰減包絡）。
-/// 比 1000Hz sine beep 更具瞬態感，使用者更容易精準對拍。
-fn generate_woodblock_click(sample_rate: u32) -> Vec<f32> {
-    let len = (sample_rate as f32 * 0.040) as usize; // 40ms
-    let freq1 = 1800.0_f32;
-    let freq2 = 2400.0_f32;
-    let two_pi = 2.0 * std::f32::consts::PI;
-
-    (0..len)
-        .map(|i| {
-            let t = i as f32 / sample_rate as f32;
-            // 指數衰減包絡，attack 極短（< 1ms）
-            let env = (-t * 80.0).exp();
-            let s1 = (two_pi * freq1 * t).sin();
-            let s2 = (two_pi * freq2 * t).sin();
-            env * (s1 * 0.6 + s2 * 0.4) * 0.85
-        })
-        .collect()
+#[derive(Debug, Clone)]
+struct RhythmVoiceCapture {
+    samples: Vec<f32>,
+    sample_rate: u32,
+    output_vs_input_ms: f64,
 }
 
-/// 計算切片的 RMS。
-fn compute_rms(samples: &[f32]) -> f32 {
+fn set_system_latency_error(target: &Arc<Mutex<Option<String>>>, message: impl Into<String>) {
+    if let Ok(mut slot) = target.lock() {
+        if slot.is_none() {
+            *slot = Some(message.into());
+        }
+    }
+}
+
+fn duration_to_ms(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1000.0
+}
+
+fn push_latency_sample(target: &Arc<Mutex<Vec<f64>>>, value_ms: f64) {
+    if !value_ms.is_finite() || !(0.0..=SYSTEM_LATENCY_MAX_MS).contains(&value_ms) {
+        return;
+    }
+    if let Ok(mut values) = target.lock() {
+        values.push(value_ms);
+    }
+}
+
+fn stream_buffer_ms(config: &cpal::StreamConfig) -> f64 {
+    match config.buffer_size {
+        cpal::BufferSize::Fixed(frames) => {
+            frames as f64 / config.sample_rate.0.max(1) as f64 * 1000.0
+        }
+        cpal::BufferSize::Default => 0.0,
+    }
+}
+
+fn sample_range(values: &[f64]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    for &value in values {
+        if value.is_finite() {
+            min = min.min(value);
+            max = max.max(value);
+        }
+    }
+    if min.is_finite() && max.is_finite() {
+        max - min
+    } else {
+        0.0
+    }
+}
+
+fn system_latency_component(samples: &[f64], buffer_ms: f64) -> (f64, bool, bool) {
+    if !samples.is_empty() {
+        return (compute_median(samples), true, false);
+    }
+    if buffer_ms.is_finite() && buffer_ms > 0.0 {
+        return (buffer_ms, false, true);
+    }
+    (SYSTEM_LATENCY_DEFAULT_MS * 0.5, false, false)
+}
+
+fn summarize_system_latency_estimate(capture: &SystemLatencyCapture) -> CalibrationCompletePayload {
+    let (input_ms, input_has_timestamp, input_has_buffer) =
+        system_latency_component(&capture.input_latency_ms, capture.input_buffer_ms);
+    let (output_ms, output_has_timestamp, output_has_buffer) =
+        system_latency_component(&capture.output_latency_ms, capture.output_buffer_ms);
+    let latency_ms = (input_ms + output_ms).clamp(0.0, SYSTEM_LATENCY_MAX_MS);
+    let valid_samples = capture.input_latency_ms.len() + capture.output_latency_ms.len();
+    let timestamp_count = usize::from(input_has_timestamp) + usize::from(output_has_timestamp);
+    let buffer_count = usize::from(input_has_buffer) + usize::from(output_has_buffer);
+    let diagnostic = if timestamp_count == 2 {
+        "system_timestamp"
+    } else if timestamp_count == 1 {
+        "partial_system_timestamp"
+    } else if buffer_count > 0 {
+        "buffer_estimate"
+    } else {
+        "system_default"
+    };
+    let std_dev_ms = (compute_std_dev(&capture.input_latency_ms).powi(2)
+        + compute_std_dev(&capture.output_latency_ms).powi(2))
+    .sqrt();
+    let round_spread_ms =
+        sample_range(&capture.input_latency_ms).max(sample_range(&capture.output_latency_ms));
+    let sample_count = valid_samples.min(u8::MAX as usize) as u8;
+
+    CalibrationCompletePayload {
+        mode: CALIBRATION_MODE_SYSTEM.to_string(),
+        latency_ms: latency_ms.round() as u64,
+        confidence: "estimated".to_string(),
+        rounds_used: 1,
+        valid_beats: sample_count,
+        measurement_beats: sample_count,
+        std_dev_ms,
+        round_spread_ms,
+        applied_recommended: diagnostic != "system_default",
+        diagnostic: diagnostic.to_string(),
+    }
+}
+
+fn summarize_rhythm_voice_latency(capture: &RhythmVoiceCapture) -> CalibrationCompletePayload {
+    let sample_rate = capture.sample_rate.max(1);
+    let noise_floor = calibration_noise_floor(&capture.samples, sample_rate);
+    let mut latencies = Vec::new();
+
+    for beat in RHYTHM_VOICE_WARMUP_BEATS..RHYTHM_VOICE_TOTAL_BEATS {
+        let expected_ms = capture.output_vs_input_ms
+            + RHYTHM_VOICE_PRE_ROLL_MS
+            + beat as f64 * RHYTHM_VOICE_BEAT_INTERVAL_MS;
+        let search_start_ms = (expected_ms - RHYTHM_VOICE_SEARCH_EARLY_MS).max(0.0);
+        let search_end_ms = expected_ms + RHYTHM_VOICE_SEARCH_LATE_MS;
+        let search_start = ms_to_sample(search_start_ms, sample_rate);
+        let search_end = ms_to_sample(search_end_ms, sample_rate).min(capture.samples.len());
+
+        if let Some(onset) = detect_voice_onset(
+            &capture.samples,
+            sample_rate,
+            search_start,
+            search_end,
+            noise_floor,
+        ) {
+            let onset_ms = onset as f64 / sample_rate as f64 * 1000.0;
+            let latency_ms = onset_ms - expected_ms;
+            if (-120.0..=SYSTEM_LATENCY_MAX_MS + 100.0).contains(&latency_ms) {
+                latencies.push(latency_ms);
+            }
+        }
+    }
+
+    let valid_count = latencies.len();
+    let suggested_ms = if valid_count == 0 {
+        0.0
+    } else {
+        compute_median(&latencies).clamp(0.0, SYSTEM_LATENCY_MAX_MS)
+    };
+    let std_dev_ms = compute_std_dev(&latencies);
+    let spread_ms = sample_range(&latencies);
+    let (confidence, applied_recommended, diagnostic) =
+        if valid_count >= 7 && std_dev_ms <= 20.0 && spread_ms <= 55.0 {
+            ("high", true, "rhythm_voice_detected")
+        } else if valid_count >= 5 && std_dev_ms <= 35.0 && spread_ms <= 90.0 {
+            ("medium", true, "rhythm_voice_detected")
+        } else if valid_count == 0 && noise_floor > 0.035 {
+            ("low", false, "rhythm_voice_noisy_environment")
+        } else if valid_count == 0 {
+            ("low", false, "rhythm_voice_too_quiet")
+        } else if valid_count < 5 {
+            ("low", false, "rhythm_voice_too_few")
+        } else {
+            ("low", false, "rhythm_voice_unstable")
+        };
+
+    CalibrationCompletePayload {
+        mode: CALIBRATION_MODE_RHYTHM_VOICE.to_string(),
+        latency_ms: suggested_ms.round() as u64,
+        confidence: confidence.to_string(),
+        rounds_used: 1,
+        valid_beats: valid_count.min(u8::MAX as usize) as u8,
+        measurement_beats: RHYTHM_VOICE_MEASUREMENT_BEATS as u8,
+        std_dev_ms,
+        round_spread_ms: spread_ms,
+        applied_recommended,
+        diagnostic: diagnostic.to_string(),
+    }
+}
+
+fn calibration_noise_floor(samples: &[f32], sample_rate: u32) -> f64 {
+    let sample_count = ms_to_sample(300.0, sample_rate).min(samples.len());
+    if sample_count == 0 {
+        return 0.001;
+    }
+    slice_rms(&samples[..sample_count]).max(0.001)
+}
+
+fn detect_voice_onset(
+    samples: &[f32],
+    sample_rate: u32,
+    start: usize,
+    end: usize,
+    noise_floor: f64,
+) -> Option<usize> {
+    let window = ms_to_sample(12.0, sample_rate).max(16);
+    let hop = ms_to_sample(4.0, sample_rate).max(1);
+    let prev_window = ms_to_sample(42.0, sample_rate).max(window);
+    if start >= end || end.saturating_sub(start) < window {
+        return None;
+    }
+
+    let threshold = (noise_floor * 4.0).max(0.006);
+    let peak_threshold = threshold * 1.8;
+    let search_end = end.saturating_sub(window);
+    let mut pos = start.max(prev_window);
+    while pos <= search_end {
+        let current = &samples[pos..pos + window];
+        let rms = slice_rms(current);
+        let peak = slice_peak(current);
+        let prev_start = pos.saturating_sub(prev_window);
+        let prev_rms = slice_rms(&samples[prev_start..pos])
+            .max(noise_floor)
+            .max(0.000_1);
+        let rise = rms / prev_rms;
+
+        if rms >= threshold && peak >= peak_threshold && rise >= 1.45 {
+            return Some(pos);
+        }
+        pos += hop;
+    }
+    None
+}
+
+fn slice_rms(samples: &[f32]) -> f64 {
     if samples.is_empty() {
         return 0.0;
     }
-    let sum_sq: f32 = samples.iter().map(|s| s * s).sum();
-    (sum_sq / samples.len() as f32).sqrt()
+    let sum = samples
+        .iter()
+        .map(|&sample| {
+            let v = sample as f64;
+            v * v
+        })
+        .sum::<f64>();
+    (sum / samples.len() as f64).sqrt()
 }
 
-/// 計算 f64 切片的中位數（不修改原資料）。
+fn slice_peak(samples: &[f32]) -> f64 {
+    samples
+        .iter()
+        .map(|sample| sample.abs() as f64)
+        .fold(0.0, f64::max)
+}
+
+fn ms_to_sample(ms: f64, sample_rate: u32) -> usize {
+    ((ms.max(0.0) / 1000.0) * sample_rate.max(1) as f64).round() as usize
+}
+
+fn capture_rhythm_voice_calibration(
+    input_device_idx: Option<usize>,
+    output_device_idx: Option<usize>,
+    preferred_sample_rate: u32,
+) -> Result<RhythmVoiceCapture, AppError> {
+    let host = cpal::default_host();
+    let output_device = output_device_idx
+        .and_then(|idx| {
+            host.output_devices()
+                .ok()
+                .and_then(|mut devs| devs.nth(idx))
+        })
+        .or_else(|| host.default_output_device())
+        .ok_or_else(|| {
+            AppError::Audio("No output device available for rhythm voice calibration".to_string())
+        })?;
+    let input_device = input_device_idx
+        .and_then(|idx| host.input_devices().ok().and_then(|mut devs| devs.nth(idx)))
+        .or_else(|| host.default_input_device())
+        .ok_or_else(|| {
+            AppError::Audio("No input device available for rhythm voice calibration".to_string())
+        })?;
+
+    let output_config =
+        build_output_config(&output_device, preferred_sample_rate).map_err(AppError::Audio)?;
+    let input_config =
+        build_input_config(&input_device, output_config.sample_rate.0).map_err(AppError::Audio)?;
+    let sample_rate = input_config.sample_rate.0.max(1);
+    let output_sample_rate = output_config.sample_rate.0.max(1);
+    let input_channels = input_config.channels.max(1) as usize;
+    let output_channels = output_config.channels.max(1) as usize;
+    let total_duration_ms = rhythm_voice_total_duration_ms();
+    let max_recorded_samples = ms_to_sample(
+        total_duration_ms + RHYTHM_VOICE_MAX_EXTRA_WAIT_MS as f64,
+        sample_rate,
+    );
+    let total_output_frames = ms_to_sample(total_duration_ms, output_sample_rate) as u64;
+
+    let recorded = Arc::new(Mutex::new(Vec::<f32>::with_capacity(max_recorded_samples)));
+    let input_callbacks = Arc::new(AtomicU32::new(0));
+    let output_callbacks = Arc::new(AtomicU32::new(0));
+    let output_frames = Arc::new(AtomicU64::new(0));
+    let running = Arc::new(AtomicBool::new(true));
+    let error_reason = Arc::new(Mutex::new(None::<String>));
+    let first_input_at = Arc::new(Mutex::new(None::<Instant>));
+    let first_output_at = Arc::new(Mutex::new(None::<Instant>));
+
+    let recorded_in = recorded.clone();
+    let input_callbacks_in = input_callbacks.clone();
+    let first_input_in = first_input_at.clone();
+    let running_in_err = running.clone();
+    let error_in_err = error_reason.clone();
+    let input_stream = input_device
+        .build_input_stream(
+            &input_config,
+            move |data: &[f32], _info| {
+                input_callbacks_in.fetch_add(1, Ordering::Relaxed);
+                if let Ok(mut first) = first_input_in.lock() {
+                    if first.is_none() {
+                        *first = Some(Instant::now());
+                    }
+                }
+
+                let frame_count = data.len() / input_channels;
+                if let Ok(mut buffer) = recorded_in.lock() {
+                    let remaining_frames = max_recorded_samples.saturating_sub(buffer.len());
+                    let frames_to_take = remaining_frames.min(frame_count);
+                    for frame in 0..frames_to_take {
+                        let mut mono = 0.0_f32;
+                        for ch in 0..input_channels {
+                            mono += data[frame * input_channels + ch];
+                        }
+                        buffer.push(mono / input_channels as f32);
+                    }
+                }
+            },
+            move |err| {
+                set_system_latency_error(
+                    &error_in_err,
+                    format!("Rhythm voice input stream error: {err}"),
+                );
+                running_in_err.store(false, Ordering::Relaxed);
+            },
+            None,
+        )
+        .map_err(|err| {
+            AppError::Audio(format!("Could not build rhythm voice input stream: {err}"))
+        })?;
+
+    let output_callbacks_out = output_callbacks.clone();
+    let output_frames_out = output_frames.clone();
+    let first_output_out = first_output_at.clone();
+    let running_out = running.clone();
+    let running_out_err = running.clone();
+    let error_out_err = error_reason.clone();
+    let output_stream = output_device
+        .build_output_stream(
+            &output_config,
+            move |data: &mut [f32], _info| {
+                output_callbacks_out.fetch_add(1, Ordering::Relaxed);
+                if let Ok(mut first) = first_output_out.lock() {
+                    if first.is_none() {
+                        *first = Some(Instant::now());
+                    }
+                }
+
+                let frame_count = data.len() / output_channels;
+                let start_frame =
+                    output_frames_out.fetch_add(frame_count as u64, Ordering::Relaxed);
+                for frame in 0..frame_count {
+                    let absolute_frame = start_frame + frame as u64;
+                    let sample = rhythm_voice_click_sample(absolute_frame, output_sample_rate);
+                    for ch in 0..output_channels {
+                        data[frame * output_channels + ch] = sample;
+                    }
+                }
+                if start_frame + frame_count as u64 >= total_output_frames {
+                    running_out.store(false, Ordering::Relaxed);
+                }
+            },
+            move |err| {
+                set_system_latency_error(
+                    &error_out_err,
+                    format!("Rhythm voice output stream error: {err}"),
+                );
+                running_out_err.store(false, Ordering::Relaxed);
+            },
+            None,
+        )
+        .map_err(|err| {
+            AppError::Audio(format!("Could not build rhythm voice output stream: {err}"))
+        })?;
+
+    input_stream.play().map_err(|err| {
+        AppError::Audio(format!("Could not start rhythm voice input stream: {err}"))
+    })?;
+
+    let input_wait_start = Instant::now();
+    while input_callbacks.load(Ordering::Relaxed) == 0 {
+        if let Some(reason) = take_latency_error(&error_reason)? {
+            drop(input_stream);
+            return Err(AppError::Audio(reason));
+        }
+        if input_wait_start.elapsed() >= Duration::from_millis(RHYTHM_VOICE_INPUT_START_TIMEOUT_MS)
+        {
+            drop(input_stream);
+            return Err(AppError::Audio("rhythm_voice_input_timeout".to_string()));
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    output_stream.play().map_err(|err| {
+        AppError::Audio(format!("Could not start rhythm voice output stream: {err}"))
+    })?;
+
+    let started = Instant::now();
+    let max_wait =
+        Duration::from_millis(total_duration_ms.round() as u64 + RHYTHM_VOICE_MAX_EXTRA_WAIT_MS);
+    while running.load(Ordering::Relaxed) {
+        if let Some(reason) = take_latency_error(&error_reason)? {
+            drop(input_stream);
+            drop(output_stream);
+            return Err(AppError::Audio(reason));
+        }
+        if started.elapsed() >= max_wait {
+            drop(input_stream);
+            drop(output_stream);
+            return Err(AppError::Audio("rhythm_voice_stream_timeout".to_string()));
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    drop(input_stream);
+    drop(output_stream);
+
+    if let Some(reason) = take_latency_error(&error_reason)? {
+        return Err(AppError::Audio(reason));
+    }
+    if output_callbacks.load(Ordering::Relaxed) == 0 {
+        return Err(AppError::Audio("rhythm_voice_output_timeout".to_string()));
+    }
+
+    let samples = recorded
+        .lock()
+        .map(|values| values.clone())
+        .map_err(|err| AppError::Internal(err.to_string()))?;
+    let first_input = first_input_at
+        .lock()
+        .map_err(|err| AppError::Internal(err.to_string()))?
+        .ok_or_else(|| AppError::Audio("rhythm_voice_input_timeout".to_string()))?;
+    let first_output = first_output_at
+        .lock()
+        .map_err(|err| AppError::Internal(err.to_string()))?
+        .ok_or_else(|| AppError::Audio("rhythm_voice_output_timeout".to_string()))?;
+    let output_vs_input_ms = instant_delta_ms(first_output, first_input);
+
+    Ok(RhythmVoiceCapture {
+        samples,
+        sample_rate,
+        output_vs_input_ms,
+    })
+}
+
+fn take_latency_error(target: &Arc<Mutex<Option<String>>>) -> Result<Option<String>, AppError> {
+    target
+        .lock()
+        .map(|mut slot| slot.take())
+        .map_err(|err| AppError::Internal(err.to_string()))
+}
+
+fn instant_delta_ms(later_or_earlier: Instant, base: Instant) -> f64 {
+    if later_or_earlier >= base {
+        later_or_earlier.duration_since(base).as_secs_f64() * 1000.0
+    } else {
+        -(base.duration_since(later_or_earlier).as_secs_f64() * 1000.0)
+    }
+}
+
+fn rhythm_voice_total_duration_ms() -> f64 {
+    RHYTHM_VOICE_PRE_ROLL_MS
+        + RHYTHM_VOICE_TOTAL_BEATS as f64 * RHYTHM_VOICE_BEAT_INTERVAL_MS
+        + RHYTHM_VOICE_POST_ROLL_MS
+}
+
+fn rhythm_voice_click_sample(frame: u64, sample_rate: u32) -> f32 {
+    let pre_roll_frames = ms_to_sample(RHYTHM_VOICE_PRE_ROLL_MS, sample_rate) as u64;
+    if frame < pre_roll_frames {
+        return 0.0;
+    }
+
+    let interval_frames = ms_to_sample(RHYTHM_VOICE_BEAT_INTERVAL_MS, sample_rate) as u64;
+    let click_frames = ms_to_sample(32.0, sample_rate) as u64;
+    if interval_frames == 0 || click_frames == 0 {
+        return 0.0;
+    }
+
+    let relative_frame = frame - pre_roll_frames;
+    let beat = (relative_frame / interval_frames) as usize;
+    if beat >= RHYTHM_VOICE_TOTAL_BEATS {
+        return 0.0;
+    }
+
+    let offset = relative_frame % interval_frames;
+    if offset >= click_frames {
+        return 0.0;
+    }
+
+    let t = offset as f32 / sample_rate.max(1) as f32;
+    let phase = 2.0 * std::f32::consts::PI * 880.0 * t;
+    let envelope = 1.0 - (offset as f32 / click_frames as f32);
+    let gain = if beat < RHYTHM_VOICE_WARMUP_BEATS {
+        0.16
+    } else {
+        0.22
+    };
+    phase.sin() * envelope * gain
+}
+
+fn capture_system_latency(
+    input_device_idx: Option<usize>,
+    output_device_idx: Option<usize>,
+    preferred_sample_rate: u32,
+) -> Result<SystemLatencyCapture, AppError> {
+    let host = cpal::default_host();
+    let output_device = output_device_idx
+        .and_then(|idx| {
+            host.output_devices()
+                .ok()
+                .and_then(|mut devs| devs.nth(idx))
+        })
+        .or_else(|| host.default_output_device())
+        .ok_or_else(|| {
+            AppError::Audio("No output device available for latency calibration".to_string())
+        })?;
+    let input_device = input_device_idx
+        .and_then(|idx| host.input_devices().ok().and_then(|mut devs| devs.nth(idx)))
+        .or_else(|| host.default_input_device())
+        .ok_or_else(|| {
+            AppError::Audio("No input device available for latency calibration".to_string())
+        })?;
+
+    let output_config =
+        build_output_config(&output_device, preferred_sample_rate).map_err(AppError::Audio)?;
+    let input_config =
+        build_input_config(&input_device, output_config.sample_rate.0).map_err(AppError::Audio)?;
+
+    let input_latency_ms = Arc::new(Mutex::new(Vec::<f64>::new()));
+    let output_latency_ms = Arc::new(Mutex::new(Vec::<f64>::new()));
+    let input_callbacks = Arc::new(AtomicU32::new(0));
+    let output_callbacks = Arc::new(AtomicU32::new(0));
+    let running = Arc::new(AtomicBool::new(true));
+    let error_reason = Arc::new(Mutex::new(None::<String>));
+
+    let input_latency_in = input_latency_ms.clone();
+    let input_callbacks_in = input_callbacks.clone();
+    let running_in_err = running.clone();
+    let error_in_err = error_reason.clone();
+    let input_stream = input_device
+        .build_input_stream(
+            &input_config,
+            move |_data: &[f32], info| {
+                input_callbacks_in.fetch_add(1, Ordering::Relaxed);
+                let timestamp = info.timestamp();
+                if let Some(duration) = timestamp.callback.duration_since(&timestamp.capture) {
+                    push_latency_sample(&input_latency_in, duration_to_ms(duration));
+                }
+            },
+            move |err| {
+                set_system_latency_error(
+                    &error_in_err,
+                    format!("System latency input stream error: {err}"),
+                );
+                running_in_err.store(false, Ordering::Relaxed);
+            },
+            None,
+        )
+        .map_err(|err| AppError::Audio(format!("Could not build latency input stream: {err}")))?;
+
+    let output_latency_out = output_latency_ms.clone();
+    let output_callbacks_out = output_callbacks.clone();
+    let running_out_err = running.clone();
+    let error_out_err = error_reason.clone();
+    let output_stream = output_device
+        .build_output_stream(
+            &output_config,
+            move |data: &mut [f32], info| {
+                data.fill(0.0);
+                output_callbacks_out.fetch_add(1, Ordering::Relaxed);
+                let timestamp = info.timestamp();
+                if let Some(duration) = timestamp.playback.duration_since(&timestamp.callback) {
+                    push_latency_sample(&output_latency_out, duration_to_ms(duration));
+                }
+            },
+            move |err| {
+                set_system_latency_error(
+                    &error_out_err,
+                    format!("System latency output stream error: {err}"),
+                );
+                running_out_err.store(false, Ordering::Relaxed);
+            },
+            None,
+        )
+        .map_err(|err| AppError::Audio(format!("Could not build latency output stream: {err}")))?;
+
+    input_stream
+        .play()
+        .map_err(|err| AppError::Audio(format!("Could not start latency input stream: {err}")))?;
+    output_stream
+        .play()
+        .map_err(|err| AppError::Audio(format!("Could not start latency output stream: {err}")))?;
+
+    let started = Instant::now();
+    let collect_for = Duration::from_millis(SYSTEM_LATENCY_COLLECT_MS);
+    let max_wait = Duration::from_millis(SYSTEM_LATENCY_MAX_WAIT_MS);
+    while running.load(Ordering::Relaxed) {
+        let elapsed = started.elapsed();
+        let enough_callbacks = input_callbacks.load(Ordering::Relaxed)
+            >= SYSTEM_LATENCY_MIN_CALLBACKS
+            && output_callbacks.load(Ordering::Relaxed) >= SYSTEM_LATENCY_MIN_CALLBACKS;
+        if elapsed >= collect_for && enough_callbacks {
+            break;
+        }
+        if elapsed >= max_wait {
+            break;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    drop(input_stream);
+    drop(output_stream);
+
+    if let Ok(mut slot) = error_reason.lock() {
+        if let Some(reason) = slot.take() {
+            return Err(AppError::Audio(reason));
+        }
+    }
+
+    let input_latency_ms = input_latency_ms
+        .lock()
+        .map(|values| values.clone())
+        .map_err(|err| AppError::Internal(err.to_string()))?;
+    let output_latency_ms = output_latency_ms
+        .lock()
+        .map(|values| values.clone())
+        .map_err(|err| AppError::Internal(err.to_string()))?;
+
+    Ok(SystemLatencyCapture {
+        input_latency_ms,
+        output_latency_ms,
+        input_buffer_ms: stream_buffer_ms(&input_config),
+        output_buffer_ms: stream_buffer_ms(&output_config),
+    })
+}
+
 fn compute_median(values: &[f64]) -> f64 {
     if values.is_empty() {
         return 0.0;
@@ -1445,75 +1885,26 @@ fn compute_median(values: &[f64]) -> f64 {
     let mut sorted: Vec<f64> = values.to_vec();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let mid = sorted.len() / 2;
-    if sorted.len() % 2 == 0 {
+    if sorted.len() & 1 == 0 {
         (sorted[mid - 1] + sorted[mid]) / 2.0
     } else {
         sorted[mid]
     }
 }
 
-/// 在指定樣本切片內偵測 onset（能量上升點）。
-///
-/// 演算法：
-/// 1. 用 5ms 滑動視窗計算 short-time RMS（hop = 8 樣本）
-/// 2. 從頭找第一個「相對前 4ms 上升幅度」最大且超過 noise_floor*3 的位置
-/// 3. 回傳該位置的樣本 index（相對於切片起點）
-///
-/// 為什麼用「上升幅度」而非「絕對最大」：木魚 click 的瞬態能量上升比後續尾音更具
-/// 時間定位精度，能避免「最大值漂移到尾音中段」的偏差。
-fn detect_onset_in_window(slice: &[f32], sample_rate: u32, noise_floor: f32) -> Option<usize> {
-    let win = ((sample_rate as f32 * 0.005) as usize).max(8);
-    let hop = 8_usize;
-    let lookback_frames = ((sample_rate as f32 * 0.004) as usize / hop).max(2);
-
-    if slice.len() < win + hop * lookback_frames * 2 {
-        return None;
+fn compute_std_dev(values: &[f64]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
     }
-
-    // 預先計算 hop 步長的 RMS envelope
-    let n_frames = (slice.len().saturating_sub(win)) / hop;
-    if n_frames <= lookback_frames {
-        return None;
-    }
-
-    let mut env = Vec::with_capacity(n_frames);
-    for f in 0..n_frames {
-        let start = f * hop;
-        let end = start + win;
-        let mut sum_sq = 0.0_f32;
-        for s in &slice[start..end] {
-            sum_sq += s * s;
-        }
-        env.push((sum_sq / win as f32).sqrt());
-    }
-
-    let threshold = noise_floor * 3.0;
-    let mut best_rise = 0.0_f32;
-    let mut best_frame: Option<usize> = None;
-
-    for f in lookback_frames..env.len() {
-        if env[f] < threshold {
-            continue;
-        }
-        let rise = env[f] - env[f - lookback_frames];
-        if rise > best_rise {
-            best_rise = rise;
-            best_frame = Some(f);
-        }
-    }
-
-    // 至少要有可量測的上升量；rise 太小代表沒有真正的 onset
-    let min_rise = noise_floor * 2.0;
-    best_frame.filter(|_| best_rise > min_rise).map(|f| f * hop)
+    let mean = values.iter().sum::<f64>() / values.len() as f64;
+    let variance = values
+        .iter()
+        .map(|&value| (value - mean).powi(2))
+        .sum::<f64>()
+        / values.len() as f64;
+    variance.sqrt()
 }
 
-// ── 共用 output callback 邏輯 ─────────────────────────────────────
-
-/// 🟡 Y4 修正：抽取 playback / recording 共用的 backing 播放 callback 邏輯。
-///
-/// 回傳值：(new_pos, rms)，讓呼叫方做後續更新。
-/// - `vocal_snapshot`：回放模式時傳入已錄製的人聲；錄音模式傳 None
-/// - `latency_ms` / `source_sr`：用於回放模式人聲混音的延遲補償
 #[allow(clippy::too_many_arguments)]
 fn fill_backing_output(
     data: &mut [f32],
@@ -1705,6 +2096,7 @@ fn compute_auto_balance_vocal_gain<F>(
     backing_channels: usize,
     frame_count: usize,
     backing_gain: f32,
+    vocal_target_ratio: f32,
     mut vocal_at: F,
 ) -> f32
 where
@@ -1715,6 +2107,7 @@ where
         backing_channels,
         frame_count,
         backing_gain,
+        vocal_target_ratio,
         |i| {
             let sample = vocal_at(i);
             [sample, sample]
@@ -1727,6 +2120,7 @@ fn compute_auto_balance_vocal_gain_from_mix<F>(
     backing_channels: usize,
     frame_count: usize,
     backing_gain: f32,
+    vocal_target_ratio: f32,
     mut vocal_mix_at: F,
 ) -> f32
 where
@@ -1767,9 +2161,8 @@ where
     let b_rms = (sum_b_sq / n as f32).sqrt();
     let v_rms = (sum_v_sq / n as f32).sqrt();
     if v_rms > 0.001 {
-        let desired_gain = ((b_rms * AUTO_BALANCE_VOCAL_TARGET_RATIO) / v_rms)
-            .max(0.5)
-            .min(AUTO_BALANCE_MAX_VOCAL_GAIN);
+        let target_ratio = vocal_target_ratio.clamp(0.5, AUTO_BALANCE_MAX_VOCAL_TARGET_RATIO);
+        let desired_gain = ((b_rms * target_ratio) / v_rms).clamp(0.5, AUTO_BALANCE_MAX_VOCAL_GAIN);
         let robust_peak = histogram_percentile_peak(
             &vocal_peak_histogram,
             n,
@@ -1783,9 +2176,7 @@ where
             AUTO_BALANCE_ROBUST_PEAK_PERCENTILE,
         );
         let peak_safe_gain = if robust_peak > 0.001 {
-            (AUTO_BALANCE_ROBUST_PEAK_CEILING / robust_peak)
-                .max(0.5)
-                .min(AUTO_BALANCE_MAX_VOCAL_GAIN)
+            (AUTO_BALANCE_ROBUST_PEAK_CEILING / robust_peak).clamp(0.5, AUTO_BALANCE_MAX_VOCAL_GAIN)
         } else {
             AUTO_BALANCE_MAX_VOCAL_GAIN
         };
@@ -1836,7 +2227,10 @@ fn histogram_percentile_peak(
     max_value
 }
 
-const AUTO_BALANCE_VOCAL_TARGET_RATIO: f32 = 3.35;
+const AUTO_BALANCE_VOCAL_NATURAL_RATIO: f32 = 1.995_262_4;
+const AUTO_BALANCE_VOCAL_CLEAR_RATIO: f32 = 2.818_383;
+const AUTO_BALANCE_VOCAL_FORWARD_RATIO: f32 = 3.35;
+const AUTO_BALANCE_MAX_VOCAL_TARGET_RATIO: f32 = AUTO_BALANCE_VOCAL_FORWARD_RATIO;
 const AUTO_BALANCE_MAX_VOCAL_GAIN: f32 = 28.0;
 const AUTO_BALANCE_ROBUST_PEAK_PERCENTILE: f32 = 0.995;
 const AUTO_BALANCE_ROBUST_PEAK_CEILING: f32 = 0.58;
@@ -1859,6 +2253,15 @@ fn auto_balance_backing_gain(auto_balance: bool) -> f32 {
 }
 
 #[inline]
+fn auto_balance_vocal_target_ratio(preset: &str) -> f32 {
+    match preset {
+        "natural" => AUTO_BALANCE_VOCAL_NATURAL_RATIO,
+        "clear" => AUTO_BALANCE_VOCAL_CLEAR_RATIO,
+        _ => AUTO_BALANCE_VOCAL_FORWARD_RATIO,
+    }
+}
+
+#[inline]
 fn apply_vocal_mix_gain(vocal_mix: [f32; 2], gain: f32) -> [f32; 2] {
     limit_stereo_peak(
         [vocal_mix[0] * gain, vocal_mix[1] * gain],
@@ -1875,7 +2278,7 @@ fn process_vocal_for_mix(sample: f32, vocal_gain: f32) -> [f32; 2] {
 fn vocal_mix_for_channel(vocal_mix: [f32; 2], ch: usize, out_channels: usize) -> f32 {
     if out_channels <= 1 {
         (vocal_mix[0] + vocal_mix[1]) * 0.5
-    } else if ch % 2 == 0 {
+    } else if ch & 1 == 0 {
         vocal_mix[0]
     } else {
         vocal_mix[1]
@@ -2085,6 +2488,7 @@ fn run_playback(
     duration_s: f64,
     mix_vocal: bool,
     auto_balance: bool,
+    auto_balance_vocal_preset: String,
     output_device_idx: Option<usize>,
     latency_ms: f64,
     shared: SharedState,
@@ -2129,6 +2533,7 @@ fn run_playback(
         None
     };
     let playback_backing_gain = auto_balance_backing_gain(auto_balance);
+    let playback_vocal_target_ratio = auto_balance_vocal_target_ratio(&auto_balance_vocal_preset);
     let playback_vocal_gain = if auto_balance {
         vocal_snapshot
             .as_ref()
@@ -2143,6 +2548,7 @@ fn run_playback(
                     backing_channels,
                     frame_count,
                     initial_backing_gain,
+                    playback_vocal_target_ratio,
                     |i| sample_vocal_with_latency(vocal.as_slice(), i, latency_frames),
                 )
             })
@@ -2161,6 +2567,7 @@ fn run_playback(
     let loop_range = shared.loop_range.clone();
     let speed_atomic = shared.speed.clone();
     let pitch_atomic = shared.pitch_semitones.clone();
+    let runtime_latency_ms = shared.runtime_latency_ms.clone();
 
     let backing_cb = backing.clone();
     let vocal_cb = vocal_snapshot.clone();
@@ -2288,6 +2695,9 @@ fn run_playback(
             let cur_speed = (f32::from_bits(speed_atomic.load(Ordering::Relaxed)) as f64).max(0.1);
             let cur_pitch_st = pitch_atomic.load(Ordering::Relaxed) as i32;
             let pitch_ratio = 2.0_f64.powf(cur_pitch_st as f64 / 12.0);
+            let latency_frames = f64::from_bits(runtime_latency_ms.load(Ordering::Relaxed))
+                / 1000.0
+                * source_sr as f64;
             // P0: pitch 變動 = transport discontinuity
             //   ring 裡 buffered 的是用舊 pitch_ratio 拉伸的音訊，consumer 改用新的
             //   combined_resample 去讀會輸出錯誤的 pitch/timing（~128-314ms glitch）。
@@ -2457,7 +2867,6 @@ fn run_playback(
 
                 let available_frames = local_buf.len() / backing_channels.max(1);
                 let vocal_ref = vocal_cb.as_ref().map(|v| v.as_slice());
-                let latency_frames = latency_ms / 1000.0 * source_sr as f64;
                 let guide_vol = f32::from_bits(guide_volume.load(Ordering::Relaxed));
                 let guide_ref = if guide_enabled.load(Ordering::Relaxed) && guide_vol > 0.0 {
                     guide_cb.as_ref()
@@ -2712,13 +3121,15 @@ fn run_playback(
                     use biquad::Biquad;
                     let wsola_frame_count = wsola_buf.len() / backing_channels;
                     for f in 0..wsola_frame_count {
-                        for src_ch in 0..backing_channels {
+                        for (src_ch, filters) in pitch_aa_filters
+                            .iter_mut()
+                            .enumerate()
+                            .take(backing_channels)
+                        {
                             let idx = f * backing_channels + src_ch;
                             let mut s = wsola_buf[idx];
-                            for stage in 0..5 {
-                                if let Some(ref mut filt) = pitch_aa_filters[src_ch][stage] {
-                                    s = filt.run(s);
-                                }
+                            for filt in filters.iter_mut().take(5).flatten() {
+                                s = filt.run(s);
                             }
                             wsola_buf[idx] = s;
                         }
@@ -2729,7 +3140,6 @@ fn run_playback(
                 let mut sum_sq = 0.0_f32;
                 let mut sample_count = 0_usize;
                 let vocal_ref = vocal_cb.as_ref().map(|v| v.as_slice());
-                let latency_frames = latency_ms / 1000.0 * source_sr as f64;
                 let guide_vol = f32::from_bits(guide_volume.load(Ordering::Relaxed));
                 let guide_ref = if guide_enabled.load(Ordering::Relaxed) && guide_vol > 0.0 {
                     guide_cb.as_ref()
@@ -3132,13 +3542,15 @@ fn stretch_producer_worker(
             use biquad::Biquad;
             let chunk_frames = chunk_buf.len() / backing_channels;
             for frame in 0..chunk_frames {
-                for src_ch in 0..backing_channels {
+                for (src_ch, filters) in output_resample_filters
+                    .iter_mut()
+                    .enumerate()
+                    .take(backing_channels)
+                {
                     let idx = frame * backing_channels + src_ch;
                     let mut s = chunk_buf[idx];
-                    for stage in 0..2 {
-                        if let Some(ref mut filt) = output_resample_filters[src_ch][stage] {
-                            s = filt.run(s);
-                        }
+                    for filt in filters.iter_mut().take(2).flatten() {
+                        s = filt.run(s);
                     }
                     chunk_buf[idx] = s;
                 }
@@ -3152,13 +3564,15 @@ fn stretch_producer_worker(
             use biquad::Biquad;
             let chunk_frames = chunk_buf.len() / backing_channels;
             for frame in 0..chunk_frames {
-                for src_ch in 0..backing_channels {
+                for (src_ch, filters) in pitch_aa_filters
+                    .iter_mut()
+                    .enumerate()
+                    .take(backing_channels)
+                {
                     let idx = frame * backing_channels + src_ch;
                     let mut s = chunk_buf[idx];
-                    for stage in 0..5 {
-                        if let Some(ref mut filt) = pitch_aa_filters[src_ch][stage] {
-                            s = filt.run(s);
-                        }
+                    for filt in filters.iter_mut().take(5).flatten() {
+                        s = filt.run(s);
                     }
                     chunk_buf[idx] = s;
                 }
@@ -3201,12 +3615,8 @@ fn build_preview_pitch_stream(
     let in_sr = input_config.sample_rate.0;
 
     // ── CREPE / YIN 選擇 ──
-    let crepe_model_dir = crepe_engine::find_crepe_model_dir();
-    let use_crepe = match pitch_engine_pref {
-        "crepe" => crepe_model_dir.is_some(),
-        "yin" => false,
-        _ => crepe_model_dir.is_some(),
-    };
+    let crepe_model_dir = selected_crepe_model_dir(pitch_engine_pref);
+    let use_crepe = crepe_model_dir.is_some();
     let crepe_model_path = crepe_model_dir.unwrap_or_default();
 
     // CREPE state
@@ -3499,7 +3909,11 @@ fn run_recording(
     let audio_ready_out = audio_ready.clone();
     let audio_ready_in = audio_ready.clone();
 
-    let out_err_fn = move |err| log::error!("Output stream error: {}", err);
+    let running_out_err = running.clone();
+    let out_err_fn = move |err| {
+        log::error!("Output stream error: {}", err);
+        running_out_err.store(false, Ordering::Relaxed);
+    };
 
     let output_stream = match output_device.build_output_stream(
         &output_config,
@@ -3571,7 +3985,11 @@ fn run_recording(
     let pitch_track_cb = pitch_track.clone();
     let pos_for_pitch = shared.playback_pos.clone();
 
-    let in_err_fn = move |err| log::error!("Input stream error: {}", err);
+    let running_in_err = running.clone();
+    let in_err_fn = move |err| {
+        log::error!("Input stream error: {}", err);
+        running_in_err.store(false, Ordering::Relaxed);
+    };
 
     // ── 重採樣 state ─────────────────────────────────────────────
     //
@@ -3659,12 +4077,8 @@ fn run_recording(
     //
     // Hop = 160 samples @16kHz = 10ms（與離線版相同），所以每次消耗 160 samples 後推論一次，
     // 不過即時模式為求簡潔，改用「累積滿 1024 就推論一次」的策略（= 64ms per frame）。
-    let crepe_model_dir = crepe_engine::find_crepe_model_dir();
-    let use_crepe = match pitch_engine_pref {
-        "crepe" => crepe_model_dir.is_some(), // 指定 CREPE 但模型不存在仍 fallback
-        "yin" => false,                       // 強制 YIN
-        _ => crepe_model_dir.is_some(),       // "auto"：有模型就用 CREPE
-    };
+    let crepe_model_dir = selected_crepe_model_dir(pitch_engine_pref);
+    let use_crepe = crepe_model_dir.is_some();
     let crepe_model_path = crepe_model_dir.unwrap_or_default();
 
     // 串流重採樣器：native SR → 16kHz
@@ -3984,7 +4398,7 @@ fn build_output_config(
             && c.min_sample_rate().0 <= preferred_sr
             && c.max_sample_rate().0 >= preferred_sr
         {
-            target = Some(c.clone());
+            target = Some(*c);
             break;
         }
     }
@@ -3993,7 +4407,7 @@ fn build_output_config(
     if target.is_none() {
         for c in &supported {
             if c.sample_format() == cpal::SampleFormat::F32 && c.channels() >= 2 {
-                target = Some(c.clone());
+                target = Some(*c);
                 break;
             }
         }
@@ -4006,7 +4420,7 @@ fn build_output_config(
                 && c.min_sample_rate().0 <= preferred_sr
                 && c.max_sample_rate().0 >= preferred_sr
             {
-                target = Some(c.clone());
+                target = Some(*c);
                 break;
             }
         }
@@ -4058,7 +4472,7 @@ fn build_input_config(
             && c.min_sample_rate().0 <= preferred_sr
             && c.max_sample_rate().0 >= preferred_sr
         {
-            target = Some(c.clone());
+            target = Some(*c);
             break;
         }
     }
@@ -4067,7 +4481,7 @@ fn build_input_config(
     if target.is_none() {
         for c in &supported {
             if c.min_sample_rate().0 <= preferred_sr && c.max_sample_rate().0 >= preferred_sr {
-                target = Some(c.clone());
+                target = Some(*c);
                 break;
             }
         }
@@ -4175,7 +4589,14 @@ mod tests {
         }
 
         let paths = engine
-            .export(dir.to_str().unwrap(), "normalized-stress", false, true, 0.0)
+            .export(
+                dir.to_str().unwrap(),
+                "normalized-stress",
+                false,
+                true,
+                "forward",
+                0.0,
+            )
             .unwrap();
         let reader = hound::WavReader::open(paths.mix_path).unwrap();
         let samples: Vec<f32> = reader
@@ -4237,7 +4658,14 @@ mod tests {
     fn auto_balance_gain_matches_backing_ratio() {
         let backing = vec![0.1_f32, 0.1, 0.1, 0.1];
         let vocal = [0.05_f32, 0.05];
-        let gain = compute_auto_balance_vocal_gain(&backing, 2, 2, 1.0, |i| vocal[i]);
+        let gain = compute_auto_balance_vocal_gain(
+            &backing,
+            2,
+            2,
+            1.0,
+            AUTO_BALANCE_VOCAL_FORWARD_RATIO,
+            |i| vocal[i],
+        );
         assert!(
             (gain - 6.7).abs() < 0.02,
             "expected 0.1 * 3.35 / 0.05 = 6.7, got {gain}"
@@ -4245,9 +4673,24 @@ mod tests {
     }
 
     #[test]
+    fn auto_balance_preset_ratios_match_expected_db_steps() {
+        assert!((auto_balance_vocal_target_ratio("natural") - 1.995_262_4).abs() < 1e-6);
+        assert!((auto_balance_vocal_target_ratio("clear") - 2.818_383).abs() < 1e-6);
+        assert!((auto_balance_vocal_target_ratio("forward") - 3.35).abs() < 1e-6);
+        assert!((auto_balance_vocal_target_ratio("unknown") - 3.35).abs() < 1e-6);
+    }
+
+    #[test]
     fn auto_balance_uses_robust_peak_headroom() {
         let backing = vec![0.5_f32; 24_000];
-        let gain = compute_auto_balance_vocal_gain(&backing, 2, 12_000, 1.0, |_| 0.3);
+        let gain = compute_auto_balance_vocal_gain(
+            &backing,
+            2,
+            12_000,
+            1.0,
+            AUTO_BALANCE_VOCAL_FORWARD_RATIO,
+            |_| 0.3,
+        );
 
         assert!(
             gain <= (AUTO_BALANCE_ROBUST_PEAK_CEILING / 0.3) + 0.05,
@@ -4259,7 +4702,14 @@ mod tests {
     fn auto_balance_lifts_quiet_vocal_without_excessive_gain() {
         let backing = vec![0.4_f32; 24_000];
         let backing_gain = AUTO_BALANCE_BACKING_GAIN;
-        let gain = compute_auto_balance_vocal_gain(&backing, 2, 12_000, backing_gain, |_| 0.02);
+        let gain = compute_auto_balance_vocal_gain(
+            &backing,
+            2,
+            12_000,
+            backing_gain,
+            AUTO_BALANCE_VOCAL_FORWARD_RATIO,
+            |_| 0.02,
+        );
         let mut sum_sq = 0.0_f32;
 
         for _ in 0..12_000 {
@@ -4285,7 +4735,14 @@ mod tests {
     #[test]
     fn auto_balance_peak_guard_prevents_overblown_vocal_waveform() {
         let backing = vec![0.5_f32; 24_000];
-        let gain = compute_auto_balance_vocal_gain(&backing, 2, 12_000, 1.0, |_| 0.7);
+        let gain = compute_auto_balance_vocal_gain(
+            &backing,
+            2,
+            12_000,
+            1.0,
+            AUTO_BALANCE_VOCAL_FORWARD_RATIO,
+            |_| 0.7,
+        );
         let out = process_vocal_for_mix(0.7, gain);
         let mix_peak = 0.5 + out[0].abs().max(out[1].abs());
 
@@ -4306,8 +4763,14 @@ mod tests {
         let backing = vec![0.6_f32; 24_000];
         let backing_gain = AUTO_BALANCE_BACKING_GAIN;
         let vocal_sample = 0.05;
-        let gain =
-            compute_auto_balance_vocal_gain(&backing, 2, 12_000, backing_gain, |_| vocal_sample);
+        let gain = compute_auto_balance_vocal_gain(
+            &backing,
+            2,
+            12_000,
+            backing_gain,
+            AUTO_BALANCE_VOCAL_FORWARD_RATIO,
+            |_| vocal_sample,
+        );
         let out = process_vocal_for_mix(vocal_sample, gain);
         let backing_sample = 0.6 * backing_gain;
         let vocal_peak = out[0].abs().max(out[1].abs());
@@ -4567,76 +5030,163 @@ mod tests {
         assert_eq!(compute_median(&v), 0.0);
     }
 
-    #[test]
-    fn compute_rms_zero_for_silence() {
-        let v = vec![0.0_f32; 1000];
-        assert_eq!(compute_rms(&v), 0.0);
-    }
-
-    #[test]
-    fn compute_rms_correct_for_sine() {
-        let sr = 44100;
-        let s = sine(440.0, sr);
-        let r = compute_rms(&s);
-        // 純 sine 波 RMS = amplitude / sqrt(2) ≈ 0.707
-        assert!(
-            (r - 0.7071).abs() < 0.02,
-            "440Hz sine RMS 應約 0.707（實際 {:.4}）",
-            r
-        );
-    }
-
-    #[test]
-    fn woodblock_click_has_short_duration_and_decay() {
-        let sr = 44100;
-        let click = generate_woodblock_click(sr);
-        // 約 40ms 長度
-        let expected_len = (sr as f32 * 0.040) as usize;
-        assert_eq!(click.len(), expected_len);
-        // 第一個樣本應該是非零（attack 即時）
-        // 注意 sin(0) = 0，所以第二個樣本才會看到聲音
-        assert!(click[10].abs() > 0.0);
-        // 後段應顯著衰減（< 前段的 30%）
-        let early_rms = rms(&click[..100]);
-        let late_rms = rms(&click[click.len() - 100..]);
-        assert!(
-            late_rms < early_rms * 0.3,
-            "尾段能量應 < 早段 30%（早 {:.3} / 晚 {:.3}）",
-            early_rms,
-            late_rms
-        );
-    }
-
-    #[test]
-    fn detect_onset_finds_synthetic_click_position() {
-        let sr = 44100;
-        // 1 秒長靜音 + 一個 click 在 500ms 處
-        let mut buf = vec![0.0_f32; sr as usize];
-        let click = generate_woodblock_click(sr);
-        let click_pos = sr as usize / 2; // 500ms
-        for (i, s) in click.iter().enumerate() {
-            buf[click_pos + i] = *s;
+    fn add_voice_burst(samples: &mut [f32], sample_rate: u32, start_ms: f64, gain: f32) {
+        let start = ms_to_sample(start_ms, sample_rate);
+        let len = ms_to_sample(90.0, sample_rate);
+        for i in 0..len {
+            if start + i >= samples.len() {
+                break;
+            }
+            let t = i as f32 / sample_rate as f32;
+            let envelope = if i < len / 5 {
+                i as f32 / (len / 5).max(1) as f32
+            } else {
+                1.0 - ((i - len / 5) as f32 / (len - len / 5).max(1) as f32)
+            };
+            samples[start + i] +=
+                (2.0 * std::f32::consts::PI * 180.0 * t).sin() * envelope.max(0.0) * gain;
         }
+    }
 
-        let detected = detect_onset_in_window(&buf, sr, 0.0005).expect("應該偵測到 click");
+    fn rhythm_voice_capture(
+        latency_ms: f64,
+        jitters: &[f64],
+        emitted_beats: usize,
+    ) -> RhythmVoiceCapture {
+        let sample_rate = 1_000;
+        let total_ms = rhythm_voice_total_duration_ms() + 1_000.0;
+        let mut samples = vec![0.0_f32; ms_to_sample(total_ms, sample_rate)];
+        for (idx, beat) in (RHYTHM_VOICE_WARMUP_BEATS..RHYTHM_VOICE_TOTAL_BEATS)
+            .take(emitted_beats)
+            .enumerate()
+        {
+            let expected_ms =
+                RHYTHM_VOICE_PRE_ROLL_MS + beat as f64 * RHYTHM_VOICE_BEAT_INTERVAL_MS;
+            let jitter = jitters.get(idx).copied().unwrap_or(0.0);
+            add_voice_burst(
+                &mut samples,
+                sample_rate,
+                expected_ms + latency_ms + jitter,
+                0.12,
+            );
+        }
+        RhythmVoiceCapture {
+            samples,
+            sample_rate,
+            output_vs_input_ms: 0.0,
+        }
+    }
 
-        // 容忍 ±10ms 的偏差（onset detection 不是 sample-accurate）
-        let tolerance = (sr as f32 * 0.010) as i64;
-        let diff = (detected as i64 - click_pos as i64).abs();
+    #[test]
+    fn rhythm_voice_latency_detects_stable_voice_beats() {
+        let capture = rhythm_voice_capture(92.0, &[0.0, 2.0, -1.0, 1.0, 0.0, -2.0, 1.0, 0.0], 8);
+        let result = summarize_rhythm_voice_latency(&capture);
+
+        assert_eq!(result.mode, CALIBRATION_MODE_RHYTHM_VOICE);
+        assert_eq!(result.confidence, "high");
+        assert!(result.applied_recommended);
+        assert_eq!(result.valid_beats, 8);
         assert!(
-            diff < tolerance,
-            "偵測位置應接近 click 起點，偏差 {} samples (tolerance {})",
-            diff,
-            tolerance
+            (result.latency_ms as i64 - 92).abs() <= 8,
+            "expected roughly 92 ms, got {} ms",
+            result.latency_ms
         );
     }
 
     #[test]
-    fn detect_onset_returns_none_for_silence() {
-        let sr = 44100;
-        let buf = vec![0.0_f32; sr as usize];
-        let result = detect_onset_in_window(&buf, sr, 0.0005);
-        assert!(result.is_none(), "純靜音不應偵測到 onset");
+    fn rhythm_voice_latency_accepts_partial_stable_voice_beats_as_medium() {
+        let capture = rhythm_voice_capture(118.0, &[0.0, 3.0, -2.0, 1.0, 0.0], 5);
+        let result = summarize_rhythm_voice_latency(&capture);
+
+        assert_eq!(result.confidence, "medium");
+        assert!(result.applied_recommended);
+        assert_eq!(result.valid_beats, 5);
+        assert!(
+            (result.latency_ms as i64 - 118).abs() <= 15,
+            "expected roughly 118 ms, got {} ms",
+            result.latency_ms
+        );
+    }
+
+    #[test]
+    fn rhythm_voice_latency_low_when_voice_is_missing() {
+        let sample_rate = 1_000;
+        let capture = RhythmVoiceCapture {
+            samples: vec![0.0_f32; ms_to_sample(rhythm_voice_total_duration_ms(), sample_rate)],
+            sample_rate,
+            output_vs_input_ms: 0.0,
+        };
+        let result = summarize_rhythm_voice_latency(&capture);
+
+        assert_eq!(result.confidence, "low");
+        assert!(!result.applied_recommended);
+        assert_eq!(result.valid_beats, 0);
+        assert_eq!(result.diagnostic, "rhythm_voice_too_quiet");
+    }
+
+    #[test]
+    fn rhythm_voice_latency_low_when_voice_timing_is_unstable() {
+        let capture = rhythm_voice_capture(
+            90.0,
+            &[0.0, 80.0, -70.0, 95.0, -85.0, 70.0, -55.0, 100.0],
+            8,
+        );
+        let result = summarize_rhythm_voice_latency(&capture);
+
+        assert_eq!(result.confidence, "low");
+        assert!(!result.applied_recommended);
+        assert_eq!(result.diagnostic, "rhythm_voice_unstable");
+    }
+
+    #[test]
+    fn system_latency_summary_uses_timestamp_medians() {
+        let capture = SystemLatencyCapture {
+            input_latency_ms: vec![11.0, 13.0, 12.0],
+            output_latency_ms: vec![25.0, 27.0, 26.0],
+            input_buffer_ms: 0.0,
+            output_buffer_ms: 0.0,
+        };
+
+        let result = summarize_system_latency_estimate(&capture);
+
+        assert_eq!(result.mode, CALIBRATION_MODE_SYSTEM);
+        assert_eq!(result.confidence, "estimated");
+        assert!(result.applied_recommended);
+        assert_eq!(result.latency_ms, 38);
+        assert_eq!(result.valid_beats, 6);
+        assert_eq!(result.diagnostic, "system_timestamp");
+    }
+
+    #[test]
+    fn system_latency_summary_uses_buffer_when_timestamps_are_missing() {
+        let capture = SystemLatencyCapture {
+            input_latency_ms: vec![],
+            output_latency_ms: vec![],
+            input_buffer_ms: 12.5,
+            output_buffer_ms: 22.5,
+        };
+
+        let result = summarize_system_latency_estimate(&capture);
+
+        assert_eq!(result.latency_ms, 35);
+        assert_eq!(result.diagnostic, "buffer_estimate");
+        assert!(result.applied_recommended);
+    }
+
+    #[test]
+    fn system_latency_summary_uses_default_when_no_latency_data_exists() {
+        let capture = SystemLatencyCapture {
+            input_latency_ms: vec![],
+            output_latency_ms: vec![],
+            input_buffer_ms: 0.0,
+            output_buffer_ms: 0.0,
+        };
+
+        let result = summarize_system_latency_estimate(&capture);
+
+        assert_eq!(result.latency_ms, SYSTEM_LATENCY_DEFAULT_MS as u64);
+        assert_eq!(result.diagnostic, "system_default");
+        assert!(!result.applied_recommended);
     }
 
     // ── pack_loop / unpack_loop ──
@@ -4669,30 +5219,5 @@ mod tests {
     #[test]
     fn unpack_disabled_returns_none() {
         assert!(unpack_loop(LOOP_PACKED_DISABLED).is_none());
-    }
-
-    // ── compute_rms 邊界 ──
-
-    #[test]
-    fn compute_rms_single_sample() {
-        let v = vec![0.5_f32];
-        assert!((compute_rms(&v) - 0.5).abs() < 1e-6);
-    }
-
-    // ── generate_woodblock_click ──
-
-    #[test]
-    fn woodblock_click_different_sample_rates() {
-        for sr in [22050, 44100, 48000] {
-            let click = generate_woodblock_click(sr);
-            let expected_len = (sr as f32 * 0.040) as usize;
-            assert_eq!(click.len(), expected_len, "sr={}", sr);
-            // 不應有 NaN 或 Inf
-            assert!(
-                click.iter().all(|s| s.is_finite()),
-                "sr={} contains non-finite",
-                sr
-            );
-        }
     }
 }

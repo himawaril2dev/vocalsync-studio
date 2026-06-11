@@ -44,7 +44,7 @@ pub struct SubtitleStream {
 pub fn probe_subtitles(video_path: &str) -> Result<Vec<SubtitleStream>, AppError> {
     // 🔴 Codex 安全審查 P1 #2：擋 subprocess argument injection
     // （絕對路徑 + 不以 `-` 開頭，避免被 ffprobe 當 option）
-    security::validate_path_safe(video_path)?;
+    security::validate_local_path_safe(video_path)?;
     // 🟡 Y1 修正：先驗證輸入路徑是否存在
     if !Path::new(video_path).exists() {
         return Err(AppError::Audio(format!("影片檔案不存在：{}", video_path)));
@@ -96,9 +96,9 @@ pub fn extract_subtitle(
     output_dir: Option<&str>,
 ) -> Result<PathBuf, AppError> {
     // 🔴 Codex 安全審查 P1 #2：ffmpeg argument injection 防線
-    security::validate_path_safe(video_path)?;
+    security::validate_local_path_safe(video_path)?;
     if let Some(dir) = output_dir {
-        security::validate_path_safe(dir)?;
+        security::validate_local_path_safe(dir)?;
     }
     // 🟡 Y1 修正：先驗證輸入路徑是否存在
     if !Path::new(video_path).exists() {

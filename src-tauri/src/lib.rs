@@ -1,7 +1,7 @@
-//! VocalSync Studio — Rust 後端入口
+//! VocalSync Studio - Rust backend entry point
 //!
-//! 職責：音訊 I/O、音高偵測、DSP、檔案管理、設定持久化。
-//! 前端（Svelte）負責所有 UI 渲染。
+//! Handles audio I/O, pitch detection, DSP, file management, and settings persistence.
+//! The Svelte frontend owns UI rendering.
 
 pub mod commands;
 pub mod core;
@@ -20,19 +20,12 @@ pub fn run() {
         .setup(|app| {
             log::info!("VocalSync Studio starting...");
 
-            // 初始化共享的 AudioEngine 狀態
             let engine = core::audio_engine::AudioEngine::new();
             app.manage(std::sync::Mutex::new(engine));
 
-            // 初始化設定
             let settings = core::settings::AppSettings::load_or_default();
             app.manage(std::sync::Mutex::new(settings));
 
-            if let Err(err) = core::whisper_engine::cleanup_whisper_cache() {
-                log::warn!("[startup] failed to clean Whisper cache: {err}");
-            }
-
-            // YouTube 下載取消旗標
             app.manage(commands::download_commands::DownloadCancelFlag(
                 std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             ));
@@ -60,6 +53,7 @@ pub fn run() {
             commands::audio_commands::clear_recording,
             commands::audio_commands::start_preview,
             commands::audio_commands::start_playback,
+            commands::audio_commands::update_runtime_latency,
             commands::audio_commands::pause_playback,
             commands::audio_commands::seek,
             commands::audio_commands::set_volume,
@@ -70,7 +64,8 @@ pub fn run() {
             commands::audio_commands::export_audio,
             commands::audio_commands::get_pitch_track,
             commands::audio_commands::get_backing_pitch_track,
-            commands::audio_commands::calibrate_latency,
+            commands::audio_commands::estimate_system_latency,
+            commands::audio_commands::calibrate_latency_rhythm_voice,
             commands::audio_commands::set_loop_points,
             commands::audio_commands::clear_loop,
             commands::audio_commands::get_loop_points,
@@ -81,22 +76,9 @@ pub fn run() {
             commands::lyrics_commands::load_lyrics,
             commands::lyrics_commands::save_lyrics_as_lrc,
             commands::lyrics_commands::save_lyrics_as_subtitle,
-            commands::lyrics_commands::auto_align_lyrics_to_audio,
-            commands::lyrics_commands::align_lyrics_to_timed_transcript,
             commands::lyrics_commands::find_subtitle_files,
             commands::lyrics_commands::probe_embedded_subtitles,
             commands::lyrics_commands::extract_embedded_subtitle,
-            commands::whisper_commands::check_whisper_tools,
-            commands::whisper_commands::list_whisper_model_options,
-            commands::whisper_commands::inspect_local_whisper_runner_path,
-            commands::whisper_commands::trust_local_whisper_runner,
-            commands::whisper_commands::inspect_local_whisper_model_path,
-            commands::whisper_commands::trust_local_whisper_model,
-            commands::whisper_commands::open_whisper_model_folder,
-            commands::whisper_commands::install_whisper_runner,
-            commands::whisper_commands::install_whisper_model,
-            commands::whisper_commands::activate_installed_whisper_model,
-            commands::whisper_commands::transcribe_vocals_with_whisper,
             commands::settings_commands::load_settings,
             commands::settings_commands::update_calibrated_latency,
             commands::settings_commands::update_mixer_settings,
@@ -105,6 +87,11 @@ pub fn run() {
             commands::settings_commands::load_project_session,
             commands::settings_commands::save_project_session,
             commands::settings_commands::clear_project_session,
+            commands::settings_commands::list_song_profiles,
+            commands::settings_commands::save_song_profile,
+            commands::settings_commands::load_song_profile,
+            commands::settings_commands::rename_song_profile,
+            commands::settings_commands::delete_song_profile,
             commands::melody_commands::auto_detect_melody_source,
             commands::melody_commands::load_melody_from_path,
             commands::melody_commands::load_vocals_and_extract_melody,

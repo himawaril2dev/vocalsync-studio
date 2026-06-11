@@ -8,9 +8,6 @@ VocalSync Studio は、伴奏再生・リアルタイム録音・AI ピッチ検
 
 📖 **ユーザーガイド**：[日本語](docs/USER_GUIDE.ja.md)｜[繁體中文](docs/USER_GUIDE.md)｜[English](docs/USER_GUIDE.en.md)（portable zip にはオフライン HTML 版も同梱）
 
-> 📢 **開示事項**
-> 作者にはプログラミングの経験がありません。本プロジェクトは AI（Claude / Codex）との協働により開発され、アーキテクチャ・コード・UI まですべて AI によって生成されました。すべての機能は実テストとマルチモデルのコードレビュー（Claude による実装 + Codex による独立監査）を経ています。ご自身の用途に応じてリスクをご判断の上ご利用ください。
-
 ## 主な機能
 
 - **YouTube ダウンロード** — URL を入力するだけで伴奏をダウンロード（yt-dlp + FFmpeg を自動インストール）
@@ -18,7 +15,8 @@ VocalSync Studio は、伴奏再生・リアルタイム録音・AI ピッチ検
 - **AI ピッチ検出** — CREPE ニューラルネットワークモデルで歌声のピッチを解析（オフライン動作、ネットワーク不要）
 - **ピッチカーブ比較** — 自分の歌唱と目標メロディを並べて表示
 - **ガイドボーカル監聴** — 読み込んだボーカルトラックを低音量の参考音として使い、エクスポートには混ぜません
-- **歌詞同期** — LRC / SRT / VTT 形式に対応し、バイリンガル字幕の自動判定も可能
+- **歌詞同期** — LRC / SRT / VTT / TXT に対応し、録音タブの歌詞パネルで全体遅延と行ごとの開始 / 終了タイミングを設定
+- **曲リスト** — 曲ごとに伴奏、歌詞、メロディ、ガイド、同期、ミックス、ループ、速度、キー設定を保存。曲リスト上で読み込み、編集、保存まで完結
 - **A-B ループ** — 特定区間を繰り返し練習
 - **速度変更** — WSOLA タイムストレッチでピッチを変えずに再生速度を変更
 
@@ -37,19 +35,19 @@ VocalSync Studio は、伴奏再生・リアルタイム録音・AI ピッチ検
 
 ### Release からダウンロード（推奨）
 
-1. [Releases](https://github.com/himawaril2dev/vocalsync-studio/releases) ページから最新の `VocalSync.Studio.Portable.x.y.z.zip` をダウンロードします
+1. 信頼できる release ページから最新の `VocalSync.Studio.Portable.x.y.z.zip` をダウンロードします
 2. 任意の場所（デスクトップや `D:\Tools\` など）に展開します
 3. フォルダを開き、**`vocalsync-studio.exe`** をダブルクリックすると起動します
 
 > ⚠️ **フォルダ構成を変更しないでください**
-> `DirectML.dll`、`yt-dlp.exe`、`models/` は `vocalsync-studio.exe` が起動時に読み込む依存ファイルです。**個別に移動させないでください。** アプリを別の場所に移したい場合は、フォルダごとまとめて移動してください。
+> `DirectML.dll`、`models/` は `vocalsync-studio.exe` が起動時に読み込む依存ファイルです。**個別に移動させないでください。** 自動インストールされた yt-dlp / FFmpeg は同じ portable root に配置されます。アプリを別の場所に移したい場合は、フォルダごとまとめて移動してください。
 
 | ファイル | 説明 |
 |---|---|
 | **`vocalsync-studio.exe`** | 本体 ← これを起動 |
 | `DirectML.dll` | ONNX Runtime の DirectX ML アクセラレーション DLL（CREPE ピッチ検出で必要）|
-| `yt-dlp.exe` | YouTube 伴奏ダウンロード CLI |
 | `models/crepe-tiny.onnx` | CREPE ピッチ検出モデル |
+| `yt-dlp.exe` / `ffmpeg.exe` / `ffprobe.exe` | 自動インストール機能を使った後に出現 |
 
 ### 動作確認済み環境
 
@@ -65,7 +63,7 @@ macOS / Linux 向けの Tauri ビルドは理論上可能（ソースはクロ�
 > 現時点ではコード署名（code-signing）を行っていないため、Windows SmartScreen に「WindowsによってPCが保護されました」という警告が表示される場合があります。
 > 警告ウィンドウ左上の **「詳細情報」** をクリックし、下に表示される **「実行」** ボタンを押せば起動できます。
 > 同じ exe に対してこの警告は二度目以降表示されません。
-> 入手元に不安がある場合は、Release ページから zip をダウンロードした後、`certutil -hashfile "ファイル名.zip" SHA256` で GitHub に掲載されているダイジェストと照合してください。
+> 入手元に不安がある場合は、release ページから zip をダウンロードした後、`certutil -hashfile "ファイル名.zip" SHA256` で同じページに掲載されているダイジェストと照合してください。
 
 ### ソースからビルド
 
@@ -82,14 +80,15 @@ npm install
 npm run tauri dev
 
 # 3. Release ビルド
-npm run tauri build
+npm run tauri:build:release
 
-# 4.（任意）オフライン USER_GUIDE HTML を生成して portable zip に同梱
-npm run build:docs          # dist-docs/*.html を出力
-npm run pack:portable-docs  # portable フォルダに HTML を入れて zip を作り直し
+# 4. オフライン USER_GUIDE HTML を含む portable zip を作成
+npm run pack:portable
 ```
 
 ビルド成果物は `src-tauri/target/release/bundle/` に出力されます。
+`npm run tauri:build:release` はアプリ本体を出力します：`src-tauri/target/release/vocalsync-studio.exe`。
+`npm run pack:portable` は唯一の release package を出力します：`src-tauri/target/release/bundle/portable/VocalSync.Studio.Portable.x.y.z.zip`。
 
 ## プロジェクト構成
 
@@ -98,7 +97,7 @@ vocalsync-studio/
 ├── src/                    # Svelte フロントエンド
 │   ├── components/         # UI コンポーネント（ピッチカーブ、歌詞パネル、キャリブレーター ...）
 │   ├── stores/             # ステート管理（再生、録音、歌詞、設定 ...）
-│   └── tabs/               # ページ（準備、録音、ピッチ、アバウト）
+│   └── tabs/               # ページ（準備、曲リスト、録音、ピッチ、アバウト）
 ├── src-tauri/
 │   └── src/
 │       ├── commands/       # Tauri IPC コマンド
@@ -128,12 +127,14 @@ vocalsync-studio/
 
 ## 問題報告
 
-使用中に困ったこと、バグ報告、機能リクエストなど、いつでも歓迎しています。以下のいずれかの方法でご連絡ください。
+使用中に困ったこと、バグ報告、機能リクエストは以下の方法で連絡できます。
 
 - **GitHub Issues**：[vocalsync-studio/issues](https://github.com/himawaril2dev/vocalsync-studio/issues)
 - **メール**：`himawaril2dev@gmail.com`
 
 ご連絡の際、OS のバージョン、VocalSync Studio のバージョン、操作手順、エラーメッセージのスクリーンショットを添えていただけると、原因を特定しやすくなります。
+
+About タブの「更新を確認」は手動実行です。ボタンを押したときだけ GitHub Releases に最新バージョンを問い合わせます。
 
 ## ライセンス
 
@@ -189,8 +190,8 @@ VocalSync のピッチ検出結果を学術研究や商用研究で使用され�
 
 VocalSync Studio はあくまでローカル環境での歌唱練習補助ツールです。本ツールを使ってダウンロード・処理・書き起こしされたすべてのオーディオコンテンツの著作権および合法的な使用責任は、使用者ご自身に帰属します。開発者は使用者による不適切な利用について一切責任を負いません。
 
-## 開発を支援する
+## 開発支援
 
-このツールが歌唱練習のお役に立ちましたら、よろしければコーヒーを一杯ごちそうしていただけると嬉しいです：
+このツールが練習に役立った場合は、Ko-fi で開発を支援できます。
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/himawari168)
+[Support on Ko-fi](https://ko-fi.com/himawari168)

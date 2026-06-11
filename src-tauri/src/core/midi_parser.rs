@@ -240,20 +240,20 @@ mod tests {
         // Mock PPQ = 480
         // 預設 120BPM => 500,000 us/q => 每 quarter note 0.5 秒。
         // 480 ticks = 0.5s => 1 tick = 0.5 / 480 = 0.0010416666... 秒
-        let mut map: Vec<TempoChange> = Vec::new();
-        map.push(TempoChange {
-            tick: 0,
-            start_time_secs: 0.0,
-            secs_per_tick: (500_000.0 / 1_000_000.0) / 480.0,
-        });
-
-        // 960 tick 後變更為 60 BPM = 1,000,000 us/q => 每 quarter note 1.0 秒
-        // 960 tick = 2 quarter notes = 1.0s
-        map.push(TempoChange {
-            tick: 960,
-            start_time_secs: 1.0,
-            secs_per_tick: (1_000_000.0 / 1_000_000.0) / 480.0,
-        });
+        let map: Vec<TempoChange> = vec![
+            TempoChange {
+                tick: 0,
+                start_time_secs: 0.0,
+                secs_per_tick: (500_000.0 / 1_000_000.0) / 480.0,
+            },
+            // 960 tick 後變更為 60 BPM = 1,000,000 us/q => 每 quarter note 1.0 秒
+            // 960 tick = 2 quarter notes = 1.0s
+            TempoChange {
+                tick: 960,
+                start_time_secs: 1.0,
+                secs_per_tick: (1_000_000.0 / 1_000_000.0) / 480.0,
+            },
+        ];
 
         let tick_to_secs = |tick: u64| -> f64 {
             let mut active_change = &map[0];

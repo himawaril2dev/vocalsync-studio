@@ -79,7 +79,7 @@ use serde::Serialize;
 
 /// 對齊計算時的目標取樣率（Hz）。降到這個值大幅加速 FFT，精度仍足夠。
 const TARGET_SAMPLE_RATE: u32 = 11_025;
-const ENVELOPE_SAMPLE_RATE: u32 = 100;
+pub(crate) const ENVELOPE_SAMPLE_RATE: u32 = 100;
 const ENVELOPE_WINDOW_MS: f32 = 30.0;
 const ENVELOPE_HOP_MS: f32 = 10.0;
 
@@ -202,7 +202,7 @@ fn select_alignment_candidate(
 }
 
 /// 把交錯樣本 down-mix 成 mono。支援任意聲道數 ≥ 1。
-fn stereo_to_mono(interleaved: &[f32], channels: usize) -> Vec<f32> {
+pub(crate) fn stereo_to_mono(interleaved: &[f32], channels: usize) -> Vec<f32> {
     if channels <= 1 {
         return interleaved.to_vec();
     }
@@ -242,7 +242,7 @@ fn normalize_for_correlation(samples: &[f32]) -> Vec<f32> {
         .collect()
 }
 
-fn build_alignment_envelope(samples: &[f32], sample_rate: u32) -> Vec<f32> {
+pub(crate) fn build_alignment_envelope(samples: &[f32], sample_rate: u32) -> Vec<f32> {
     if samples.is_empty() {
         return Vec::new();
     }

@@ -29,7 +29,7 @@ pub fn display_path(path: &Path) -> String {
     #[cfg(windows)]
     {
         let text = path.to_string_lossy();
-        return text.strip_prefix(r"\\?\").unwrap_or(&text).to_string();
+        text.strip_prefix(r"\\?\").unwrap_or(&text).to_string()
     }
 
     #[cfg(not(windows))]

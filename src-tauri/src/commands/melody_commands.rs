@@ -7,6 +7,7 @@
 //!   目前固定回傳 `None`。
 
 use crate::core::audio_aligner::{self, AlignmentResult};
+use crate::core::crepe_engine;
 use crate::core::folder_open;
 use crate::core::melody_extractor;
 use crate::core::melody_source_detector::{detect_melody_source, DetectedSource};
@@ -16,38 +17,6 @@ use crate::error::AppError;
 use crate::security;
 use serde::Serialize;
 use std::path::PathBuf;
-
-/// 取得 CREPE 模型目錄。
-/// dev 模式下在 src-tauri/models/，production 模式下在 resource dir。
-fn get_model_dir() -> Option<PathBuf> {
-    // Dev 模式：從 exe 所在目錄往上找 src-tauri/models/
-    let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-
-    // 嘗試 dev 路徑（exe 在 target/debug/ 下）
-    let dev_path = exe_dir
-        .parent() // target/
-        .and_then(|p| p.parent()) // src-tauri/
-        .map(|p| p.join("models"));
-
-    if let Some(ref p) = dev_path {
-        if p.join("crepe-tiny.onnx").exists() {
-            return dev_path;
-        }
-    }
-
-    // Production：models/ 在 exe 同目錄
-    let prod_path = exe_dir.join("models");
-    if prod_path.join("crepe-tiny.onnx").exists() {
-        return Some(prod_path);
-    }
-
-    // 最後嘗試 exe 同目錄
-    if exe_dir.join("crepe-tiny.onnx").exists() {
-        return Some(exe_dir);
-    }
-
-    None
-}
 
 /// 偵測結果（給前端判斷要不要顯示「沒有目標旋律」提示）
 fn fallback_app_models_dir() -> Option<PathBuf> {
@@ -59,7 +28,7 @@ fn fallback_app_models_dir() -> Option<PathBuf> {
 
 #[tauri::command]
 pub fn open_crepe_model_folder() -> Result<String, AppError> {
-    let dir = get_model_dir()
+    let dir = crepe_engine::find_crepe_model_dir()
         .or_else(fallback_app_models_dir)
         .ok_or_else(|| AppError::Internal("Could not locate app model directory".into()))?;
     std::fs::create_dir_all(&dir).map_err(AppError::Io)?;
@@ -84,7 +53,7 @@ impl From<DetectedSource> for DetectedSourceDto {
 /// 自動偵測同資料夾的目標旋律來源檔。
 #[tauri::command]
 pub fn auto_detect_melody_source(backing_path: String) -> Result<DetectedSourceDto, AppError> {
-    security::validate_path_safe(&backing_path)?;
+    security::validate_local_path_safe(&backing_path)?;
     let path = PathBuf::from(&backing_path);
     let detected = detect_melody_source(&path);
     Ok(detected.into())
@@ -97,10 +66,13 @@ pub fn auto_detect_melody_source(backing_path: String) -> Result<DetectedSourceD
 /// - `.wav` / `.mp3` / `.flac` 等音訊 — 視為乾淨人聲軌，跑 CREPE/PYIN 提取旋律
 #[tauri::command]
 pub fn load_melody_from_path(path: String) -> Result<MelodyTrack, AppError> {
-    security::validate_path_safe(&path)?;
+    security::validate_local_path_safe(&path)?;
     let lowered = path.to_lowercase();
     if is_audio_extension(&lowered) {
-        melody_extractor::extract_melody_from_vocals(&path, get_model_dir().as_ref())
+        melody_extractor::extract_melody_from_vocals(
+            &path,
+            crepe_engine::find_crepe_model_dir().as_deref(),
+        )
     } else if lowered.ends_with(".mid") || lowered.ends_with(".midi") {
         midi_parser::load_midi(&path)
     } else {
@@ -112,8 +84,11 @@ pub fn load_melody_from_path(path: String) -> Result<MelodyTrack, AppError> {
 /// 提取 MelodyTrack。
 #[tauri::command]
 pub fn load_vocals_and_extract_melody(vocals_path: String) -> Result<MelodyTrack, AppError> {
-    security::validate_path_safe(&vocals_path)?;
-    melody_extractor::extract_melody_from_vocals(&vocals_path, get_model_dir().as_ref())
+    security::validate_local_path_safe(&vocals_path)?;
+    melody_extractor::extract_melody_from_vocals(
+        &vocals_path,
+        crepe_engine::find_crepe_model_dir().as_deref(),
+    )
 }
 
 fn is_audio_extension(lowered_path: &str) -> bool {
@@ -128,7 +103,7 @@ fn is_audio_extension(lowered_path: &str) -> bool {
 /// - `Err(_)` — 找到了但載入失敗
 #[tauri::command]
 pub fn auto_load_melody_for_backing(backing_path: String) -> Result<Option<MelodyTrack>, AppError> {
-    security::validate_path_safe(&backing_path)?;
+    security::validate_local_path_safe(&backing_path)?;
     let path = PathBuf::from(&backing_path);
     match detect_melody_source(&path) {
         DetectedSource::None => Ok(None),
@@ -146,7 +121,7 @@ pub fn align_audio_files(
     reference_path: String,
     target_path: String,
 ) -> Result<AlignmentResult, AppError> {
-    security::validate_path_safe(&reference_path)?;
-    security::validate_path_safe(&target_path)?;
+    security::validate_local_path_safe(&reference_path)?;
+    security::validate_local_path_safe(&target_path)?;
     audio_aligner::align_files(&reference_path, &target_path)
 }

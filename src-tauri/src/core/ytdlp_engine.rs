@@ -184,20 +184,12 @@ pub struct DownloadRequest {
 /// 取得 app 內部的 bin 資料夾路徑（用於存放 yt-dlp 執行檔）。
 ///
 /// Location: portable root, beside the executable.
-pub fn get_app_bin_dir() -> Option<PathBuf> {
-    Some(portable_paths::root_dir())
+fn tool_dir() -> PathBuf {
+    portable_paths::root_dir()
 }
 
-fn app_tool_manifest_path() -> Option<PathBuf> {
-    get_app_bin_dir().map(|dir| dir.join(TOOL_MANIFEST_NAME))
-}
-
-fn get_preferred_tool_dir() -> Option<PathBuf> {
-    get_app_bin_dir()
-}
-
-fn tool_manifest_path() -> Option<PathBuf> {
-    get_preferred_tool_dir().map(|dir| dir.join(TOOL_MANIFEST_NAME))
+fn tool_manifest_path() -> PathBuf {
+    tool_dir().join(TOOL_MANIFEST_NAME)
 }
 
 fn tool_manifest_path_in_dir(dir: &Path) -> PathBuf {
@@ -252,39 +244,8 @@ fn save_tool_manifest_to_dir(dir: &Path, manifest: &ToolManifest) -> Result<(), 
 }
 
 fn save_tool_manifest(manifest: &ToolManifest) -> Result<(), AppError> {
-    let path = tool_manifest_path()
-        .ok_or_else(|| AppError::Internal("無法取得工具 manifest 路徑".into()))?;
+    let path = tool_manifest_path();
     save_tool_manifest_to_path(&path, manifest)
-}
-
-fn shared_tool_manifest_path() -> Option<PathBuf> {
-    None
-}
-
-fn load_shared_tool_manifest() -> Option<ToolManifest> {
-    None
-}
-
-fn save_shared_tool_manifest(manifest: &ToolManifest) -> Result<(), AppError> {
-    let path = shared_tool_manifest_path()
-        .ok_or_else(|| AppError::Internal("無法取得共享工具 manifest 路徑".into()))?;
-    save_tool_manifest_to_path(&path, manifest)
-}
-
-fn publish_shared_ytdlp(candidate: &LocalYtdlpCandidate) {
-    let mut manifest = load_shared_tool_manifest().unwrap_or_default();
-    manifest.ytdlp_path = Some(candidate.ytdlp_path.clone());
-    manifest.ytdlp_sha256 = Some(candidate.ytdlp_sha256.clone());
-    let _ = save_shared_tool_manifest(&manifest);
-}
-
-fn publish_shared_ffmpeg(candidate: &LocalFfmpegCandidate) {
-    let mut manifest = load_shared_tool_manifest().unwrap_or_default();
-    manifest.ffmpeg_path = Some(candidate.ffmpeg_path.clone());
-    manifest.ffprobe_path = Some(candidate.ffprobe_path.clone());
-    manifest.ffmpeg_sha256 = Some(candidate.ffmpeg_sha256.clone());
-    manifest.ffprobe_sha256 = Some(candidate.ffprobe_sha256.clone());
-    let _ = save_shared_tool_manifest(&manifest);
 }
 
 fn find_tool_in_dir(dir: &std::path::Path, exe_name: &str) -> Option<PathBuf> {
@@ -331,6 +292,7 @@ fn canonical_existing_tool_file(path: &str, label: &str) -> Result<PathBuf, AppE
     }
 
     let canonical = raw_path.canonicalize().map_err(AppError::Io)?;
+    security::validate_local_path_safe(&canonical.to_string_lossy())?;
     if !canonical.is_file() {
         return Err(AppError::Audio(format!("{} 必須是既有檔案", label)));
     }
@@ -440,26 +402,17 @@ fn trusted_ffmpeg_path_from_manifest(
     trusted_path_with_hash(candidate, expected_hash, exe_name)
 }
 
+#[cfg(test)]
 fn trusted_ffmpeg_path_in_dir(dir: &Path, exe_name: &str) -> Option<PathBuf> {
     let manifest = load_tool_manifest_from_dir(dir)?;
     trusted_ffmpeg_path_from_manifest(&manifest, dir, exe_name)
 }
 
 fn trusted_app_ffmpeg_path(exe_name: &str) -> Option<PathBuf> {
-    let bin_dir = get_app_bin_dir()?;
-    let manifest_path = app_tool_manifest_path()?;
+    let bin_dir = tool_dir();
+    let manifest_path = tool_manifest_path();
     let manifest = load_tool_manifest_from_path(&manifest_path)?;
     trusted_ffmpeg_path_from_manifest(&manifest, &bin_dir, exe_name)
-}
-
-fn trusted_shared_ffmpeg_path(_exe_name: &str) -> Option<PathBuf> {
-    None
-}
-
-fn trusted_portable_ffmpeg_path(exe_name: &str) -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let dir = exe.parent()?;
-    trusted_ffmpeg_path_in_dir(dir, exe_name)
 }
 
 fn trusted_ytdlp_path_from_manifest(manifest: &ToolManifest, base_dir: &Path) -> Option<PathBuf> {
@@ -471,34 +424,15 @@ fn trusted_ytdlp_path_from_manifest(manifest: &ToolManifest, base_dir: &Path) ->
 }
 
 fn trusted_app_ytdlp_path() -> Option<PathBuf> {
-    let bin_dir = get_app_bin_dir()?;
-    if let Some(manifest_path) = app_tool_manifest_path() {
-        if let Some(manifest) = load_tool_manifest_from_path(&manifest_path) {
-            if let Some(path) = trusted_ytdlp_path_from_manifest(&manifest, &bin_dir) {
-                return Some(path);
-            }
+    let bin_dir = tool_dir();
+    if let Some(manifest) = load_tool_manifest_from_path(&tool_manifest_path()) {
+        if let Some(path) = trusted_ytdlp_path_from_manifest(&manifest, &bin_dir) {
+            return Some(path);
         }
     }
 
     let candidate = find_tool_in_dir(&bin_dir, YTDLP_EXE_NAME)?;
     trusted_path_with_hash(candidate, YTDLP_SHA256, "yt-dlp")
-}
-
-fn trusted_shared_ytdlp_path() -> Option<PathBuf> {
-    None
-}
-
-fn trusted_portable_ytdlp_path() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let dir = exe.parent()?;
-    if let Some(manifest) = load_tool_manifest_from_dir(dir) {
-        if let Some(path) = trusted_ytdlp_path_from_manifest(&manifest, dir) {
-            return Some(path);
-        }
-    }
-
-    let candidate = find_tool_in_dir(dir, YTDLP_EXE_NAME)?;
-    trusted_path_with_hash(candidate, YTDLP_SHA256, "portable yt-dlp")
 }
 
 fn local_ytdlp_candidate_paths() -> Vec<PathBuf> {
@@ -575,8 +509,7 @@ fn ytdlp_candidate_from_trust_request(
 fn import_ytdlp_candidate_to_portable(
     candidate: LocalYtdlpCandidate,
 ) -> Result<LocalYtdlpCandidate, AppError> {
-    let bin_dir = get_app_bin_dir()
-        .ok_or_else(|| AppError::Internal("Could not locate portable tool directory".into()))?;
+    let bin_dir = tool_dir();
     let source = PathBuf::from(&candidate.ytdlp_path);
     let target = bin_dir.join(YTDLP_EXE_NAME);
     let imported_path = copy_verified_tool_to_portable(&source, &target, &candidate.ytdlp_sha256)?;
@@ -608,13 +541,10 @@ pub fn trust_local_ytdlp_candidate(
     let trusted_candidate =
         import_ytdlp_candidate_to_portable(ytdlp_candidate_from_trust_request(candidate)?)?;
 
-    let mut manifest = tool_manifest_path()
-        .and_then(|path| load_tool_manifest_from_path(&path))
-        .unwrap_or_default();
+    let mut manifest = load_tool_manifest_from_path(&tool_manifest_path()).unwrap_or_default();
     manifest.ytdlp_sha256 = Some(trusted_candidate.ytdlp_sha256.clone());
     manifest.ytdlp_path = None;
     save_tool_manifest(&manifest)?;
-    publish_shared_ytdlp(&trusted_candidate);
 
     Ok(trusted_candidate)
 }
@@ -754,8 +684,7 @@ fn ffmpeg_candidate_from_trust_request(
 fn import_ffmpeg_candidate_to_portable(
     candidate: LocalFfmpegCandidate,
 ) -> Result<LocalFfmpegCandidate, AppError> {
-    let bin_dir = get_app_bin_dir()
-        .ok_or_else(|| AppError::Internal("Could not locate portable tool directory".into()))?;
+    let bin_dir = tool_dir();
     let (ffmpeg_name, ffprobe_name) = ffmpeg_tool_names();
     let ffmpeg_path = copy_verified_tool_to_portable(
         &PathBuf::from(&candidate.ffmpeg_path),
@@ -797,15 +726,12 @@ pub fn trust_local_ffmpeg_candidate(
     let trusted_candidate =
         import_ffmpeg_candidate_to_portable(ffmpeg_candidate_from_trust_request(candidate)?)?;
 
-    let mut manifest = tool_manifest_path()
-        .and_then(|path| load_tool_manifest_from_path(&path))
-        .unwrap_or_default();
+    let mut manifest = load_tool_manifest_from_path(&tool_manifest_path()).unwrap_or_default();
     manifest.ffmpeg_sha256 = Some(trusted_candidate.ffmpeg_sha256.clone());
     manifest.ffprobe_sha256 = Some(trusted_candidate.ffprobe_sha256.clone());
     manifest.ffmpeg_path = None;
     manifest.ffprobe_path = None;
     save_tool_manifest(&manifest)?;
-    publish_shared_ffmpeg(&trusted_candidate);
 
     Ok(trusted_candidate)
 }
@@ -814,14 +740,6 @@ pub fn trust_local_ffmpeg_candidate(
 ///
 /// 只信任 hash 驗證通過的 managed binary。
 pub fn find_ytdlp() -> Option<PathBuf> {
-    if let Some(path) = trusted_portable_ytdlp_path() {
-        return Some(path);
-    }
-
-    if let Some(path) = trusted_shared_ytdlp_path() {
-        return Some(path);
-    }
-
     if let Some(path) = trusted_app_ytdlp_path() {
         return Some(path);
     }
@@ -833,9 +751,7 @@ pub fn find_ytdlp() -> Option<PathBuf> {
 pub fn find_ffmpeg() -> Option<PathBuf> {
     #[cfg(windows)]
     {
-        trusted_portable_ffmpeg_path("ffmpeg.exe")
-            .or_else(|| trusted_shared_ffmpeg_path("ffmpeg.exe"))
-            .or_else(|| trusted_app_ffmpeg_path("ffmpeg.exe"))
+        trusted_app_ffmpeg_path("ffmpeg.exe")
     }
 
     #[cfg(not(windows))]
@@ -847,9 +763,7 @@ pub fn find_ffmpeg() -> Option<PathBuf> {
 pub fn find_ffprobe() -> Option<PathBuf> {
     #[cfg(windows)]
     {
-        trusted_portable_ffmpeg_path("ffprobe.exe")
-            .or_else(|| trusted_shared_ffmpeg_path("ffprobe.exe"))
-            .or_else(|| trusted_app_ffmpeg_path("ffprobe.exe"))
+        trusted_app_ffmpeg_path("ffprobe.exe")
     }
 
     #[cfg(not(windows))]
@@ -958,7 +872,7 @@ pub struct InstallProgress {
     pub message: String,
 }
 
-/// 驗證檔案的 SHA-256 hash。空字串的 expected_hash 表示跳過驗證（首次部署用）。
+/// 驗證檔案的 SHA-256 hash。空字串只允許 debug build 用於本機開發。
 fn compute_sha256(path: &Path) -> Result<String, AppError> {
     let mut file = std::fs::File::open(path).map_err(AppError::Io)?;
     let mut hasher = Sha256::new();
@@ -973,19 +887,41 @@ fn compute_sha256(path: &Path) -> Result<String, AppError> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+fn is_valid_sha256_hex(hash: &str) -> bool {
+    hash.len() == 64 && hash.chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
 fn verify_sha256(path: &std::path::Path, expected_hash: &str) -> Result<(), AppError> {
     if expected_hash.is_empty() {
-        // hash 尚未設定，記錄實際 hash 供開發者填入
+        #[cfg(debug_assertions)]
+        {
+            // hash 尚未設定，記錄實際 hash 供開發者填入
+            let hash = compute_sha256(path)?;
+            log::warn!(
+                "[security] SHA-256 驗證已跳過（debug build hash 未設定）。實際 hash: {} ← 請填入程式碼",
+                hash
+            );
+            return Ok(());
+        }
+
+        #[cfg(not(debug_assertions))]
+        {
+            return Err(AppError::Internal(
+                "SHA-256 驗證失敗：release build 不接受空白 hash".into(),
+            ));
+        }
+    }
+
+    if !is_valid_sha256_hex(expected_hash) {
         let hash = compute_sha256(path)?;
-        log::warn!(
-            "[security] SHA-256 驗證已跳過（hash 未設定）。實際 hash: {} ← 請填入程式碼",
+        return Err(AppError::Internal(format!(
+            "SHA-256 驗證失敗：hash 格式無效（預期 64 個 hex 字元）。實際檔案 hash: {}",
             hash
-        );
-        return Ok(());
+        )));
     }
 
     let actual = compute_sha256(path)?;
-    if actual != expected_hash {
+    if !actual.eq_ignore_ascii_case(expected_hash) {
         return Err(AppError::Internal(format!(
             "SHA-256 驗證失敗！預期: {}，實際: {}。檔案可能被篡改。",
             expected_hash, actual
@@ -999,8 +935,7 @@ fn verify_sha256(path: &std::path::Path, expected_hash: &str) -> Result<(), AppE
 ///
 /// 透過 `ytdlp:install_progress` event 推送進度。
 pub fn download_ytdlp(app: &AppHandle) -> Result<PathBuf, AppError> {
-    let bin_dir = get_preferred_tool_dir()
-        .ok_or_else(|| AppError::Internal("無法取得工具安裝目錄".into()))?;
+    let bin_dir = tool_dir();
 
     let _tool_state_guard = acquire_tool_state_lock()?;
 
@@ -1114,10 +1049,6 @@ pub fn download_ytdlp(app: &AppHandle) -> Result<PathBuf, AppError> {
     manifest.ytdlp_sha256 = Some(YTDLP_SHA256.into());
     manifest.ytdlp_path = None;
     save_tool_manifest_to_dir(&bin_dir, &manifest)?;
-    publish_shared_ytdlp(&LocalYtdlpCandidate {
-        ytdlp_path: target_path.to_string_lossy().to_string(),
-        ytdlp_sha256: YTDLP_SHA256.into(),
-    });
 
     let _ = app.emit(
         "ytdlp:install_progress",
@@ -1143,8 +1074,7 @@ pub fn download_ytdlp(app: &AppHandle) -> Result<PathBuf, AppError> {
 /// 透過 `ffmpeg:install_progress` event 推送進度。
 #[cfg(windows)]
 pub fn download_ffmpeg(app: &AppHandle) -> Result<PathBuf, AppError> {
-    let bin_dir = get_preferred_tool_dir()
-        .ok_or_else(|| AppError::Internal("無法取得工具安裝目錄".into()))?;
+    let bin_dir = tool_dir();
 
     let _tool_state_guard = acquire_tool_state_lock()?;
 
@@ -1299,12 +1229,6 @@ pub fn download_ffmpeg(app: &AppHandle) -> Result<PathBuf, AppError> {
     manifest.ffmpeg_path = None;
     manifest.ffprobe_path = None;
     save_tool_manifest_to_dir(&bin_dir, &manifest)?;
-    publish_shared_ffmpeg(&LocalFfmpegCandidate {
-        ffmpeg_path: ffmpeg_path.to_string_lossy().to_string(),
-        ffprobe_path: ffprobe_path.to_string_lossy().to_string(),
-        ffmpeg_sha256: manifest.ffmpeg_sha256.clone().unwrap_or_default(),
-        ffprobe_sha256: manifest.ffprobe_sha256.clone().unwrap_or_default(),
-    });
 
     let _ = app.emit(
         "ffmpeg:install_progress",
@@ -1597,9 +1521,10 @@ pub fn run_download(
     cancel_flag: Arc<AtomicBool>,
 ) -> Result<DownloadResult, AppError> {
     let normalized_url = normalize_download_url(&req.url)?;
-    security::validate_path_safe(&req.output_dir)?;
+    security::validate_local_path_safe(&req.output_dir)?;
     std::fs::create_dir_all(&req.output_dir).map_err(AppError::Io)?;
     let canonical_output_dir = std::fs::canonicalize(&req.output_dir).map_err(AppError::Io)?;
+    security::validate_local_path_safe(&canonical_output_dir.to_string_lossy())?;
     let req = DownloadRequest {
         url: normalized_url,
         output_dir: canonical_output_dir.to_string_lossy().to_string(),
@@ -2135,6 +2060,21 @@ mod tests {
         assert!(trusted_ytdlp_path_from_manifest(&manifest, &dir).is_none());
 
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn sha256_hash_format_requires_64_hex_chars() {
+        assert!(is_valid_sha256_hex(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        ));
+        assert!(is_valid_sha256_hex(
+            "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF"
+        ));
+        assert!(!is_valid_sha256_hex(""));
+        assert!(!is_valid_sha256_hex("wrong"));
+        assert!(!is_valid_sha256_hex(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg"
+        ));
     }
 
     #[test]

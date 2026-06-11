@@ -60,12 +60,23 @@ function cleanupTemporaryCargoConfig() {
 console.log("Building Tauri release with local path remapping enabled.");
 writeTemporaryCargoConfig();
 
-const child = spawn(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "tauri", "--", "build"], {
-  cwd: ROOT,
-  env: process.env,
-  stdio: "inherit",
-  shell: process.platform === "win32",
-});
+const command = process.platform === "win32" ? process.env.ComSpec || "cmd.exe" : "npm";
+const args = process.platform === "win32"
+  ? ["/d", "/s", "/c", "npm.cmd run tauri -- build --no-bundle"]
+  : ["run", "tauri", "--", "build", "--no-bundle"];
+
+let child;
+try {
+  child = spawn(command, args, {
+    cwd: ROOT,
+    env: process.env,
+    stdio: "inherit",
+  });
+} catch (err) {
+  cleanupTemporaryCargoConfig();
+  console.error(err instanceof Error ? err.message : String(err));
+  process.exit(1);
+}
 
 child.on("error", (err) => {
   cleanupTemporaryCargoConfig();

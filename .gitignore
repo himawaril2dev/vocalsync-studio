@@ -28,11 +28,10 @@ Thumbs.db
 src-tauri/WixTools/
 src-tauri/gen/
 
-# Local source-separation worker build artifacts
-.worker-build/
-workers/separation/
+# Local screenshots / scratch artifacts
 _tmp/
 screenshots/
+.playwright-mcp/
 
 # Session handoff / audit docs (development only)
 *_HANDOFF.md

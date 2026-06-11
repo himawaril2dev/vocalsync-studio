@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import { get } from "svelte/store";
   import { elapsed } from "../stores/transport";
+  import { latencyMs } from "../stores/settings";
   import {
     currentPitch,
     backingPitchTrack,
@@ -97,12 +98,17 @@
     return centerX + (offset / WINDOW_SECONDS) * w;
   }
 
-  function firstVisibleIndex(samples: PitchTrackSample[], startTime: number): number {
+  function firstVisibleIndex(
+    samples: PitchTrackSample[],
+    startTime: number,
+    timeOffsetSecs = 0,
+  ): number {
+    const rawStartTime = startTime - timeOffsetSecs;
     let lo = 0;
     let hi = samples.length;
     while (lo < hi) {
       const mid = (lo + hi) >>> 1;
-      if (samples[mid].timestamp < startTime) {
+      if (samples[mid].timestamp < rawStartTime) {
         lo = mid + 1;
       } else {
         hi = mid;
@@ -116,11 +122,13 @@
     tStart: number,
     tEnd: number,
     values: number[],
+    timeOffsetSecs = 0,
   ) {
-    const startIndex = firstVisibleIndex(samples, tStart - 0.5);
+    const startIndex = firstVisibleIndex(samples, tStart - 0.5, timeOffsetSecs);
     for (let i = startIndex; i < samples.length; i++) {
       const sample = samples[i];
-      if (sample.timestamp > tEnd + 0.5) break;
+      const displayTime = sample.timestamp + timeOffsetSecs;
+      if (displayTime > tEnd + 0.5) break;
       if (sample.freq <= 0) continue;
       const midi = freqToMidi(sample.freq);
       if (Number.isFinite(midi) && midi >= VIEW_MIDI_MIN_LIMIT && midi <= VIEW_MIDI_MAX_LIMIT) {
@@ -144,7 +152,8 @@
     if (backingTrack && !isFreeMode) {
       collectVisibleMidi(backingTrack.samples, tStart, tEnd, values);
     }
-    collectVisibleMidi(get(liveVocalSamples), tStart, tEnd, values);
+    const vocalTimeOffsetSecs = -get(latencyMs) / 1000;
+    collectVisibleMidi(get(liveVocalSamples), tStart, tEnd, values, vocalTimeOffsetSecs);
 
     const cur = get(currentPitch);
     if (cur?.freq) {
@@ -259,7 +268,18 @@
       ctx.lineJoin = "round";
       ctx.shadowColor = "rgba(253, 192, 3, 0.4)";
       ctx.shadowBlur = 6;
-      drawSegmentedLine(ctx, vocalSamples, currentT, w, h, tStart, tEnd, viewRange.min, viewRange.max);
+      drawSegmentedLine(
+        ctx,
+        vocalSamples,
+        currentT,
+        w,
+        h,
+        tStart,
+        tEnd,
+        viewRange.min,
+        viewRange.max,
+        -get(latencyMs) / 1000,
+      );
       ctx.shadowBlur = 0;
     }
 
@@ -306,6 +326,7 @@
     tEnd: number,
     viewMin: number,
     viewMax: number,
+    timeOffsetSecs = 0,
   ) {
     // Step 1: 把可見且在範圍內的點分組（time gap > 0.5s 或 midi 出範圍時斷組）
     const segments: Array<Array<{ x: number; y: number }>> = [];
@@ -322,7 +343,7 @@
 
     // 二分搜尋找到 tStart - 0.5 附近的起始 index，避免掃描所有早期 sample
     // 對 5 分鐘歌曲（~30000 samples），從 O(n) 降到 O(log n + visible)
-    const searchTarget = tStart - 0.5;
+    const searchTarget = tStart - 0.5 - timeOffsetSecs;
     let lo = 0;
     let hi = samples.length;
     while (lo < hi) {
@@ -336,7 +357,8 @@
 
     for (let si = lo; si < samples.length; si++) {
       const s = samples[si];
-      if (s.timestamp > tEnd + 0.5) break;
+      const displayTime = s.timestamp + timeOffsetSecs;
+      if (displayTime > tEnd + 0.5) break;
 
       const midi = freqToMidi(s.freq);
       if (midi < viewMin || midi > viewMax) {
@@ -347,7 +369,7 @@
       }
 
       // 斷線條件：時間 gap 過大，或音高跳躍過大
-      const gap = prevT !== null ? s.timestamp - prevT : 0;
+      const gap = prevT !== null ? displayTime - prevT : 0;
       const centJump =
         prevMidi !== null ? Math.abs(midi - prevMidi) * 100 : 0;
 
@@ -356,10 +378,10 @@
         flush();
       }
 
-      const x = timeToX(s.timestamp, currentT, w);
+      const x = timeToX(displayTime, currentT, w);
       const y = midiToY(midi, h, viewMin, viewMax);
       current.push({ x, y });
-      prevT = s.timestamp;
+      prevT = displayTime;
       prevMidi = midi;
     }
     flush();

@@ -358,8 +358,8 @@ impl WsolaProcessor {
             let mut norm_ref = 0.0_f64;
             let mut norm_cand = 0.0_f64;
 
-            for i in 0..compare_len {
-                let a = ref_buf[i] as f64;
+            for (i, sample) in ref_buf.iter().enumerate().take(compare_len) {
+                let a = *sample as f64;
                 let src_idx = base_pos * ch + i * ch + c;
                 let b = if src_idx < source.len() {
                     (source[src_idx] * self.hann[i]) as f64

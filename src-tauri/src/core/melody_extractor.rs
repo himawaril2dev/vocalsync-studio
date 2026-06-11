@@ -47,7 +47,7 @@ use crate::core::melody_track::{MelodyNote, MelodySource, MelodyTrack};
 use crate::core::pitch_data::{freq_to_midi, PitchSample};
 use crate::core::pyin_engine::{PyinAnalyzer, PyinParams, PyinQuality};
 use crate::error::AppError;
-use std::path::PathBuf;
+use std::path::Path;
 
 // ── YIN 參數（對純人聲優化）──────────────────────────────────────
 
@@ -82,7 +82,7 @@ const CREPE_HOP: usize = 160;
 /// 優先嘗試 CREPE AI 引擎，若失敗則 fallback 到 PYIN。
 pub fn extract_melody_from_vocals(
     vocals_path: &str,
-    model_dir: Option<&PathBuf>,
+    model_dir: Option<&Path>,
 ) -> Result<MelodyTrack, AppError> {
     let media = load_media(vocals_path)?;
 
@@ -175,7 +175,7 @@ pub fn extract_melody_from_vocals(
 fn try_crepe(
     mono: &[f32],
     sample_rate: u32,
-    model_dir: &PathBuf,
+    model_dir: &Path,
 ) -> Result<(Vec<PitchSample>, f64), AppError> {
     let result = crepe_engine::analyze_offline(
         mono,
@@ -277,15 +277,16 @@ fn downmix_to_mono(interleaved: &[f32], channels: usize) -> Vec<f32> {
 
 /// 對 mono 訊號跑離線 PYIN，回傳 (pitch samples, quality)。
 fn analyze_mono(mono: &[f32], sample_rate: u32) -> (Vec<PitchSample>, PyinQuality) {
-    let mut params = PyinParams::default();
-    params.sample_rate = sample_rate;
-    params.buf_size = BUF_SIZE;
-    params.hop = HOP_SIZE;
-    params.f_min = F_MIN_HZ;
-    params.f_max = F_MAX_HZ;
-    params.max_threshold = HARMONIC_THRESHOLD;
-    params.rms_threshold = RMS_THRESHOLD;
-    params.unvoiced_cost = 25.0; // 強制 Viterbi 在伴奏干擾時仍偏好保留音高，而不是切斷為 unvoiced
+    let params = PyinParams {
+        sample_rate,
+        buf_size: BUF_SIZE,
+        hop: HOP_SIZE,
+        f_min: F_MIN_HZ,
+        f_max: F_MAX_HZ,
+        max_threshold: HARMONIC_THRESHOLD,
+        rms_threshold: RMS_THRESHOLD,
+        unvoiced_cost: 25.0, // 強制 Viterbi 在伴奏干擾時仍偏好保留音高，而不是切斷為 unvoiced
+    };
 
     let mut analyzer = PyinAnalyzer::new(params);
     let result = analyzer.analyze(mono);
@@ -385,7 +386,7 @@ fn median_freq(freqs: &[f64]) -> f64 {
     let mut sorted: Vec<f64> = freqs.to_vec();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let mid = sorted.len() / 2;
-    if sorted.len() % 2 == 0 {
+    if sorted.len() & 1 == 0 {
         (sorted[mid - 1] + sorted[mid]) * 0.5
     } else {
         sorted[mid]

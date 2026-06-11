@@ -11,7 +11,6 @@
   const ISSUES_URL = "https://github.com/himawaril2dev/vocalsync-studio/issues";
   const SUPPORT_EMAIL = "himawaril2dev@gmail.com";
 
-  /** 後端回傳的 release 資訊結構，對應 `updates_commands::ReleaseInfo` */
   interface ReleaseInfo {
     tag_name: string;
     html_url: string;
@@ -20,10 +19,6 @@
   let checking = $state(false);
   let showUvrGuide = $state(false);
 
-  /**
-   * 比對兩個版本號：回傳 > 0 表示 latest 較新、= 0 相同、< 0 current 較新。
-   * 容忍前綴 "v" 與不同段數（如 "0.2.2" vs "v0.2.2.1"）。
-   */
   function compareVersions(current: string, latest: string): number {
     const a = current.replace(/^v/, "").split(".").map(Number);
     const b = latest.replace(/^v/, "").split(".").map(Number);
@@ -46,8 +41,6 @@
   async function checkForUpdates() {
     checking = true;
     try {
-      // v0.2.2 起走後端 ureq（參見 updates_commands.rs）。
-      // 不再從前端直接 fetch GitHub API，CSP connect-src 因此不必放寬。
       const info = await invoke<ReleaseInfo>("check_latest_release");
       const cmp = compareVersions(VERSION, info.tag_name);
       if (cmp > 0) {
@@ -71,7 +64,7 @@
   </div>
 
   <div class="disclosure">
-    <strong class="disclosure-title">📢 {$t("about.disclosure.title")}</strong>
+    <strong class="disclosure-title">{$t("about.disclosure.title")}</strong>
     <p class="disclosure-body">{$t("about.disclosure.body")}</p>
   </div>
 
@@ -127,16 +120,19 @@
   <div class="card creator-card">
     <h2>{$t("about.creator.title")}</h2>
     <p class="creator-name">himawari</p>
-    <p class="creator-desc">
-      {$t("about.creator.desc")}
-    </p>
-    <a
-      class="donate-btn"
-      href={KOFI_URL}
-      target="_blank"
-      rel="noopener"
-    >
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <p class="creator-desc">{$t("about.creator.desc")}</p>
+    <a class="donate-btn" href={KOFI_URL} target="_blank" rel="noopener">
+      <svg
+        width="20"
+        height="20"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
         <path d="M18 8h1a4 4 0 0 1 0 8h-1" />
         <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z" />
         <line x1="6" y1="1" x2="6" y2="4" />
@@ -149,17 +145,20 @@
 
   <div class="card feedback-card">
     <h2>{$t("about.feedback.title")}</h2>
-    <p class="feedback-desc">
-      {$t("about.feedback.desc")}
-    </p>
+    <p class="feedback-desc">{$t("about.feedback.desc")}</p>
     <div class="feedback-row">
-      <a
-        class="link-btn feedback-btn"
-        href={ISSUES_URL}
-        target="_blank"
-        rel="noopener"
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <a class="link-btn feedback-btn" href={ISSUES_URL} target="_blank" rel="noopener">
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
           <circle cx="12" cy="12" r="10" />
           <line x1="12" y1="8" x2="12" y2="12" />
           <line x1="12" y1="16" x2="12.01" y2="16" />
@@ -168,24 +167,39 @@
       </a>
       <a
         class="link-btn feedback-btn"
-        href="mailto:{SUPPORT_EMAIL}?subject={encodeURIComponent($t('about.feedback.mailSubject', { version: VERSION }))}"
+        href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent($t("about.feedback.mailSubject", { version: VERSION }))}`}
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
           <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
           <polyline points="22,6 12,13 2,6" />
         </svg>
         {$t("about.feedback.email")}
       </a>
     </div>
-    <button
-      type="button"
-      class="email-chip"
-      onclick={copyEmail}
-      title={$t("about.feedback.emailCopyTitle")}
-    >
+    <button type="button" class="email-chip" onclick={copyEmail} title={$t("about.feedback.emailCopyTitle")}>
       <span class="email-label">{$t("about.feedback.emailLabel")}</span>
       <span class="email-value">{SUPPORT_EMAIL}</span>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
         <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
       </svg>
@@ -196,13 +210,23 @@
     <h2>{$t("about.links.title")}</h2>
     <div class="link-row">
       <a class="link-btn" href={GITHUB_URL} target="_blank" rel="noopener">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z" />
         </svg>
         {$t("about.links.github")}
       </a>
-      <button class="link-btn update-btn" onclick={checkForUpdates} disabled={checking}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <button class="link-btn update-btn" type="button" onclick={checkForUpdates} disabled={checking}>
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
           <polyline points="23 4 23 10 17 10" />
           <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
         </svg>
@@ -211,9 +235,7 @@
     </div>
   </div>
 
-  <p class="footer">
-    Built with Tauri + Svelte + Rust
-  </p>
+  <p class="footer">Built with Tauri + Svelte + Rust</p>
 </div>
 
 {#if showUvrGuide}
@@ -312,9 +334,7 @@
     gap: var(--space-lg);
     width: 100%;
     border: 1px solid rgba(159, 122, 0, 0.26);
-    background:
-      radial-gradient(circle at top left, rgba(253, 192, 3, 0.16), transparent 34%),
-      var(--color-bg-surface);
+    background: var(--color-bg-surface);
     color: inherit;
     font: inherit;
     text-align: left;
@@ -353,7 +373,6 @@
     white-space: nowrap;
   }
 
-  /* 快捷鍵 */
   .shortcuts {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
@@ -383,7 +402,6 @@
     color: var(--color-text);
   }
 
-  /* 授權 */
   .license-text {
     margin: 0 0 var(--space-sm);
     font-size: 13px;
@@ -425,8 +443,9 @@
     line-height: 1.6;
   }
 
-  /* 製作者 */
-  .creator-card {
+  .creator-card,
+  .feedback-card,
+  .links-card {
     text-align: center;
   }
 
@@ -437,36 +456,7 @@
     color: var(--color-brand);
   }
 
-  .creator-desc {
-    margin: 0 0 var(--space-lg);
-    font-size: 13px;
-    color: var(--color-text-secondary);
-    line-height: 1.6;
-  }
-
-  .donate-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-sm);
-    padding: var(--space-sm) var(--space-xl);
-    background: var(--color-accent);
-    color: #3d2b00;
-    border-radius: var(--radius-lg);
-    font-size: 14px;
-    font-weight: 600;
-    text-decoration: none;
-    transition: background var(--transition-fast);
-  }
-
-  .donate-btn:hover {
-    background: var(--color-accent-hover);
-  }
-
-  /* 問題回報 */
-  .feedback-card {
-    text-align: center;
-  }
-
+  .creator-desc,
   .feedback-desc {
     margin: 0 0 var(--space-lg);
     font-size: 13px;
@@ -474,7 +464,33 @@
     line-height: 1.6;
   }
 
-  .feedback-row {
+  .donate-btn,
+  .link-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-xl);
+    border-radius: var(--radius-lg);
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+    transition:
+      background var(--transition-fast),
+      border-color var(--transition-fast),
+      color var(--transition-fast);
+  }
+
+  .donate-btn {
+    background: var(--color-accent);
+    color: #3d2b00;
+  }
+
+  .donate-btn:hover {
+    background: var(--color-accent-hover);
+  }
+
+  .feedback-row,
+  .link-row {
     display: flex;
     justify-content: center;
     gap: var(--space-md);
@@ -482,66 +498,15 @@
     margin-bottom: var(--space-md);
   }
 
-  .feedback-btn {
-    color: var(--color-text);
-  }
-
-  .email-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-sm);
-    padding: var(--space-xs) var(--space-md);
-    background: var(--color-bg-hover);
-    border: 1px dashed var(--color-border);
-    border-radius: var(--radius-md);
-    font-size: 12px;
-    color: var(--color-text-secondary);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-  }
-
-  .email-chip:hover {
-    background: var(--color-bg-surface);
-    border-color: var(--color-brand);
-    color: var(--color-text);
-  }
-
-  .email-label {
-    font-weight: 600;
-    color: var(--color-text-muted);
-  }
-
-  .email-value {
-    font-family: var(--font-mono);
-    letter-spacing: 0.2px;
-  }
-
-  /* 連結與更新 */
-  .links-card {
-    text-align: center;
-  }
-
   .link-row {
-    display: flex;
-    justify-content: center;
-    gap: var(--space-md);
-    flex-wrap: wrap;
+    margin-bottom: 0;
   }
 
   .link-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-sm);
-    padding: var(--space-sm) var(--space-xl);
     border: 1px solid var(--color-border);
-    border-radius: var(--radius-lg);
     background: var(--color-bg-surface);
     color: var(--color-text);
-    font-size: 13px;
-    font-weight: 500;
-    text-decoration: none;
     cursor: pointer;
-    transition: all var(--transition-fast);
   }
 
   .link-btn:hover:not(:disabled) {
@@ -561,6 +526,38 @@
   .link-btn:disabled {
     opacity: 0.6;
     cursor: not-allowed;
+  }
+
+  .email-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-xs) var(--space-md);
+    background: var(--color-bg-hover);
+    border: 1px dashed var(--color-border);
+    border-radius: var(--radius-md);
+    font-size: 12px;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition:
+      background var(--transition-fast),
+      border-color var(--transition-fast),
+      color var(--transition-fast);
+  }
+
+  .email-chip:hover {
+    background: var(--color-bg-surface);
+    border-color: var(--color-brand);
+    color: var(--color-text);
+  }
+
+  .email-label {
+    font-weight: 600;
+    color: var(--color-text-muted);
+  }
+
+  .email-value {
+    font-family: var(--font-mono);
   }
 
   .footer {

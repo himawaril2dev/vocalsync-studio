@@ -7,7 +7,7 @@
 //! 與 YIN 差異：
 //! - YIN：每 frame 固定閾值，只挑第一個低於閾值的 τ → 對複雜伴奏容易抓錯八度
 //! - PYIN：每 frame 收多個 candidate（不同閾值對應不同 τ），用 Viterbi 動態規劃
-//!         在所有 frame 之間尋找全域最佳路徑，連續性最佳化、八度跳動最小化
+//!   在所有 frame 之間尋找全域最佳路徑，連續性最佳化、八度跳動最小化
 //!
 //! 設計重點：
 //! - 純 Rust，無 ML、無外部數學庫
@@ -334,9 +334,9 @@ impl PyinAnalyzer {
 
                 let mut best_cost = f64::INFINITY;
                 let mut best_prev = 0_usize;
-                for p in 0..prev_states {
+                for (p, prev_cost) in dp[i - 1].iter().enumerate().take(prev_states) {
                     let trans_cost = self.transition_cost(prev_frame, curr_frame, p, s);
-                    let total = dp[i - 1][p] + trans_cost;
+                    let total = *prev_cost + trans_cost;
                     if total < best_cost {
                         best_cost = total;
                         best_prev = p;
@@ -626,7 +626,7 @@ mod tests {
     /// 避免「過渡 frame」（buf_size 跨越切換點）的混合信號造成 candidate 不一致
     fn two_tone_with_gap(low: f64, high: f64, sr: u32, n_tone: usize, n_gap: usize) -> Vec<f32> {
         let mut out = sine_wave(low, sr, n_tone);
-        out.extend(std::iter::repeat(0.0_f32).take(n_gap));
+        out.resize(out.len() + n_gap, 0.0);
         out.extend(sine_wave(high, sr, n_tone));
         out
     }

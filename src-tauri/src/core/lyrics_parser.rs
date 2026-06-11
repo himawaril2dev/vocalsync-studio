@@ -719,7 +719,7 @@ mod tests {
 
     #[test]
     fn rejects_metadata_correctly() {
-        let lrc = "[ti:歌名]\n[ar:歌手]\n[al:專輯]\n[by:作者]\n[00:10.00]真正歌詞";
+        let lrc = "[ti:歌名]\n[ar:歌手]\n[al:專輯]\n[by:tester]\n[00:10.00]真正歌詞";
         let lines = parse_lrc(lrc);
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].text, "真正歌詞");
@@ -877,7 +877,7 @@ mod tests {
         let srt = "1\n00:00:10,500 00:00:15,000\nBroken line\n\n2\n00:00:15,000 --> 00:00:20,000\nGood line";
         let lines = parse_srt(srt);
         // 第一段壞掉的不應 panic，第二段應正常解析
-        assert!(lines.len() >= 1);
+        assert!(!lines.is_empty());
         assert_eq!(lines.last().unwrap().text, "Good line");
     }
 

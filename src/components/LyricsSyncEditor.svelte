@@ -35,6 +35,8 @@
   let isExporting = $state(false);
   let detectedAudioDurationMs = $state(0);
   let dragState = $state<TimelineDragState | null>(null);
+  let globalDelayMs = $state(0);
+  let globalDelayHistoryCaptured = $state(false);
 
   let lastLyricsKey = $state("");
 
@@ -56,11 +58,17 @@
     return -1;
   });
 
+  let timedLineCount = $derived(lines.filter((line) => line.end_ms > line.start_ms).length);
+  let canShiftGlobally = $derived(timedLineCount > 0);
+
   $effect(() => {
     const storeLines = $lyricsLines;
     if (storeLines.length === 0) {
       lines = [];
       lastLyricsKey = "";
+      undoStack = [];
+      globalDelayMs = 0;
+      globalDelayHistoryCaptured = false;
       return;
     }
 
@@ -76,6 +84,8 @@
       }));
       undoStack = [];
       alignMsg = "";
+      globalDelayMs = 0;
+      globalDelayHistoryCaptured = false;
     }
   });
 
@@ -130,6 +140,8 @@
     const previous = undoStack[undoStack.length - 1];
     undoStack = undoStack.slice(0, -1);
     lines = previous;
+    globalDelayMs = 0;
+    globalDelayHistoryCaptured = false;
     syncLinesToStore();
   }
 
@@ -147,6 +159,11 @@
     const sec = Math.floor((safe % 60000) / 1000);
     const centis = Math.floor((safe % 1000) / 10);
     return `${min}:${sec.toString().padStart(2, "0")}.${centis.toString().padStart(2, "0")}`;
+  }
+
+  function formatSignedMs(ms: number): string {
+    const safe = Math.round(ms);
+    return `${safe >= 0 ? "+" : ""}${safe} ms`;
   }
 
   function parseInputTime(value: string): number | null {
@@ -189,6 +206,61 @@
       end_ms: end,
       synced: true,
     };
+  }
+
+  function beginGlobalDelayChange() {
+    if (globalDelayHistoryCaptured) return;
+    pushHistory();
+    globalDelayHistoryCaptured = true;
+  }
+
+  function finishGlobalDelayChange() {
+    globalDelayHistoryCaptured = false;
+  }
+
+  function applyGlobalDelayValue(requestedMs: number) {
+    if (!canShiftGlobally) return;
+    const targetMs = Math.max(-10000, Math.min(10000, Math.round(requestedMs / 10) * 10));
+    let deltaMs = targetMs - globalDelayMs;
+    if (deltaMs === 0) return;
+
+    const timedLines = lines.filter((line) => line.end_ms > line.start_ms);
+    const earliestStart = timedLines.reduce(
+      (min, line) => Math.min(min, line.start_ms),
+      Number.POSITIVE_INFINITY,
+    );
+    if (!Number.isFinite(earliestStart)) return;
+
+    deltaMs = Math.max(deltaMs, -earliestStart);
+    if (deltaMs === 0) return;
+
+    lines = lines.map((line) => {
+      if (line.end_ms <= line.start_ms) return line;
+      const duration = line.end_ms - line.start_ms;
+      const start = Math.max(0, Math.round(line.start_ms + deltaMs));
+      return {
+        ...line,
+        start_ms: start,
+        end_ms: start + duration,
+        synced: true,
+      };
+    });
+    globalDelayMs += deltaMs;
+    alignMsg = "";
+    syncLinesToStore();
+  }
+
+  function handleGlobalDelayInput(event: Event) {
+    if (!canShiftGlobally) return;
+    beginGlobalDelayChange();
+    applyGlobalDelayValue(Number((event.currentTarget as HTMLInputElement).value));
+  }
+
+  function resetGlobalDelay() {
+    if (!canShiftGlobally || globalDelayMs === 0) return;
+    pushHistory();
+    applyGlobalDelayValue(0);
+    globalDelayHistoryCaptured = false;
   }
 
   async function exportSubtitle() {
@@ -316,6 +388,40 @@
 
     <div class="sync-help">
       <p>{$t("lyricsSync.help.manual")}</p>
+    </div>
+
+    <div class="global-delay-panel" class:disabled={!canShiftGlobally}>
+      <div class="global-delay-header">
+        <div>
+          <strong>{$t("lyricsSync.globalDelay.title")}</strong>
+          <span>{$t(canShiftGlobally ? "lyricsSync.globalDelay.hint" : "lyricsSync.globalDelay.disabled")}</span>
+        </div>
+        <span class="global-delay-value">{formatSignedMs(globalDelayMs)}</span>
+      </div>
+      <div class="global-delay-controls">
+        <input
+          id="global_delay"
+          type="range"
+          min="-10000"
+          max="10000"
+          step="10"
+          value={globalDelayMs}
+          disabled={!canShiftGlobally}
+          aria-label={$t("lyricsSync.globalDelay.title")}
+          oninput={handleGlobalDelayInput}
+          onpointerup={finishGlobalDelayChange}
+          onkeyup={finishGlobalDelayChange}
+          onchange={finishGlobalDelayChange}
+        />
+        <button
+          class="sync-btn"
+          onclick={resetGlobalDelay}
+          disabled={!canShiftGlobally || globalDelayMs === 0}
+          title={$t("lyricsSync.globalDelay.reset.title")}
+        >
+          {$t("lyricsSync.globalDelay.reset.text")}
+        </button>
+      </div>
     </div>
 
     {#if alignMsg}
@@ -485,6 +591,66 @@
     margin: 0;
   }
 
+  .global-delay-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px var(--space-lg);
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-bg-sidebar);
+  }
+
+  .global-delay-panel.disabled {
+    opacity: 0.65;
+  }
+
+  .global-delay-header {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-md);
+    align-items: flex-start;
+    min-width: 0;
+  }
+
+  .global-delay-header > div {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .global-delay-header strong {
+    font-size: 13px;
+    color: var(--color-text);
+  }
+
+  .global-delay-header span {
+    font-size: 12px;
+    color: var(--color-text-muted);
+    line-height: 1.45;
+  }
+
+  .global-delay-value {
+    flex-shrink: 0;
+    min-width: 82px;
+    text-align: right;
+    font-family: var(--font-mono);
+    color: var(--color-brand);
+    font-size: 13px;
+  }
+
+  .global-delay-controls {
+    display: grid;
+    grid-template-columns: minmax(120px, 1fr) auto;
+    gap: var(--space-sm);
+    align-items: center;
+  }
+
+  .global-delay-controls input[type="range"] {
+    width: 100%;
+    accent-color: var(--color-brand);
+  }
+
   .sync-lines {
     flex: 1;
     overflow-y: auto;
@@ -640,6 +806,18 @@
 
     .line-meta {
       grid-template-columns: 28px 1fr 1fr;
+    }
+
+    .global-delay-header {
+      flex-direction: column;
+    }
+
+    .global-delay-value {
+      text-align: left;
+    }
+
+    .global-delay-controls {
+      grid-template-columns: minmax(0, 1fr);
     }
   }
 </style>

@@ -8,9 +8,6 @@ VocalSync Studio is a desktop application that combines backing-track playback, 
 
 📖 **User guide**: [English](docs/USER_GUIDE.en.md)｜[繁體中文](docs/USER_GUIDE.md)｜[日本語](docs/USER_GUIDE.ja.md) (an offline HTML copy is also bundled in the portable zip)
 
-> 📢 **Disclosure**
-> The author has no prior programming background. This project was built through AI collaboration (Claude / Codex) — architecture, code, and UI were all AI-generated. All features have been tested and cross-model reviewed (Claude for implementation, Codex for independent audit). Please evaluate the risk against your own use case before adopting.
-
 ## Features
 
 - **YouTube downloader** — paste a URL to download a backing track (yt-dlp + FFmpeg are installed automatically)
@@ -18,7 +15,8 @@ VocalSync Studio is a desktop application that combines backing-track playback, 
 - **AI pitch detection** — analyze sung pitch with the CREPE neural network model (runs offline, no network required)
 - **Pitch curve comparison** — display your vocal pitch side-by-side with the target melody
 - **Guide vocal monitoring** — use an imported vocals track as a low-volume reference without exporting it
-- **Lyrics sync** — supports LRC / SRT / VTT formats, with automatic bilingual detection
+- **Lyrics sync** — supports LRC / SRT / VTT / TXT, with global delay and per-line Start / End timing directly on the Recording lyrics panel
+- **Song library** — save per-song backing, lyrics, melody, guide vocal, sync, mix, loop, speed, and key settings; load, edit, and save the current song directly from Songs
 - **A–B loop** — repeat specific sections for focused practice
 - **Speed change** — WSOLA time-stretching that preserves pitch
 
@@ -37,19 +35,19 @@ VocalSync Studio is a desktop application that combines backing-track playback, 
 
 ### Download from Release (recommended)
 
-1. Go to the [Releases](https://github.com/himawaril2dev/vocalsync-studio/releases) page and download the latest `VocalSync.Studio.Portable.x.y.z.zip`
+1. Go to the trusted release page and download the latest `VocalSync.Studio.Portable.x.y.z.zip`
 2. Unzip it anywhere you like (e.g. the desktop or `D:\Tools\`)
 3. Open the folder and double-click **`vocalsync-studio.exe`** to launch
 
-> ⚠️ **Do not rearrange the folder contents**
-> `DirectML.dll`, `yt-dlp.exe`, and `models/` are runtime dependencies loaded by `vocalsync-studio.exe` at startup. **Do not move them individually.** If you want to relocate the app, move the entire folder as a unit.
+> **Do not rearrange the folder contents**
+> `DirectML.dll` and `models/` are runtime dependencies loaded by `vocalsync-studio.exe` at startup. **Do not move them individually.** Auto-installed yt-dlp / FFmpeg files are placed in the same portable root; if you want to relocate the app, move the entire folder as a unit.
 
 | File | Description |
 |---|---|
 | **`vocalsync-studio.exe`** | Main executable ← launch this |
 | `DirectML.dll` | ONNX Runtime's DirectX ML acceleration DLL (required by CREPE pitch detection) |
-| `yt-dlp.exe` | YouTube backing-track download CLI |
 | `models/crepe-tiny.onnx` | CREPE pitch detection model |
+| `yt-dlp.exe` / `ffmpeg.exe` / `ffprobe.exe` | Appears only after using the auto-install tools |
 
 ### Tested Environment
 
@@ -65,7 +63,7 @@ Tauri builds for macOS / Linux are theoretically possible (the source is cross-p
 > The binary is not currently code-signed, so Windows SmartScreen may show a "Windows protected your PC" warning.
 > Click **"More info"** in the top-left of the warning window, then press the **"Run anyway"** button that appears to launch the app.
 > The warning will not appear again for the same exe.
-> If you want extra assurance, download the zip from the Releases page and verify it with `certutil -hashfile "filename.zip" SHA256` against the digest published on GitHub.
+> For extra assurance, download the zip from the release page and verify it with `certutil -hashfile "filename.zip" SHA256` against the digest published on the same page.
 
 ### Build from source
 
@@ -82,14 +80,15 @@ npm install
 npm run tauri dev
 
 # 3. Release build
-npm run tauri build
+npm run tauri:build:release
 
-# 4. (Optional) Generate the offline USER_GUIDE HTML and repack it into the portable zip
-npm run build:docs          # emits dist-docs/*.html
-npm run pack:portable-docs  # copies HTML into the portable folder and rebuilds the zip
+# 4. Build portable zip with offline USER_GUIDE HTML
+npm run pack:portable
 ```
 
 Build artifacts land in `src-tauri/target/release/bundle/`.
+`npm run tauri:build:release` outputs the app executable: `src-tauri/target/release/vocalsync-studio.exe`.
+`npm run pack:portable` outputs the only release package: `src-tauri/target/release/bundle/portable/VocalSync.Studio.Portable.x.y.z.zip`.
 
 ## Project Structure
 
@@ -98,7 +97,7 @@ vocalsync-studio/
 ├── src/                    # Svelte frontend
 │   ├── components/         # UI components (pitch curve, lyrics panel, calibrator, ...)
 │   ├── stores/             # State management (playback, recording, lyrics, settings, ...)
-│   └── tabs/               # Pages (Setup, Recording, Pitch, About)
+│   └── tabs/               # Pages (Setup, Songs, Recording, Pitch, About)
 ├── src-tauri/
 │   └── src/
 │       ├── commands/       # Tauri IPC commands
@@ -128,12 +127,14 @@ vocalsync-studio/
 
 ## Feedback & Bug Reports
 
-Questions, bug reports, and feature requests are all very welcome. You can reach out through either of the following channels:
+Questions, bug reports, and feature requests are welcome. You can reach me through either channel:
 
 - **GitHub Issues**: [vocalsync-studio/issues](https://github.com/himawaril2dev/vocalsync-studio/issues)
 - **Email**: `himawaril2dev@gmail.com`
 
 If you can include the OS version, VocalSync Studio version, reproduction steps, and a screenshot of the error, it will be much easier to track the issue down.
+
+The About tab's "Check update" button is manual. It queries GitHub Releases only when you press it.
 
 ## License
 
@@ -191,6 +192,6 @@ VocalSync Studio is purely a local vocal practice companion. The copyright and l
 
 ## Support Development
 
-If this tool helps your vocal practice, please consider buying me a coffee:
+If this tool helps your vocal practice, you can buy me a coffee to support continued development:
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/himawari168)
+[Support on Ko-fi](https://ko-fi.com/himawari168)

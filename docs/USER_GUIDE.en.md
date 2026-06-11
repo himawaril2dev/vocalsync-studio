@@ -2,9 +2,8 @@
 
 [繁體中文](USER_GUIDE.md) | **English** | [日本語](USER_GUIDE.ja.md)
 
-> Applies to: v0.2.15 or newer
-> Last updated: 2026-05
-> Report documentation issues: [GitHub Issues](https://github.com/himawaril2dev/vocalsync-studio/issues)
+> Applies to: v0.4.0 or newer
+> Last updated: 2026-06
 
 ---
 
@@ -25,10 +24,11 @@
    - [4.9 A-B Loop](#49-a-b-loop)
    - [4.10 Speed · Pitch Shift](#410-speed--pitch-shift)
    - [4.11 Exporting Your Recording](#411-exporting-your-recording)
+   - [4.12 Song Library](#412-song-library)
 5. [Keyboard Shortcuts](#5-keyboard-shortcuts)
 6. [FAQ](#6-faq)
 7. [Troubleshooting](#7-troubleshooting)
-8. [Reporting Issues · Supporting the Project](#8-reporting-issues--supporting-the-project)
+8. [Reporting Issues](#8-reporting-issues)
 
 ---
 
@@ -44,7 +44,6 @@ VocalSync Studio is a **desktop practice room** for vocalists who want to:
 The app runs **fully offline** (except for downloading backing tracks). Your recordings stay on your computer — nothing is uploaded to any cloud service.
 
 > 📢 **Transparency statement**
-> The author is not a professional developer. This project was built in collaboration with AI (Claude / Codex). Every feature has been hand-tested and cross-reviewed across multiple models, but please evaluate the risk for your own use case before relying on it.
 
 ---
 
@@ -69,11 +68,11 @@ If yt-dlp or FFmpeg is missing on first use, click **Auto Install** and the app 
 
 **Option B: Use a local audio file**
 
-Expand the **Backing Track** section → click **Import Backing** → choose an MP3 / WAV / M4A (etc.) file.
+Open **Songs** → in **Song and Pitch Sources**, click **Import Backing** → choose an MP3 / WAV / M4A (etc.) file.
 
 ### Step 3｜Add a pitch curve and guide vocal (optional, recommended)
 
-If you have the original song, first separate `vocals.wav` with UVR5 / Moises / Demucs. Then expand **Pitch Curve Source** → click **Import vocals track (vocals.wav)**.
+If you have the original song, first separate `vocals.wav` with UVR5 / Moises / Demucs. Then open **Songs** → **Song and Pitch Sources** → click **Import vocals track (vocals.wav)**.
 
 After importing, VocalSync does two things:
 
@@ -89,13 +88,13 @@ Expand the **Device Selection** section:
 - **Input device**: your microphone
 - **Output device**: your headphones (**we strongly recommend headphones** — otherwise the mic picks up the backing and your recording ends up muddy)
 
-### Step 5｜Calibrate latency (recommended on first use)
+### Step 5 - Calibrate latency (recommended on first use)
 
-Expand the **Latency Calibration** section → click **Start Calibration** → put on your headphones and **clap along to the woodblock clicks from the metronome** (tapping the desk or saying "ta" into the mic works too).
+Expand **Latency Calibration** and click **Calibrate latency**. The app reads stream timestamp latency and buffer latency reported by the audio devices, estimates the recording/playback delay for this microphone/headphone pair, and saves it to the device-pair profile.
 
-The app plays 8 beats (2 warmup + 6 measurement) and measures the delay between your claps and the metronome. It automatically calculates the best offset and remembers it — you won't need to redo this unless your device changes.
+When you need a value closer to real singing, expand **Rhythm voice calibration**, wear headphones, and make short voice sounds into the mic on the beat. The manual fine-tune slider and shortcut buttons also save immediately to the same device-pair profile.
 
-### Step 6｜Start recording
+### Step 6 - Start recording
 
 1. Switch to the **Recording** tab
 2. Press the spacebar or the **red record button** to start
@@ -109,27 +108,28 @@ The lower half shows your pitch curve in real time. The top area shows lyrics or
 
 ## 3. Main Interface Tour
 
-The left sidebar has 4 tabs:
+The left sidebar has 5 tabs:
 
 ### 🎯 Setup
 
-This is where the app opens by default. Everything you should set up **before hitting record** lives here, grouped into collapsible sections:
+This is where the app opens by default. Global app and device settings live here, grouped into collapsible sections:
 
 - YouTube Download
-- Backing Track
-- Lyrics / Subtitles
-- Pitch Curve Source
 - Device Selection
 - Latency Calibration
 
 Collapsed/expanded state is preserved across tab switches, so you don't have to re-open sections every time.
+
+### 🎼 Songs
+
+This is the per-song preparation page. Load the backing, lyrics/subtitles, melody source, and guide vocal here, then save them as a song profile.
 
 ### 🎤 Recording
 
 This is the main workspace. The top half is split into two columns (drag the divider to adjust the ratio):
 
 - **Left**: video / audio file info (video shows its frame if imported)
-- **Right**: lyrics panel / lyrics sync editor (switchable)
+- **Right**: lyrics panel with current-line highlight, global delay, and per-line Start / End sync buttons
 
 The bottom half is a **full-width pitch timeline** showing your singing versus the target melody in real time.
 
@@ -145,8 +145,6 @@ A tab dedicated to pitch analysis. The header shows melody status and alignment 
 Use this tab when you just want to review your last recording's pitch curve against the target without recording anything new.
 
 ### ℹ️ About
-
-Version info, transparency statement, license, and support links.
 
 ### Language Switcher
 
@@ -196,7 +194,7 @@ If any subtitle files (`.srt` / `.vtt` / `.lrc`) were captured, a subtitle list 
 
 ### 4.2 Importing a Backing Track
 
-**Location**: Setup tab → Backing Track section
+**Location**: Songs tab → Song and Pitch Sources section
 
 Click **Import Backing** and pick a local file. Supported formats:
 
@@ -210,7 +208,7 @@ After a successful import you'll see file name, duration, and type (audio / vide
 
 ### 4.3 Lyrics and Subtitles
 
-**Location**: Setup tab → Lyrics / Subtitles section
+**Location**: Songs tab → Lyrics / Subtitles section
 
 Supported lyrics formats:
 
@@ -231,11 +229,11 @@ Supported lyrics formats:
 
 On the Recording tab, switch the top-right panel to **Lyrics** — the current line auto-centers and is highlighted as playback progresses.
 
-If the subtitle file's timing is off (e.g. YouTube auto-captions often lag 1–2 s), switch to the **Lyrics Sync Editor** for a visual batch shift.
+If subtitle timing is off, use the **Global delay** slider directly in the Recording lyrics panel to shift the whole track. During playback, click a line's Start / End buttons to write the current playback time into that lyric line. LRC / SRT / ASS exports use the adjusted timing.
 
 ### 4.4 Pitch Curve Source and Guide Vocal
 
-**Location**: Setup tab → Pitch Curve Source section
+**Location**: Songs tab → Song and Pitch Sources section
 
 The pitch curve source appears as a **grey-blue line** on the pitch timeline and is your reference while practicing. Two sources are supported:
 
@@ -257,7 +255,7 @@ The guide vocal is monitor-only and is not mixed into exported vocal / mix files
 
 - **Learning a new song**: set Guide to 15 to 30% so you can hear the melody and entry points
 - **Recording a final take**: lower Guide to 0 to 10%, or uncheck guide monitoring
-- **Alignment check**: if the guide and backing feel offset, adjust fine-tune on the Setup tab; the guide and pitch curve move together
+- **Alignment check**: if the guide and backing feel offset, adjust fine-tune on the Songs tab; the guide and pitch curve move together
 - **Export behavior**: Guide is headphone monitoring only, and exported vocal / mix WAV files do not include the guide vocal
 
 #### Source B: Load MIDI (**manual reference**)
@@ -309,37 +307,31 @@ The CREPE model is `models/crepe-tiny.onnx` (~22 MB) and loads into memory at st
 
 ### 4.6 Latency Calibration
 
-**Location**: Setup tab → Latency Calibration section
+**Location**: Setup tab > Latency Calibration section.
 
 **Why calibration is needed**:
 
-Your mic input → audio driver → OS → this app → audio driver → headphones creates a pipeline with tens to hundreds of milliseconds of delay. Without calibration, your recorded vocal lands **50–200 ms later** than the backing, and the pitch curve won't line up with the lyrics.
+Mic input, audio drivers, system processing, app processing, and headphone output create a short delay. Calibration makes the recorded vocal line up more closely with the backing track, pitch curve, and lyrics.
 
-#### Auto-Calibration Flow (Clap-Along Method)
+#### Recommended Flow: Pre-Recording Estimate + Manual Fine-Tune
 
-1. Put on headphones and make sure your input/output devices are correctly selected
-2. Click **Start Calibration** — the app enters a 1.5-second preparation window
-3. **The metronome starts playing woodblock clicks** (BPM 70, 8 beats total)
-4. **Clap along with the metronome** (tapping the desk or saying "ta" into the mic also works)
-5. The first 2 beats are warmup to help you lock in the tempo; only the next 6 are measured
-6. When done, you'll see a result like: **"Best latency: 123 ms (standard deviation ±4.2 ms)"**
+1. Choose the input and output devices.
+2. In **Latency Calibration**, click **Calibrate latency**.
+3. The app briefly opens input and output streams and reads timestamp latency reported by the device.
+4. When the device reports partial data, the app estimates the remaining part from buffer latency.
+5. Successful results are saved to the current input device + output device + sample-rate profile.
+6. When the device does not provide usable latency data, the previous latency value is kept.
 
-How it works: the app compares the timestamp of each clap with the metronome's beat and takes the median — that's your device latency. At least **3 valid beats** are required; if calibration fails you'll see an error prompting you to check mic level.
+The pre-recording estimate finishes with one click after device selection.
 
-The calibrated value is saved to settings, so you don't have to redo it at next launch.
+Manual fine-tune on the Setup tab and **Sync fine-tune** on the Recording tab use the same latency value. The slider and `-20`, `-10`, `-5`, `+5`, `+10`, `+20 ms` buttons adjust the current value directly and save immediately.
 
-#### Tips for Clean Claps
+#### Optional Tool: Rhythm Voice Calibration
 
-- **Keep the environment quiet**: AC/fan noise triggers false onsets
-- **Make your claps crisp**: palm-to-palm claps have sharper onsets than fingertip taps
-- **Don't anticipate**: wait until you hear the woodblock before clapping — claps before the beat are rejected as outliers
-- **Don't let the mic level be too low**: your claps need to clearly rise above the noise floor for detection to work
-
-#### Manual Adjustment
-
-If auto-calibration didn't give a good result (e.g. error "only 2 valid beats detected", or standard deviation too high indicating device jitter), use the slider to manually tune between 0 and 500 ms.
-
-Suggested workflow: record a short clip, play it back, and compare. If your vocal feels **behind** the backing → increase latency; **ahead** → decrease it.
+1. Expand **Rhythm voice calibration**.
+2. Wear headphones and say a short `ta`, `da`, or `ah` into the mic on each beat.
+3. The app gives 2 warm-up beats, measures 8 beats, and stops automatically.
+4. High or medium confidence results are saved; low confidence results keep the previous latency value.
 
 ### 4.7 Preview · Record · Playback
 
@@ -374,6 +366,8 @@ If you're unhappy with a take and want to redo the whole thing, press **Clear Re
 
 After recording, press **Playback** in the control row — the app plays the backing and your recorded vocal together (automatically compensated by the calibrated latency) so you can immediately hear the alignment.
 
+After recording, **Sync fine-tune** appears on the Recording tab. While playback is running, drag the slider or press `±5 / ±10 / ±20 ms` to move the vocal earlier or later in real time. The saved value also applies to the pitch curve and export.
+
 ### 4.8 Pitch Timeline
 
 Shown in the lower half of the Recording tab / full-screen on the Pitch tab. It scrolls left-right following playback and updates in real time.
@@ -393,7 +387,7 @@ The backend runs CREPE or PYIN at **16 ms** frames, outputting frequency (Hz) �
 
 #### Latency Compensation
 
-The live pitch you see on screen **already has calibrated latency applied**, so the alignment between your line, the lyrics, and the target melody represents the **true sync point**. You can judge "did I hit the note" directly from the display.
+The vocal pitch shown on screen is compensated by the current latency value. When you drag **Sync fine-tune**, the gold line moves horizontally in real time. The alignment between your line, the lyrics, and the target melody represents the true sync point.
 
 ### 4.9 A-B Loop
 
@@ -461,6 +455,23 @@ If you prefer full manual control over the mix, uncheck it — export will respe
 
 ---
 
+### 4.12 Song Library
+
+**Location**: left sidebar -> **Songs**, and the quick song selector at the top of the Recording tab.
+
+The song library saves each song's pre-recording setup: backing track, lyrics and subtitle timing, melody, guide vocal, guide enabled state, sync fine-tune, mix levels, vocal-forward preset, A-B loop, playback speed, and key shift.
+
+Workflow:
+
+1. Open **Songs**, load the backing, lyrics, melody, and guide vocal, then adjust sync and mix.
+2. Enter a song title and click **Save to library**.
+3. Later, click **Load** on a song card in Songs, or select that song from the Recording tab selector. The setup is restored.
+4. After changing lyrics, sync, guide vocal, or mix from Songs or Recording, the current song is marked changed. Click **Save** on the song card or **Update song** on Recording to save the new setup.
+
+The song library does not store the recorded vocal buffer. When loading another song while a recording exists, the app asks for confirmation before clearing it.
+
+---
+
 ## 5. Keyboard Shortcuts
 
 | Key | Function | When |
@@ -509,8 +520,6 @@ If you prefer full manual control over the mix, uncheck it — export will respe
 
 ### Q6. Does it support macOS or Linux?
 
-**A**: The source itself is cross-platform (Tauri v2 + Rust), so in theory you can build it on macOS / Linux. But there's **no official portable release** and it hasn't been tested on real hardware there. If you're interested, fork the repo, run `npm run tauri build`, and please report results on GitHub Issues.
-
 ### Q7. Does this app upload my recordings?
 
 **A**: **No**. The app is fully offline. Aside from network requests to YouTube when you download a backing track, recording, pitch analysis, and export all happen on your machine. Exported WAV files go to the folder you specify — they are never uploaded anywhere.
@@ -524,7 +533,7 @@ If you prefer full manual control over the mix, uncheck it — export will respe
 
 ### Q9. Can I report a bug or request a feature?
 
-**A**: Absolutely! See [Reporting Issues · Supporting the Project](#8-reporting-issues--supporting-the-project) below.
+**A**: Yes. You can report through GitHub Issues or email. See "[Reporting Issues](#8-reporting-issues)" below.
 
 ---
 
@@ -562,12 +571,9 @@ If you prefer full manual control over the mix, uncheck it — export will respe
 
 ---
 
-## 8. Reporting Issues · Supporting the Project
+## 8. Reporting Issues
 
 ### Reporting a bug or suggesting a feature
-
-- **GitHub Issues**: <https://github.com/himawaril2dev/vocalsync-studio/issues>
-- **Email**: `himawaril2dev@gmail.com`
 
 Including the following information will make debugging much faster:
 
@@ -577,14 +583,15 @@ Including the following information will make debugging much faster:
 - Screenshot of the error message
 - For audio-related issues, include input / output device model
 
-### Supporting the Project
+Report through either channel:
 
-If this tool has been helpful for your vocal practice, I'd love a coffee:
+- **GitHub Issues**: <https://github.com/himawaril2dev/vocalsync-studio/issues>
+- **Email**: `himawaril2dev@gmail.com`
 
-[☕ Ko-fi - himawari168](https://ko-fi.com/himawari168)
+The About tab also includes GitHub, Ko-fi, and a manual **Check update** button. The update check contacts GitHub Releases only when you press the button.
 
-Or give the project a ⭐ on GitHub — that's the most meaningful support of all!
+If VocalSync Studio helps your practice, you can support continued development on Ko-fi: <https://ko-fi.com/himawari168>
 
 ---
 
-*Last updated: 2026-05 · VocalSync Studio v0.2.15*
+*Last updated: 2026-06 · VocalSync Studio v0.4.0*

@@ -29,22 +29,16 @@
     inputDeviceIndex,
     outputDeviceIndex,
     latencyMs,
-    calibrationStatus,
-    resetCalibrationStatus,
     pitchEngine,
     guideVocalEnabled,
   } from "../stores/settings";
-  import CalibrationVisualizer from "../components/CalibrationVisualizer.svelte";
-  import LyricsPrepTools from "../components/LyricsPrepTools.svelte";
-  import UvrGuideModal from "../components/UvrGuideModal.svelte";
+  import LatencyFineTuneControl from "../components/LatencyFineTuneControl.svelte";
   import DownloadTab from "./DownloadTab.svelte";
   import { t, tSync } from "../i18n";
   import { projectSessionReady } from "../stores/projectSession";
 
   type SetupSectionKey =
     | "download"
-    | "lyrics"
-    | "song"
     | "device"
     | "calibration";
   type SetupSections = Record<SetupSectionKey, boolean>;
@@ -53,8 +47,6 @@
   const PROJECT_SESSION_VERSION = 1;
   const DEFAULT_SECTIONS: SetupSections = {
     download: true,
-    lyrics: true,
-    song: true,
     device: true,
     calibration: true,
   };
@@ -62,7 +54,6 @@
   /** 各區塊收合狀態 */
   let sections = $state<SetupSections>({ ...DEFAULT_SECTIONS });
   let sectionsLoaded = $state(false);
-  let showUvrGuide = $state(false);
 
   interface DeviceInfo {
     name: string;
@@ -102,8 +93,34 @@
   let currentBackingPath = $derived($loadedMedia?.file_path ?? null);
 
   /** AppSettings 子集合（只取此頁需要的欄位）*/
+  interface LatencyCalibrationProfile {
+    key: string;
+    input_device: string;
+    output_device: string;
+    sample_rate: number;
+    latency_ms: number;
+    confidence: string;
+    updated_at_unix: number;
+  }
+
   interface PartialAppSettings {
     calibrated_latency_ms: number | null;
+    calibrated_latency_profiles?: LatencyCalibrationProfile[];
+    pitch_engine?: string;
+  }
+
+  type CalibrationConfidence = "high" | "medium" | "low" | "manual" | "estimated";
+
+  interface CalibrationResult {
+    latency_ms: number;
+    confidence: CalibrationConfidence;
+    rounds_used: number;
+    valid_beats: number;
+    measurement_beats: number;
+    std_dev_ms: number;
+    round_spread_ms: number;
+    applied_recommended: boolean;
+    diagnostic: string;
   }
 
   interface SubtitleStream {
@@ -182,7 +199,14 @@
 
   // 裝置列表與校準狀態
   let devices = $state<DeviceList | null>(null);
+  let loadedSettings = $state<PartialAppSettings | null>(null);
+  let skipNextProfileApply = $state(false);
   let calibrationResultText = $state("");
+  let manualCalibrationOpen = $state(false);
+  let systemCalibrationBusy = $state(false);
+  let rhythmVoiceCalibrationOpen = $state(false);
+  let rhythmVoiceCalibrationBusy = $state(false);
+  let calibrationBusy = $derived(systemCalibrationBusy || rhythmVoiceCalibrationBusy);
   let deviceMsg = $state("");
 
   let pitchEngineLoaded = false;
@@ -192,6 +216,96 @@
 
   function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null;
+  }
+
+  function currentSampleRate(): number {
+    return $loadedMedia?.sample_rate ?? 44100;
+  }
+
+  function selectedDeviceName(list: DeviceInfo[] | undefined, index: number | null): string | null {
+    if (!list || index === null) return null;
+    return list.find((device) => device.index === index)?.name ?? null;
+  }
+
+  function currentInputDeviceName(): string | null {
+    return selectedDeviceName(devices?.input_devices, $inputDeviceIndex);
+  }
+
+  function currentOutputDeviceName(): string | null {
+    return selectedDeviceName(devices?.output_devices, $outputDeviceIndex);
+  }
+
+  function latencyProfileKey(
+    inputName: string,
+    outputName: string,
+    sampleRate: number,
+  ): string {
+    return `${inputName.trim().toLowerCase()}|${outputName.trim().toLowerCase()}|${sampleRate}`;
+  }
+
+  function applyStoredLatencyForCurrentDevices(settings: PartialAppSettings): void {
+    const inputName = currentInputDeviceName();
+    const outputName = currentOutputDeviceName();
+    const sampleRate = currentSampleRate();
+    const profile =
+      inputName && outputName
+        ? settings.calibrated_latency_profiles?.find(
+            (item) => item.key === latencyProfileKey(inputName, outputName, sampleRate),
+          )
+        : null;
+
+    if (profile && typeof profile.latency_ms === "number") {
+      $latencyMs = Math.round(profile.latency_ms);
+      calibrationResultText = tSync("setup.calibration.result.profileLoaded", {
+        ms: $latencyMs,
+        confidence: tSync(`calibration.confidence.${profile.confidence}`),
+      });
+      return;
+    }
+
+    if (typeof settings.calibrated_latency_ms === "number") {
+      $latencyMs = Math.round(settings.calibrated_latency_ms);
+      calibrationResultText = tSync("setup.calibration.result.lastLoaded", {
+        ms: $latencyMs,
+      });
+    }
+  }
+
+  function updateLocalLatencyProfile(result: CalibrationResult): void {
+    if (!loadedSettings) return;
+    const inputName = currentInputDeviceName();
+    const outputName = currentOutputDeviceName();
+    const sampleRate = currentSampleRate();
+    if (!inputName || !outputName) {
+      loadedSettings = {
+        ...loadedSettings,
+        calibrated_latency_ms: result.latency_ms,
+      };
+      return;
+    }
+
+    const key = latencyProfileKey(inputName, outputName, sampleRate);
+    const profile: LatencyCalibrationProfile = {
+      key,
+      input_device: inputName,
+      output_device: outputName,
+      sample_rate: sampleRate,
+      latency_ms: result.latency_ms,
+      confidence: result.confidence,
+      updated_at_unix: Math.floor(Date.now() / 1000),
+    };
+    const profiles = [...(loadedSettings.calibrated_latency_profiles ?? [])];
+    const existingIdx = profiles.findIndex((item) => item.key === key);
+    if (existingIdx >= 0) {
+      profiles[existingIdx] = profile;
+    } else {
+      profiles.push(profile);
+    }
+    loadedSettings = {
+      ...loadedSettings,
+      calibrated_latency_ms: result.latency_ms,
+      calibrated_latency_profiles: profiles,
+    };
   }
 
   function sanitizeLyricsLines(value: unknown): LyricLine[] {
@@ -410,12 +524,7 @@
     // Component Mount 時：(1) 載入持久化設定 (2) 列舉硬體裝置
     invoke<PartialAppSettings & Record<string, unknown>>("load_settings")
       .then((s) => {
-        if (typeof s.calibrated_latency_ms === "number") {
-          $latencyMs = Math.round(s.calibrated_latency_ms);
-          calibrationResultText = tSync("setup.calibration.result.lastLoaded", {
-            ms: $latencyMs,
-          });
-        }
+        loadedSettings = s;
         if (typeof s.pitch_engine === "string") {
           $pitchEngine = s.pitch_engine as import("../stores/settings").PitchEngineType;
         }
@@ -438,6 +547,20 @@
       .catch((e) => console.error("列舉裝置失敗:", e));
   });
 
+  $effect(() => {
+    const settings = loadedSettings;
+    void devices;
+    void $inputDeviceIndex;
+    void $outputDeviceIndex;
+    void $loadedMedia?.sample_rate;
+    if (!settings || !devices) return;
+    if (skipNextProfileApply) {
+      skipNextProfileApply = false;
+      return;
+    }
+    applyStoredLatencyForCurrentDevices(settings);
+  });
+
   // pitchEngine 變更時同步到後端設定
   $effect(() => {
     const engine = $pitchEngine;
@@ -446,29 +569,125 @@
       .catch((e: unknown) => console.error("同步 pitchEngine 設定失敗:", e));
   });
 
-  async function startCalibration() {
-    if ($calibrationStatus.isRunning) return;
-    resetCalibrationStatus();
-    calibrationResultText = tSync("setup.calibration.result.prep");
+  function latencyDiagnosticText(code: string | null | undefined): string {
+    const key = code
+      ? `setup.calibration.diagnostic.${code}`
+      : "setup.calibration.diagnostic.low_confidence";
+    return tSync(key);
+  }
+
+  function clampLatency(value: number): number {
+    return Math.max(0, Math.min(5000, Math.round(value)));
+  }
+
+  function calibrationConfidenceText(confidence: string): string {
+    return tSync(`calibration.confidence.${confidence}`);
+  }
+
+  async function saveLatencyProfile(
+    latencyMsValue: number,
+    confidence: CalibrationConfidence,
+  ): Promise<void> {
+    const latency = clampLatency(latencyMsValue);
+    $latencyMs = latency;
+    await invoke("update_calibrated_latency", {
+      latencyMs: latency,
+      inputDeviceName: currentInputDeviceName(),
+      outputDeviceName: currentOutputDeviceName(),
+      sampleRate: currentSampleRate(),
+      confidence,
+    });
+    skipNextProfileApply = true;
+    updateLocalLatencyProfile({
+      latency_ms: latency,
+      confidence,
+      rounds_used: 0,
+      valid_beats: 0,
+      measurement_beats: 0,
+      std_dev_ms: 0,
+      round_spread_ms: 0,
+      applied_recommended: true,
+      diagnostic: "",
+    });
+  }
+
+  async function startSystemCalibration(): Promise<void> {
+    if (calibrationBusy) return;
+    const oldLatencyMs = $latencyMs;
+    systemCalibrationBusy = true;
+    calibrationResultText = tSync("setup.calibration.system.result.prep");
     try {
-      const res: number = await invoke("calibrate_latency", {
+      const res: CalibrationResult = await invoke("estimate_system_latency", {
         inputDevice: $inputDeviceIndex,
         outputDevice: $outputDeviceIndex,
+        sampleRate: currentSampleRate(),
       });
-      $latencyMs = res;
-      // 同步寫回持久化儲存
-      try {
-        await invoke("update_calibrated_latency", { latencyMs: res });
-      } catch (e) {
-        console.error("儲存校準值失敗:", e);
+      const confidence = calibrationConfidenceText(res.confidence);
+
+      if (res.applied_recommended) {
+        await saveLatencyProfile(res.latency_ms, res.confidence);
+        calibrationResultText = tSync("setup.calibration.system.result.success", {
+          ms: res.latency_ms,
+          confidence,
+          diagnostic: latencyDiagnosticText(res.diagnostic),
+          spread: res.round_spread_ms.toFixed(1),
+        });
+      } else {
+        $latencyMs = oldLatencyMs;
+        calibrationResultText = tSync("setup.calibration.system.result.kept", {
+          oldMs: oldLatencyMs,
+          ms: res.latency_ms,
+          confidence,
+          reason: latencyDiagnosticText(res.diagnostic),
+        });
       }
-      const std = $calibrationStatus.stdDevMs;
-      calibrationResultText =
-        std !== null
-          ? tSync("setup.calibration.result.success", { ms: res, std: std.toFixed(1) })
-          : tSync("setup.calibration.result.successNoStd", { ms: res });
     } catch (e) {
+      $latencyMs = oldLatencyMs;
       calibrationResultText = tSync("setup.calibration.result.failed", { error: String(e) });
+    } finally {
+      systemCalibrationBusy = false;
+    }
+  }
+
+  async function startRhythmVoiceCalibration(): Promise<void> {
+    if (calibrationBusy) return;
+    const oldLatencyMs = $latencyMs;
+    rhythmVoiceCalibrationBusy = true;
+    calibrationResultText = tSync("setup.calibration.rhythmVoice.result.prep");
+    try {
+      const res: CalibrationResult = await invoke("calibrate_latency_rhythm_voice", {
+        inputDevice: $inputDeviceIndex,
+        outputDevice: $outputDeviceIndex,
+        sampleRate: currentSampleRate(),
+      });
+      const confidence = calibrationConfidenceText(res.confidence);
+      const shouldApply =
+        res.applied_recommended &&
+        (res.confidence === "high" || res.confidence === "medium");
+
+      if (shouldApply) {
+        await saveLatencyProfile(res.latency_ms, res.confidence);
+        calibrationResultText = tSync("setup.calibration.rhythmVoice.result.success", {
+          ms: res.latency_ms,
+          confidence,
+          valid: res.valid_beats,
+          total: res.measurement_beats,
+          spread: res.round_spread_ms.toFixed(1),
+        });
+      } else {
+        $latencyMs = oldLatencyMs;
+        calibrationResultText = tSync("setup.calibration.rhythmVoice.result.kept", {
+          oldMs: oldLatencyMs,
+          ms: res.latency_ms,
+          confidence,
+          reason: latencyDiagnosticText(res.diagnostic),
+        });
+      }
+    } catch (e) {
+      $latencyMs = oldLatencyMs;
+      calibrationResultText = tSync("setup.calibration.result.failed", { error: String(e) });
+    } finally {
+      rhythmVoiceCalibrationBusy = false;
     }
   }
 
@@ -479,11 +698,6 @@
     } catch (err) {
       deviceMsg = tSync("setup.device.modelFolder.failed", { error: String(err) });
     }
-  }
-
-  function dismissVisualizer() {
-    // 動畫播完後讓 visualizer overlay 收起來
-    resetCalibrationStatus();
   }
 
   function currentGuideOffsetSecs(): number {
@@ -1008,234 +1222,8 @@
   </div>
 
   <!-- 歌曲與音高來源 -->
-  <div class="card">
-    <button class="section-header" onclick={() => toggleSection("song")}>
-      <h2>{$t("setup.section.song")}</h2>
-      <span class="chevron" class:open={sections.song}>▸</span>
-    </button>
-    {#if sections.song}
-      <div class="section-body song-source-section">
-        <p class="hint">{$t("setup.song.hint")}</p>
+  <!-- Song-specific material setup moved to SongLibraryTab. -->
 
-        <button class="uvr-info-card" type="button" onclick={() => (showUvrGuide = true)}>
-          <div>
-            <strong>{$t("uvrGuide.entry.title")}</strong>
-            <p>{$t("uvrGuide.entry.body")}</p>
-          </div>
-          <span>{$t("uvrGuide.entry.action")}</span>
-        </button>
-
-        <div class="uvr-flow-grid">
-          <article class="uvr-step-card">
-            <span>1</span>
-            <div>
-              <strong>{$t("setup.separation.external.step1.title")}</strong>
-              <p>{$t("setup.separation.external.step1.body")}</p>
-            </div>
-          </article>
-          <article class="uvr-step-card">
-            <span>2</span>
-            <div>
-              <strong>{$t("setup.separation.external.step2.title")}</strong>
-              <p>{$t("setup.separation.external.step2.body")}</p>
-            </div>
-          </article>
-          <article class="uvr-step-card">
-            <span>3</span>
-            <div>
-              <strong>{$t("setup.separation.external.step3.title")}</strong>
-              <p>{$t("setup.separation.external.step3.body")}</p>
-            </div>
-          </article>
-        </div>
-
-        <div class="source-grid">
-          <section class="source-panel">
-            <div class="source-panel-header">
-              <span>1</span>
-              <div>
-                <strong>{$t("setup.song.backing.title")}</strong>
-                <p>{statusText}</p>
-              </div>
-            </div>
-            <p class="sub-hint source-hint">
-              {$t("setup.backing.subHint")}
-            </p>
-            <div class="actions">
-              <button class="btn primary" onclick={loadFile}>{$t("setup.backing.action.import")}</button>
-              {#if backingLoaded}
-                <button class="btn secondary" onclick={clearBackingTrack}>{$t("setup.backing.action.clear")}</button>
-              {/if}
-            </div>
-          </section>
-
-          <section class="source-panel">
-            <div class="source-panel-header">
-              <span>2</span>
-              <div>
-                <strong>{$t("setup.song.melody.title")}</strong>
-                <p>{melodyStatusText}</p>
-              </div>
-            </div>
-
-            {#if $currentMelody === null}
-              <p class="sub-hint source-hint">
-                {$t("setup.melody.hint.empty.prefix")}<strong>{$t("setup.melody.hint.empty.vocals")}</strong>{$t("setup.melody.hint.empty.or")}<strong>{$t("setup.melody.hint.empty.midi")}</strong>{$t("setup.melody.hint.empty.suffix")}
-              </p>
-            {/if}
-
-            <div class="actions">
-              <button
-                class="btn primary"
-                onclick={loadVocalsTrack}
-                disabled={!backingLoaded}
-                title={$t("setup.melody.action.importVocals.title")}
-              >
-                {$t("setup.melody.action.importVocals")}
-              </button>
-              <button
-                class="btn secondary"
-                onclick={loadMelodyFile}
-                disabled={!backingLoaded}
-              >
-                {$t("setup.melody.action.loadMidi")}
-              </button>
-              {#if currentBackingPath && $currentMelody === null}
-                <button
-                  class="btn ghost"
-                  onclick={() => currentBackingPath && autoLoadMelodyForPath(currentBackingPath)}
-                >
-                  {$t("setup.melody.action.rescan")}
-                </button>
-              {/if}
-              {#if $guideVocalPath}
-                <button class="btn secondary" onclick={clearVocalsTrack}>
-                  {$t("setup.melody.action.clearVocals")}
-                </button>
-              {/if}
-              {#if $currentMelody}
-                <button class="btn secondary" onclick={clearPitchCurve}>
-                  {$t("setup.melody.action.clearPitch")}
-                </button>
-              {/if}
-            </div>
-
-            {#if $guideVocalPath}
-              <label class="guide-toggle" title={$guideVocalPath}>
-                <input type="checkbox" bind:checked={$guideVocalEnabled} />
-                <span>{$t("setup.guide.toggle", { name: basename($guideVocalPath) })}</span>
-              </label>
-              <p class="sub-hint guide-hint">{$t("setup.guide.hint")}</p>
-            {/if}
-
-            {#if $currentMelody}
-              <div class="alignment-box">
-                <div class="alignment-header">
-                  <span class="alignment-title">{$t("setup.alignment.title")}</span>
-                  {#if $melodySourcePath === null}
-                    <span class="badge badge-muted">{$t("setup.alignment.badge.noNeed")}</span>
-                  {:else if $alignmentResult}
-                    {#if alignmentConfidence($alignmentResult) === "high"}
-                      <span class="badge badge-high">{$t("setup.alignment.badge.high")}</span>
-                    {:else if alignmentConfidence($alignmentResult) === "medium"}
-                      <span class="badge badge-medium">{$t("setup.alignment.badge.medium")}</span>
-                    {:else}
-                      <span class="badge badge-low">{$t("setup.alignment.badge.low")}</span>
-                    {/if}
-                  {:else}
-                    <span class="badge badge-muted">{$t("setup.alignment.badge.notAligned")}</span>
-                  {/if}
-                </div>
-
-                {#if $melodySourcePath === null}
-                  <p class="alignment-hint">
-                    {$t("setup.alignment.hint.sameSource")}
-                  </p>
-                {:else if $alignmentResult}
-                  <p class="alignment-hint">
-                    {$t("setup.alignment.hint.offset", {
-                      offset: describeAlignmentOffset($alignmentResult),
-                      ratio: $alignmentResult.peak_to_mean_ratio.toFixed(1),
-                    })}
-                  </p>
-                {:else}
-                  <p class="alignment-hint">
-                    {$t("setup.alignment.hint.pending")}
-                  </p>
-                {/if}
-
-                <div class="fine-tune-row">
-                  <label for="fine_tune">{$t("setup.alignment.fineTune.label")}</label>
-                  <input
-                    id="fine_tune"
-                    type="range"
-                    min="-500"
-                    max="500"
-                    step="1"
-                    bind:value={$alignmentFineTuneMs}
-                  />
-                  <span class="fine-tune-value">
-                    {$alignmentFineTuneMs >= 0 ? "+" : ""}{$alignmentFineTuneMs} ms
-                  </span>
-                  {#if $alignmentFineTuneMs !== 0}
-                    <button
-                      class="btn ghost tiny"
-                      onclick={() => alignmentFineTuneMs.set(0)}
-                      title={$t("setup.alignment.fineTune.reset.title")}
-                    >
-                      {$t("setup.alignment.fineTune.reset.text")}
-                    </button>
-                  {/if}
-                </div>
-              </div>
-            {/if}
-          </section>
-        </div>
-
-        <p class="sub-hint">{$t("setup.separation.external.orderHint")}</p>
-      </div>
-    {/if}
-  </div>
-
-  <div class="card">
-    <button class="section-header" onclick={() => toggleSection("lyrics")}>
-      <h2>{$t("setup.section.lyrics")}</h2>
-      <span class="chevron" class:open={sections.lyrics}>▸</span>
-    </button>
-    {#if sections.lyrics}
-      <div class="section-body">
-        <p class="hint">{lyricsStatusText}</p>
-        <p class="sub-hint lyrics-feature-hint">{$t("setup.lyrics.hint.timeline")}</p>
-
-        {#if embeddedSubtitles.length > 0}
-          <div class="embedded-subs">
-            <p class="sub-hint">{$t("setup.lyrics.subTitle")}</p>
-            <div class="sub-list">
-              {#each embeddedSubtitles as sub}
-                <button
-                  class="btn sub-btn"
-                  onclick={() => extractAndLoadSubtitle(sub)}
-                  disabled={subtitleExtracting}
-                >
-                  #{sub.index} {subtitleLabel(sub)}
-                </button>
-              {/each}
-            </div>
-          </div>
-        {/if}
-
-        <div class="actions">
-          <button class="btn primary" onclick={loadLyrics}>{$t("setup.lyrics.action.load")}</button>
-          {#if $lyricsLines.length > 0}
-            <button class="btn secondary" onclick={clearLyrics}>{$t("setup.lyrics.action.clear")}</button>
-          {/if}
-        </div>
-        <LyricsPrepTools />
-      </div>
-    {/if}
-  </div>
-
-  <!-- 裝置選擇 -->
   <div class="card">
     <button class="section-header" onclick={() => toggleSection("device")}>
       <h2>{$t("setup.section.device")}</h2>
@@ -1299,35 +1287,65 @@
       <div class="section-body">
         <p class="hint">{$t("setup.calibration.hint")}</p>
 
-        <div class="slider-row">
-          <span>{$latencyMs} ms</span>
-          <input type="range" min="0" max="500" bind:value={$latencyMs} class="latency-slider" />
+        <div class="calibration-main">
+          <div>
+            <span class="calibration-value">{$latencyMs} ms</span>
+            <p class="fine-tune-note">{$t("setup.calibration.system.hint")}</p>
+          </div>
+          <button
+            class="btn primary calibrate-btn"
+            onclick={startSystemCalibration}
+            disabled={calibrationBusy}
+          >
+            {systemCalibrationBusy ? $t("setup.calibration.system.running") : $t("setup.calibration.system.action")}
+          </button>
         </div>
 
-        <div class="calibrate-box">
-          <h4>{$t("setup.calibration.auto.title")}</h4>
-          <p class="hint">{$t("setup.calibration.auto.hint")}</p>
-          <div class="actions">
-            <button class="btn primary calibrate-btn" onclick={startCalibration} disabled={$calibrationStatus.isRunning}>
-              {$calibrationStatus.isRunning ? $t("setup.calibration.action.running") : $t("setup.calibration.action.start")}
+        <button
+          type="button"
+          class="calibration-toggle"
+          onclick={() => (manualCalibrationOpen = !manualCalibrationOpen)}
+        >
+          {$t("setup.calibration.manual.toggle")}
+        </button>
+        {#if manualCalibrationOpen}
+          <LatencyFineTuneControl
+            title={$t("setup.calibration.manual.toggle")}
+            description={$t("setup.calibration.manual.description")}
+            disabled={calibrationBusy}
+          />
+        {/if}
+
+        <button
+          type="button"
+          class="calibration-toggle"
+          onclick={() => (rhythmVoiceCalibrationOpen = !rhythmVoiceCalibrationOpen)}
+        >
+          {$t("setup.calibration.rhythmVoice.toggle")}
+        </button>
+        {#if rhythmVoiceCalibrationOpen}
+          <div class="rhythm-calibration-panel">
+            <p class="fine-tune-note">{$t("setup.calibration.rhythmVoice.hint")}</p>
+            <button
+              type="button"
+              class="btn secondary rhythm-calibrate-btn"
+              onclick={startRhythmVoiceCalibration}
+              disabled={calibrationBusy}
+            >
+              {rhythmVoiceCalibrationBusy
+                ? $t("setup.calibration.rhythmVoice.running")
+                : $t("setup.calibration.rhythmVoice.action")}
             </button>
           </div>
-          {#if calibrationResultText}
-            <p class="calibration-result">{calibrationResultText}</p>
-          {/if}
-        </div>
+        {/if}
+
+        {#if calibrationResultText}
+          <p class="calibration-result">{calibrationResultText}</p>
+        {/if}
       </div>
     {/if}
   </div>
 </div>
-
-<CalibrationVisualizer
-  onFinish={dismissVisualizer}
-/>
-
-{#if showUvrGuide}
-  <UvrGuideModal onClose={() => (showUvrGuide = false)} />
-{/if}
 
 <style>
   .setup-page {
@@ -1408,33 +1426,6 @@
     flex-wrap: wrap;
   }
 
-  .guide-toggle {
-    margin-top: 12px;
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    border-radius: 999px;
-    background: #f8f3ea;
-    color: #5c5248;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  .guide-toggle input {
-    accent-color: #8a6500;
-  }
-
-  .guide-hint {
-    margin-top: 8px;
-  }
-
-  .lyrics-feature-hint {
-    margin-top: -8px;
-    margin-bottom: 16px;
-  }
-
   .btn {
     padding: 8px 20px;
     border: none;
@@ -1449,7 +1440,7 @@
     color: #fff;
   }
 
-  .btn.primary:hover {
+  .btn.primary:hover:not(:disabled) {
     background: #5c4400;
   }
 
@@ -1458,101 +1449,9 @@
     color: #7a7268;
   }
 
-  .btn.ghost {
-    background: transparent;
-    color: #7a7268;
-    border: 1px solid #e8e2d8;
-  }
-
-  .btn.ghost:hover:not(:disabled) {
-    background: #faf8f4;
+  .btn.secondary:hover:not(:disabled) {
+    background: #e6ded0;
     color: #3d3630;
-  }
-
-  .btn.tiny {
-    padding: 4px 12px;
-    font-size: 12px;
-  }
-
-  .alignment-box {
-    margin-top: 18px;
-    padding: 14px 16px;
-    background: #fdfaf5;
-    border: 1px solid #e8e2d8;
-    border-radius: 8px;
-  }
-
-  .alignment-header {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 8px;
-  }
-
-  .alignment-title {
-    font-size: 14px;
-    font-weight: 600;
-    color: #3d3630;
-  }
-
-  .badge {
-    padding: 2px 10px;
-    border-radius: 10px;
-    font-size: 11px;
-    font-weight: 600;
-  }
-
-  .badge-high {
-    background: #e8f5e9;
-    color: #2e7d32;
-  }
-
-  .badge-medium {
-    background: #fff4e5;
-    color: #b76e00;
-  }
-
-  .badge-low {
-    background: #fde8e8;
-    color: #b71c1c;
-  }
-
-  .badge-muted {
-    background: #f0ece4;
-    color: #7a7268;
-  }
-
-  .alignment-hint {
-    margin: 4px 0 12px;
-    font-size: 12px;
-    color: #5c5248;
-    line-height: 1.5;
-  }
-
-  .fine-tune-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .fine-tune-row label {
-    font-size: 13px;
-    color: #5c5248;
-    white-space: nowrap;
-  }
-
-  .fine-tune-row input[type="range"] {
-    flex: 1;
-    accent-color: #d35400;
-  }
-
-  .fine-tune-value {
-    min-width: 62px;
-    text-align: right;
-    font-size: 13px;
-    font-weight: 600;
-    color: #d35400;
-    font-variant-numeric: tabular-nums;
   }
 
   .btn:disabled {
@@ -1588,44 +1487,58 @@
     outline: none;
   }
   
-  .slider-row {
+  .calibration-main {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 16px;
-    margin-bottom: 24px;
-  }
-
-  .slider-row span {
-    font-size: 14px;
-    font-weight: bold;
-    color: #755700;
-    min-width: 50px;
-  }
-
-  .latency-slider {
-    flex: 1;
-    accent-color: #755700;
-  }
-
-  .calibrate-box {
-    background: #fdfaf5;
+    padding: 14px 16px;
     border: 1px solid #e8e2d8;
-    padding: 16px;
     border-radius: 8px;
+    background: #fdfaf5;
   }
 
-  .calibrate-box h4 {
-    margin: 0 0 8px 0;
-    color: #3d3630;
-    font-size: 14px;
+  .calibration-value {
+    display: block;
+    margin-bottom: 4px;
+    color: #755700;
+    font-size: 22px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
   }
-  
-  .calibrate-btn {
-    background: #d35400;
+
+  .calibration-toggle {
+    width: 100%;
+    margin-top: 10px;
+    padding: 10px 12px;
+    border: 1px solid #e8e2d8;
+    border-radius: 8px;
+    background: #fff;
+    color: #5c5248;
+    font-size: 13px;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
   }
-  
-  .calibrate-btn:hover {
-    background: #a04000;
+
+  .calibration-toggle:hover {
+    background: #faf8f4;
+  }
+
+  .rhythm-calibration-panel {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 8px;
+    padding: 12px;
+    border: 1px solid #e8e2d8;
+    border-radius: 8px;
+    background: #fff;
+  }
+
+  .rhythm-calibrate-btn {
+    flex: 0 0 auto;
   }
 
   .calibration-result {
@@ -1635,209 +1548,25 @@
     font-weight: bold;
   }
 
-  /* 內嵌字幕區 */
-  .embedded-subs {
-    background: #f0f4ff;
-    border: 1px solid #d0daf0;
-    border-radius: 8px;
-    padding: 10px 14px;
-    margin-bottom: 8px;
-  }
-
-  .sub-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-top: 6px;
-  }
-
-  .sub-btn {
-    background: white;
-    border: 1px solid #93b4f5;
-    color: #2563eb;
+  .fine-tune-note {
+    margin: 10px 0 0 0;
     font-size: 12px;
-    padding: 4px 12px;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: all 0.15s;
+    line-height: 1.45;
+    color: #6b6258;
   }
 
-  .sub-btn:hover:not(:disabled) {
-    background: #e8f0ff;
-  }
-
-  .sub-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .song-source-section {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .uvr-info-card {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    width: 100%;
-    padding: 16px 18px;
-    border: 1px solid rgba(159, 122, 0, 0.26);
-    border-radius: 16px;
-    background:
-      radial-gradient(circle at top left, rgba(253, 192, 3, 0.16), transparent 34%),
-      #fffaf1;
-    color: #3d3630;
-    font: inherit;
-    text-align: left;
-    cursor: pointer;
-    transition:
-      border-color 0.16s ease,
-      transform 0.16s ease,
-      box-shadow 0.16s ease;
-  }
-
-  .uvr-info-card:hover {
-    border-color: rgba(117, 87, 0, 0.46);
-    box-shadow: 0 12px 28px rgba(117, 87, 0, 0.12);
-    transform: translateY(-1px);
-  }
-
-  .uvr-info-card strong {
-    display: block;
-    margin-bottom: 5px;
-    color: #3d3630;
-    font-size: 15px;
-  }
-
-  .uvr-info-card p {
-    margin: 0;
-    color: #6f655b;
-    font-size: 13px;
-    line-height: 1.65;
-  }
-
-  .uvr-info-card > span {
-    flex: 0 0 auto;
-    padding: 9px 14px;
-    border-radius: 999px;
-    background: #755700;
-    color: #fff;
-    font-size: 12px;
-    font-weight: 700;
-    white-space: nowrap;
-  }
-
-  .source-grid {
-    display: grid;
-    grid-template-columns: minmax(280px, 0.9fr) minmax(340px, 1.1fr);
-    gap: 12px;
-  }
-
-  .source-panel {
-    padding: 16px;
-    border: 1px solid #e8e2d8;
-    border-radius: 14px;
-    background: #fff;
-  }
-
-  .source-panel-header {
-    display: flex;
-    gap: 12px;
-    align-items: flex-start;
-    margin-bottom: 12px;
-  }
-
-  .source-panel-header > span {
-    flex: 0 0 auto;
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: #755700;
-    color: #fff;
-    font-size: 13px;
-    font-weight: 800;
-  }
-
-  .source-panel-header strong {
-    display: block;
-    margin-bottom: 4px;
-    color: #3d3630;
-    font-size: 15px;
-  }
-
-  .source-panel-header p {
-    margin: 0;
-    color: #7a7268;
-    font-size: 13px;
-    line-height: 1.6;
-  }
-
-  .source-hint {
-    margin-top: 0;
-  }
-
-  .uvr-flow-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 12px;
-  }
-
-  .uvr-step-card {
-    display: flex;
-    gap: 12px;
-    padding: 14px 16px;
-    border: 1px solid #e8e2d8;
-    border-radius: 14px;
-    background: #fdfaf5;
-  }
-
-  .uvr-step-card span {
-    flex: 0 0 auto;
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: #755700;
-    color: #fff;
-    font-size: 13px;
-    font-weight: 800;
-  }
-
-  .uvr-step-card strong {
-    display: block;
-    margin-bottom: 5px;
-    color: #3d3630;
-    font-size: 14px;
-  }
-
-  .uvr-step-card p {
-    margin: 0;
-    color: #5c5248;
-    font-size: 13px;
-    line-height: 1.6;
-  }
-
-  @media (max-width: 900px) {
-    .uvr-info-card {
+  @media (max-width: 760px) {
+    .calibration-main {
       align-items: stretch;
       flex-direction: column;
     }
 
-    .uvr-info-card > span {
-      align-self: flex-start;
+    .rhythm-calibration-panel {
+      align-items: stretch;
+      flex-direction: column;
     }
 
-    .uvr-flow-grid,
-    .source-grid {
-      grid-template-columns: 1fr;
-    }
   }
+
+
 </style>
