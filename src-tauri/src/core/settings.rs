@@ -61,7 +61,7 @@ fn default_export_naming_mode() -> String {
 }
 
 fn default_auto_balance_vocal_preset() -> String {
-    "forward".to_string()
+    "natural".to_string()
 }
 
 fn default_download_folder() -> String {

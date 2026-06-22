@@ -19,6 +19,7 @@ import {
   autoBalanceMixin,
   autoBalanceVocalPreset,
   backingVolume,
+  DEFAULT_AUTO_BALANCE_VOCAL_PRESET,
   exportNamingMode,
   guideVocalEnabled,
   guideVolume,
@@ -40,6 +41,7 @@ import {
 import { backingPitchTrack, clearLiveVocalSamples, resetBackingState } from "./pitch";
 
 export const projectSessionReady = writable<boolean>(false);
+export const projectSessionRestoring = writable<boolean>(false);
 
 const PROJECT_SESSION_VERSION = 1;
 
@@ -103,7 +105,7 @@ function sanitizeLyricsLines(value: unknown): LyricLine[] {
 
 function normalizeAutoBalanceVocalPreset(value: unknown): AutoBalanceVocalPreset {
   if (value === "natural" || value === "clear" || value === "forward") return value;
-  return "forward";
+  return DEFAULT_AUTO_BALANCE_VOCAL_PRESET;
 }
 
 function normalizeExportNamingMode(value: unknown): ExportNamingMode {
@@ -185,6 +187,13 @@ export function createProjectSessionSnapshot(): ProjectSession {
   };
 }
 
+export async function saveProjectSessionNow(): Promise<void> {
+  if (!get(projectSessionReady) || get(projectSessionRestoring)) return;
+  await invoke("save_project_session", {
+    sessionJson: JSON.stringify(createProjectSessionSnapshot()),
+  });
+}
+
 export function createSongSessionSnapshot(): SongSessionSnapshot {
   return {
     ...createProjectSessionSnapshot(),
@@ -245,6 +254,57 @@ async function loadBackingPath(path: string): Promise<void> {
     video_path: result.video_path,
     video_url: result.video_path ? convertFileSrc(result.video_path) : null,
   });
+}
+
+async function applyProjectSessionSnapshot(snapshot: ProjectSession): Promise<void> {
+  lyricsFileName.set(snapshot.lyricsFileName);
+  lyricsLines.set(snapshot.lyricsLines);
+
+  if (snapshot.backingPath) {
+    await loadBackingPath(snapshot.backingPath);
+  }
+
+  currentMelody.set(snapshot.melody);
+  melodySourcePath.set(snapshot.melodySourcePath);
+  alignmentResult.set(snapshot.alignmentResult);
+  alignmentFineTuneMs.set(snapshot.alignmentFineTuneMs);
+  refreshBackingPitchFromCurrentMelody();
+
+  if (snapshot.guideVocalPath) {
+    const offsetSecs = finalOffsetSecs(snapshot.alignmentResult, snapshot.alignmentFineTuneMs);
+    await invoke("load_guide_vocal", {
+      path: snapshot.guideVocalPath,
+      offsetSecs,
+    });
+    guideVocalPath.set(snapshot.guideVocalPath);
+    guideVocalEnabled.set(snapshot.guideVocalEnabled);
+    await invoke("set_guide_vocal_enabled", { enabled: snapshot.guideVocalEnabled }).catch(
+      () => {},
+    );
+  } else {
+    guideVocalPath.set(null);
+    guideVocalEnabled.set(false);
+  }
+}
+
+export async function restoreProjectSession(): Promise<void> {
+  if (get(projectSessionReady) || get(projectSessionRestoring)) return;
+  projectSessionRestoring.set(true);
+  try {
+    const raw = await invoke<string | null>("load_project_session");
+    const session = raw ? sanitizeProjectSession(JSON.parse(raw)) : null;
+    if (session) {
+      await applyProjectSessionSnapshot(session);
+    }
+  } catch (err) {
+    console.warn("[session] project session restore failed:", err);
+  } finally {
+    projectSessionRestoring.set(false);
+    projectSessionReady.set(true);
+    await saveProjectSessionNow().catch((err) =>
+      console.warn("[session] project session save failed:", err),
+    );
+  }
 }
 
 async function applyPracticeSnapshot(practice: SongPracticeSnapshot): Promise<void> {

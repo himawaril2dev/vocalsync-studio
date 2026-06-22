@@ -58,6 +58,7 @@ interface PersistedActiveSongProfile {
 }
 
 const ACTIVE_SONG_PROFILE_STORAGE_KEY = "vocalsync.activeSongProfile.v1";
+const ACTIVE_SONG_PROFILE_AUTO_SAVE_MS = 800;
 
 export const songProfiles = writable<SongProfileSummary[]>([]);
 export const activeSongProfileId = writable<string | null>(null);
@@ -65,6 +66,26 @@ export const activeSongProfileTitle = writable<string>("");
 export const activeSongProfileArtist = writable<string | null>(null);
 export const songProfileDirty = writable<boolean>(false);
 export const songProfileApplying = writable<boolean>(false);
+
+let activeSongProfileAutoSaveTimer: number | null = null;
+let activeSongProfileSaving = false;
+
+function clearActiveSongProfileAutoSaveTimer(): void {
+  if (activeSongProfileAutoSaveTimer === null || typeof window === "undefined") return;
+  window.clearTimeout(activeSongProfileAutoSaveTimer);
+  activeSongProfileAutoSaveTimer = null;
+}
+
+function scheduleActiveSongProfileAutoSave(): void {
+  if (typeof window === "undefined") return;
+  clearActiveSongProfileAutoSaveTimer();
+  activeSongProfileAutoSaveTimer = window.setTimeout(() => {
+    activeSongProfileAutoSaveTimer = null;
+    void flushActiveSongProfileSave().catch((error) =>
+      console.warn("[song-library] active profile auto-save failed:", error),
+    );
+  }, ACTIVE_SONG_PROFILE_AUTO_SAVE_MS);
+}
 
 function releaseApplyingSoon(): void {
   if (typeof window === "undefined") {
@@ -126,8 +147,14 @@ function restoreActiveProfileFromStorage(): void {
 }
 
 export function markActiveSongProfileDirty(): void {
-  if (get(projectSessionReady) && get(activeSongProfileId) && !get(songProfileApplying)) {
+  if (
+    get(projectSessionReady) &&
+    get(activeSongProfileId) &&
+    !get(songProfileApplying) &&
+    !activeSongProfileSaving
+  ) {
     songProfileDirty.set(true);
+    scheduleActiveSongProfileAutoSave();
   }
 }
 
@@ -219,6 +246,19 @@ export async function updateActiveSongProfile(): Promise<SongProfileSummary> {
     throw new Error("No active song profile is selected");
   }
   return saveCurrentSongProfile(profileId, title, get(activeSongProfileArtist));
+}
+
+export async function flushActiveSongProfileSave(): Promise<SongProfileSummary | null> {
+  clearActiveSongProfileAutoSaveTimer();
+  if (!get(projectSessionReady) || !get(activeSongProfileId) || !get(songProfileDirty)) {
+    return null;
+  }
+  activeSongProfileSaving = true;
+  try {
+    return await updateActiveSongProfile();
+  } finally {
+    activeSongProfileSaving = false;
+  }
 }
 
 export async function renameSongProfile(

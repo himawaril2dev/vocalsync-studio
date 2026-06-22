@@ -33,7 +33,7 @@ export function resetGuideVolume(): void {
 export const autoBalanceMixin = writable<boolean>(true);
 
 export type AutoBalanceVocalPreset = "natural" | "clear" | "forward";
-export const DEFAULT_AUTO_BALANCE_VOCAL_PRESET: AutoBalanceVocalPreset = "forward";
+export const DEFAULT_AUTO_BALANCE_VOCAL_PRESET: AutoBalanceVocalPreset = "natural";
 export const autoBalanceVocalPreset = writable<AutoBalanceVocalPreset>(
   DEFAULT_AUTO_BALANCE_VOCAL_PRESET,
 );

@@ -149,7 +149,8 @@ fn normalize_auto_balance_vocal_preset(value: &str) -> String {
     match value {
         "natural" => "natural".to_string(),
         "clear" => "clear".to_string(),
-        _ => "forward".to_string(),
+        "forward" => "forward".to_string(),
+        _ => "natural".to_string(),
     }
 }
 

@@ -116,7 +116,7 @@ pub fn start_playback(
         output_device,
         latency_ms,
         auto_balance,
-        auto_balance_vocal_preset.as_deref().unwrap_or("forward"),
+        auto_balance_vocal_preset.as_deref().unwrap_or("natural"),
     )
 }
 
@@ -229,7 +229,7 @@ pub fn export_audio(
         &prefix,
         auto_increment,
         auto_balance,
-        auto_balance_vocal_preset.as_deref().unwrap_or("forward"),
+        auto_balance_vocal_preset.as_deref().unwrap_or("natural"),
         latency_ms,
     )
 }

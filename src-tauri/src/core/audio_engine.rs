@@ -2228,17 +2228,18 @@ fn histogram_percentile_peak(
 }
 
 const AUTO_BALANCE_VOCAL_NATURAL_RATIO: f32 = 1.995_262_4;
-const AUTO_BALANCE_VOCAL_CLEAR_RATIO: f32 = 2.818_383;
-const AUTO_BALANCE_VOCAL_FORWARD_RATIO: f32 = 3.35;
+const AUTO_BALANCE_VOCAL_CLEAR_RATIO: f32 = 2.511_886_4;
+const AUTO_BALANCE_VOCAL_FORWARD_RATIO: f32 = 2.985_382_6;
 const AUTO_BALANCE_MAX_VOCAL_TARGET_RATIO: f32 = AUTO_BALANCE_VOCAL_FORWARD_RATIO;
-const AUTO_BALANCE_MAX_VOCAL_GAIN: f32 = 28.0;
+const AUTO_BALANCE_MAX_VOCAL_GAIN: f32 = 16.0;
 const AUTO_BALANCE_ROBUST_PEAK_PERCENTILE: f32 = 0.995;
-const AUTO_BALANCE_ROBUST_PEAK_CEILING: f32 = 0.58;
+const AUTO_BALANCE_ROBUST_PEAK_CEILING: f32 = 0.50;
 const AUTO_BALANCE_BACKING_GAIN: f32 = 0.40;
-const AUTO_BALANCE_MIX_SUM_CEILING: f32 = 0.82;
+const AUTO_BALANCE_MIX_SUM_CEILING: f32 = 0.78;
 const AUTO_BALANCE_PEAK_HISTOGRAM_BINS: usize = 256;
 const AUTO_BALANCE_PEAK_HISTOGRAM_MAX: f32 = 1.0;
-const VOCAL_MIX_LIMIT_CEILING: f32 = 0.78;
+const VOCAL_MIX_SOFT_LIMIT_START: f32 = 0.58;
+const VOCAL_MIX_LIMIT_CEILING: f32 = 0.72;
 const OUTPUT_LIMIT_CEILING: f32 = 0.86;
 const EXPORT_MIX_LIMIT_CEILING: f32 = 0.84;
 const INPUT_SOFT_LIMIT_START: f32 = 0.92;
@@ -2257,16 +2258,26 @@ fn auto_balance_vocal_target_ratio(preset: &str) -> f32 {
     match preset {
         "natural" => AUTO_BALANCE_VOCAL_NATURAL_RATIO,
         "clear" => AUTO_BALANCE_VOCAL_CLEAR_RATIO,
-        _ => AUTO_BALANCE_VOCAL_FORWARD_RATIO,
+        "forward" => AUTO_BALANCE_VOCAL_FORWARD_RATIO,
+        _ => AUTO_BALANCE_VOCAL_NATURAL_RATIO,
     }
 }
 
 #[inline]
 fn apply_vocal_mix_gain(vocal_mix: [f32; 2], gain: f32) -> [f32; 2] {
-    limit_stereo_peak(
-        [vocal_mix[0] * gain, vocal_mix[1] * gain],
-        VOCAL_MIX_LIMIT_CEILING,
-    )
+    let softened = [
+        soft_limit_sample(
+            vocal_mix[0] * gain,
+            VOCAL_MIX_SOFT_LIMIT_START,
+            VOCAL_MIX_LIMIT_CEILING,
+        ),
+        soft_limit_sample(
+            vocal_mix[1] * gain,
+            VOCAL_MIX_SOFT_LIMIT_START,
+            VOCAL_MIX_LIMIT_CEILING,
+        ),
+    ];
+    limit_stereo_peak(softened, VOCAL_MIX_LIMIT_CEILING)
 }
 
 #[inline]
@@ -4666,18 +4677,19 @@ mod tests {
             AUTO_BALANCE_VOCAL_FORWARD_RATIO,
             |i| vocal[i],
         );
+        let expected = (0.1 * AUTO_BALANCE_VOCAL_FORWARD_RATIO) / 0.05;
         assert!(
-            (gain - 6.7).abs() < 0.02,
-            "expected 0.1 * 3.35 / 0.05 = 6.7, got {gain}"
+            (gain - expected).abs() < 0.02,
+            "expected backing * forward ratio / vocal, got {gain}"
         );
     }
 
     #[test]
     fn auto_balance_preset_ratios_match_expected_db_steps() {
         assert!((auto_balance_vocal_target_ratio("natural") - 1.995_262_4).abs() < 1e-6);
-        assert!((auto_balance_vocal_target_ratio("clear") - 2.818_383).abs() < 1e-6);
-        assert!((auto_balance_vocal_target_ratio("forward") - 3.35).abs() < 1e-6);
-        assert!((auto_balance_vocal_target_ratio("unknown") - 3.35).abs() < 1e-6);
+        assert!((auto_balance_vocal_target_ratio("clear") - 2.511_886_4).abs() < 1e-6);
+        assert!((auto_balance_vocal_target_ratio("forward") - 2.985_382_6).abs() < 1e-6);
+        assert!((auto_balance_vocal_target_ratio("unknown") - 1.995_262_4).abs() < 1e-6);
     }
 
     #[test]
@@ -4707,7 +4719,7 @@ mod tests {
             2,
             12_000,
             backing_gain,
-            AUTO_BALANCE_VOCAL_FORWARD_RATIO,
+            AUTO_BALANCE_VOCAL_NATURAL_RATIO,
             |_| 0.02,
         );
         let mut sum_sq = 0.0_f32;
@@ -4723,11 +4735,11 @@ mod tests {
             "quiet vocals should be lifted within the safe gain range, got {gain}"
         );
         assert!(
-            vocal_rms < VOCAL_MIX_LIMIT_CEILING * 0.75,
+            vocal_rms < VOCAL_MIX_LIMIT_CEILING * 0.65,
             "normalized quiet vocal should keep headroom, got {vocal_rms}"
         );
         assert!(
-            vocal_rms >= 0.4 * backing_gain * 3.00,
+            vocal_rms >= 0.4 * backing_gain * 1.90,
             "normalized quiet vocal should sit slightly above backing, got vocal_rms={vocal_rms}"
         );
     }
@@ -4777,7 +4789,7 @@ mod tests {
         let mix_peak = backing_sample + vocal_peak;
 
         assert!(
-            vocal_peak >= backing_sample * 2.30,
+            vocal_peak >= backing_sample * 2.00,
             "normalized vocal should stay in front of ducked backing, got vocal={vocal_peak}, backing={backing_sample}"
         );
         assert!(
@@ -4802,6 +4814,17 @@ mod tests {
 
         assert!((out[0] - out[1]).abs() < 1e-6);
         assert!(out[0].is_finite() && out[1].is_finite());
+        assert!(out[0].abs() <= VOCAL_MIX_LIMIT_CEILING + 1e-6);
+        assert!(out[1].abs() <= VOCAL_MIX_LIMIT_CEILING + 1e-6);
+    }
+
+    #[test]
+    fn vocal_mix_soft_limiter_rounds_off_large_playback_gain() {
+        let out = process_vocal_for_mix(1.0, AUTO_BALANCE_MAX_VOCAL_GAIN);
+
+        assert!(out[0].is_finite() && out[1].is_finite());
+        assert!(out[0].abs() > VOCAL_MIX_SOFT_LIMIT_START);
+        assert!(out[1].abs() > VOCAL_MIX_SOFT_LIMIT_START);
         assert!(out[0].abs() <= VOCAL_MIX_LIMIT_CEILING + 1e-6);
         assert!(out[1].abs() <= VOCAL_MIX_LIMIT_CEILING + 1e-6);
     }

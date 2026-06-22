@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
+  import { onMount } from "svelte";
   import { invoke, convertFileSrc } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
   import { loadedMedia, basename } from "../stores/media";
@@ -35,7 +35,6 @@
   import LatencyFineTuneControl from "../components/LatencyFineTuneControl.svelte";
   import DownloadTab from "./DownloadTab.svelte";
   import { t, tSync } from "../i18n";
-  import { projectSessionReady } from "../stores/projectSession";
 
   type SetupSectionKey =
     | "download"
@@ -44,7 +43,6 @@
   type SetupSections = Record<SetupSectionKey, boolean>;
 
   const SETUP_SECTIONS_STORAGE_KEY = "vocalsync.setup.sections.v1";
-  const PROJECT_SESSION_VERSION = 1;
   const DEFAULT_SECTIONS: SetupSections = {
     download: true,
     device: true,
@@ -73,19 +71,6 @@
     video_path: string | null;
     /** 自動偵測結果：`"midi"` / `"uvr_cache"` / `null` */
     melody_source: string | null;
-  }
-
-  interface ProjectSession {
-    version: typeof PROJECT_SESSION_VERSION;
-    backingPath: string | null;
-    lyricsFileName: string;
-    lyricsLines: LyricLine[];
-    melody: MelodyTrack | null;
-    melodySourcePath: string | null;
-    guideVocalPath: string | null;
-    guideVocalEnabled: boolean;
-    alignmentResult: AlignmentResult | null;
-    alignmentFineTuneMs: number;
   }
 
   /** 目前載入的伴奏路徑（給「重試載入 melody」按鈕用）。
@@ -210,14 +195,6 @@
   let deviceMsg = $state("");
 
   let pitchEngineLoaded = false;
-  let projectSessionLoaded = false;
-  let projectSessionRestoring = false;
-  let projectSessionSaveTimer: number | null = null;
-
-  function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
-  }
-
   function currentSampleRate(): number {
     return $loadedMedia?.sample_rate ?? 44100;
   }
@@ -308,153 +285,6 @@
     };
   }
 
-  function sanitizeLyricsLines(value: unknown): LyricLine[] {
-    if (!Array.isArray(value)) return [];
-    return value.filter((line): line is LyricLine => {
-      if (!isRecord(line)) return false;
-      return (
-        typeof line.start_ms === "number" &&
-        typeof line.end_ms === "number" &&
-        typeof line.text === "string"
-      );
-    });
-  }
-
-  function sanitizeProjectSession(value: unknown): ProjectSession | null {
-    if (!isRecord(value) || value.version !== PROJECT_SESSION_VERSION) return null;
-    return {
-      version: PROJECT_SESSION_VERSION,
-      backingPath: typeof value.backingPath === "string" ? value.backingPath : null,
-      lyricsFileName:
-        typeof value.lyricsFileName === "string" ? value.lyricsFileName : "",
-      lyricsLines: sanitizeLyricsLines(value.lyricsLines),
-      melody:
-        isRecord(value.melody) && Array.isArray(value.melody.notes)
-          ? (value.melody as MelodyTrack)
-          : null,
-      melodySourcePath:
-        typeof value.melodySourcePath === "string" ? value.melodySourcePath : null,
-      guideVocalPath:
-        typeof value.guideVocalPath === "string" ? value.guideVocalPath : null,
-      guideVocalEnabled: value.guideVocalEnabled === true,
-      alignmentResult: isRecord(value.alignmentResult)
-        ? (value.alignmentResult as AlignmentResult)
-        : null,
-      alignmentFineTuneMs:
-        typeof value.alignmentFineTuneMs === "number"
-          ? value.alignmentFineTuneMs
-          : 0,
-    };
-  }
-
-  function createProjectSessionSnapshot(): ProjectSession {
-    return {
-      version: PROJECT_SESSION_VERSION,
-      backingPath: get(loadedMedia)?.file_path ?? null,
-      lyricsFileName: get(lyricsFileName),
-      lyricsLines: get(lyricsLines),
-      melody: get(currentMelody),
-      melodySourcePath: get(melodySourcePath),
-      guideVocalPath: get(guideVocalPath),
-      guideVocalEnabled: get(guideVocalEnabled),
-      alignmentResult: get(alignmentResult),
-      alignmentFineTuneMs: get(alignmentFineTuneMs),
-    };
-  }
-
-  async function saveProjectSessionNow(): Promise<void> {
-    if (!projectSessionLoaded || projectSessionRestoring) return;
-    try {
-      await invoke("save_project_session", {
-        sessionJson: JSON.stringify(createProjectSessionSnapshot()),
-      });
-    } catch (err) {
-      console.warn("[setup] project session save failed:", err);
-    }
-  }
-
-  function scheduleProjectSessionSave(): void {
-    if (!projectSessionLoaded || projectSessionRestoring) return;
-    if (projectSessionSaveTimer !== null) {
-      window.clearTimeout(projectSessionSaveTimer);
-    }
-    projectSessionSaveTimer = window.setTimeout(() => {
-      projectSessionSaveTimer = null;
-      void saveProjectSessionNow();
-    }, 200);
-  }
-
-  async function restoreProjectSession(): Promise<void> {
-    projectSessionRestoring = true;
-    try {
-      const raw = await invoke<string | null>("load_project_session");
-      const session = raw ? sanitizeProjectSession(JSON.parse(raw)) : null;
-      if (!session) return;
-
-      if (session.lyricsLines.length > 0) {
-        lyricsLines.set(session.lyricsLines);
-        lyricsFileName.set(session.lyricsFileName);
-        lyricsStatus = {
-          key: "setup.lyrics.status.restored",
-          vars: { n: session.lyricsLines.length },
-        };
-      }
-
-      if (session.backingPath) {
-        try {
-          await loadBackingFromPath(session.backingPath, {
-            resetDependents: false,
-            autoDetectMelody: false,
-            probeSubtitles: false,
-          });
-        } catch (err) {
-          pendingStatusText = tSync("setup.backing.hint.restoreFailed", {
-            error: String(err),
-          });
-        }
-      }
-
-      if (session.melody) {
-        currentMelody.set(session.melody);
-        melodySourcePath.set(session.melodySourcePath);
-        alignmentResult.set(session.alignmentResult);
-        alignmentFineTuneMs.set(session.alignmentFineTuneMs);
-        refreshBackingPitchFromMelody();
-        melodyStatus.set({
-          key: "setup.melody.status.restored",
-          vars: { n: session.melody.notes.length },
-        });
-      }
-
-      if (session.guideVocalPath) {
-        try {
-          await loadGuideVocalTrack(session.guideVocalPath);
-          guideVocalEnabled.set(session.guideVocalEnabled);
-          await syncGuideVocalTiming();
-        } catch (err) {
-          guideVocalPath.set(null);
-          guideVocalEnabled.set(false);
-          melodyStatus.update((s) =>
-            s
-              ? {
-                  ...s,
-                  appendKey: "setup.guide.status.loadFailedAppend",
-                  appendVars: { error: String(err) },
-                }
-              : s,
-          );
-        }
-      }
-    } catch (err) {
-      console.warn("[setup] project session restore failed:", err);
-    } finally {
-      projectSessionRestoring = false;
-      projectSessionLoaded = true;
-      projectSessionReady.set(true);
-      void saveProjectSessionNow();
-    }
-  }
-
   function loadPersistedSections(): void {
     try {
       const raw = localStorage.getItem(SETUP_SECTIONS_STORAGE_KEY);
@@ -482,19 +312,6 @@
   onMount(() => {
     loadPersistedSections();
     sectionsLoaded = true;
-    if (get(projectSessionReady)) {
-      projectSessionLoaded = true;
-    } else {
-      void restoreProjectSession();
-    }
-  });
-
-  onDestroy(() => {
-    if (projectSessionSaveTimer !== null) {
-      window.clearTimeout(projectSessionSaveTimer);
-      projectSessionSaveTimer = null;
-    }
-    void saveProjectSessionNow();
   });
 
   $effect(() => {
@@ -505,19 +322,6 @@
     } catch (err) {
       console.warn("[setup] section layout save failed:", err);
     }
-  });
-
-  $effect(() => {
-    void $loadedMedia;
-    void $lyricsFileName;
-    void $lyricsLines;
-    void $currentMelody;
-    void $melodySourcePath;
-    void $guideVocalPath;
-    void $guideVocalEnabled;
-    void $alignmentResult;
-    void $alignmentFineTuneMs;
-    scheduleProjectSessionSave();
   });
 
   $effect(() => {

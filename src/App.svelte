@@ -31,12 +31,12 @@
   import { backingPitchTrack } from "./stores/pitch";
   import { guideVocalEnabled } from "./stores/settings";
   import {
-    createProjectSessionSnapshot,
     projectSessionReady,
+    restoreProjectSession,
+    saveProjectSessionNow,
   } from "./stores/projectSession";
   import {
-    markActiveSongProfileDirty,
-    songProfileApplying,
+    flushActiveSongProfileSave,
   } from "./stores/songProfiles";
   import { activeTab } from "./stores/navigation";
 
@@ -47,20 +47,8 @@
   let projectSessionSaveTimer: number | null = null;
   let lastPitchAlignmentSyncKey = "";
   let lastGuideTimingSyncKey = "";
-  let dirtyTrackingReady = false;
 
   const appWindow = getCurrentWindow();
-
-  async function saveProjectSessionNow(): Promise<void> {
-    if (!get(projectSessionReady)) return;
-    try {
-      await invoke("save_project_session", {
-        sessionJson: JSON.stringify(createProjectSessionSnapshot()),
-      });
-    } catch (err) {
-      console.warn("[app] project session save failed:", err);
-    }
-  }
 
   function scheduleProjectSessionSave(): void {
     if (!get(projectSessionReady)) return;
@@ -71,6 +59,19 @@
       projectSessionSaveTimer = null;
       void saveProjectSessionNow();
     }, 200);
+  }
+
+  async function flushBeforeClose(): Promise<void> {
+    if (projectSessionSaveTimer !== null) {
+      window.clearTimeout(projectSessionSaveTimer);
+      projectSessionSaveTimer = null;
+    }
+    await saveProjectSessionNow().catch((err) =>
+      console.warn("[app] project session save failed:", err),
+    );
+    await flushActiveSongProfileSave().catch((err) =>
+      console.warn("[song-library] active profile auto-save failed:", err),
+    );
   }
 
   async function updateMaximized() {
@@ -87,12 +88,18 @@
     appWindow.toggleMaximize();
   }
 
+  async function closeWindow(): Promise<void> {
+    await flushBeforeClose();
+    await appWindow.close();
+  }
+
   let unlistenResize: (() => void) | null = null;
 
   onMount(async () => {
     setupEventListeners();
     updateMaximized();
     unlistenResize = await appWindow.onResized(updateMaximized);
+    void restoreProjectSession();
     try {
       const settings = await invoke<{ show_startup_guide?: boolean }>("load_settings");
       showStartupGuideNextLaunch = settings.show_startup_guide !== false;
@@ -107,7 +114,7 @@
       window.clearTimeout(projectSessionSaveTimer);
       projectSessionSaveTimer = null;
     }
-    void saveProjectSessionNow();
+    void flushBeforeClose();
     teardownEventListeners();
     unlistenResize?.();
   });
@@ -124,14 +131,6 @@
     void $alignmentResult;
     void $alignmentFineTuneMs;
     scheduleProjectSessionSave();
-    if (!$projectSessionReady) return;
-    if (!dirtyTrackingReady) {
-      dirtyTrackingReady = true;
-      return;
-    }
-    if (!$songProfileApplying) {
-      markActiveSongProfileDirty();
-    }
   });
 
   $effect(() => {
@@ -197,7 +196,7 @@
         </svg>
       {/if}
     </button>
-    <button class="titlebar-btn close-btn" onclick={() => appWindow.close()} aria-label={$t("app.titlebar.close")}>
+    <button class="titlebar-btn close-btn" onclick={closeWindow} aria-label={$t("app.titlebar.close")}>
       <svg width="10" height="10" viewBox="0 0 10 10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round">
         <line x1="1" y1="1" x2="9" y2="9"/><line x1="9" y1="1" x2="1" y2="9"/>
       </svg>
