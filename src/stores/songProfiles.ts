@@ -13,6 +13,7 @@ import {
   applySongSessionSnapshot,
   createSongSessionSnapshot,
   projectSessionReady,
+  resetWorkspaceForNewSong,
   sanitizeSongSession,
 } from "./projectSession";
 import {
@@ -259,6 +260,21 @@ export async function flushActiveSongProfileSave(): Promise<SongProfileSummary |
   } finally {
     activeSongProfileSaving = false;
   }
+}
+
+/**
+ * 開始一首新歌曲：先把啟用中歌曲的最新狀態存回歌單，
+ * 再解除啟用並清空工作區，讓之後的匯入與調整不會覆寫舊歌的存檔。
+ */
+export async function startNewSong(): Promise<void> {
+  try {
+    await flushActiveSongProfileSave();
+  } catch (error) {
+    console.warn("[song-library] flush before new song failed:", error);
+  }
+  clearActiveSongProfileAutoSaveTimer();
+  clearActiveProfile();
+  await resetWorkspaceForNewSong();
 }
 
 export async function renameSongProfile(

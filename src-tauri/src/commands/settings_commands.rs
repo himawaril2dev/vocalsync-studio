@@ -8,13 +8,15 @@ use serde::Serialize;
 use serde_json::{Map, Number, Value};
 use std::fs;
 use std::io::ErrorKind;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::State;
 
 const PROJECT_SESSION_FILE: &str = "project-session.json";
 const SONG_LIBRARY_FILE: &str = "song-library.json";
+const SONG_LIBRARY_BACKUP_PREFIX: &str = "song-library.backup-";
+const MAX_SONG_LIBRARY_BACKUPS: usize = 7;
 const MAX_PROJECT_SESSION_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_SONG_LIBRARY_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_SONG_PROFILES: usize = 500;
@@ -554,7 +556,72 @@ fn write_song_library_records(songs: &[SongProfileRecord]) -> Result<(), AppErro
     if contents.len() as u64 > MAX_SONG_LIBRARY_BYTES {
         return Err(AppError::Settings("Song library is too large".into()));
     }
+    backup_song_library_before_write(&path);
     write_project_session(&path, &contents)
+}
+
+/// UTC 民用日期換算（Howard Hinnant civil_from_days），避免引入日期時間相依套件
+fn unix_secs_to_utc_ymd(secs: u64) -> (i64, u32, u32) {
+    let days = (secs / 86_400) as i64;
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let year = if month <= 2 { year + 1 } else { year };
+    (year, month, day)
+}
+
+/// 每天第一次寫入歌單前，把現有檔案複製為當日備份；備份失敗不阻擋正常儲存
+fn backup_song_library_before_write(path: &Path) {
+    if !path.is_file() {
+        return;
+    }
+    let (year, month, day) = unix_secs_to_utc_ymd(current_unix_secs());
+    let backup_name = format!("{SONG_LIBRARY_BACKUP_PREFIX}{year:04}{month:02}{day:02}.json");
+    let backup_path = path.with_file_name(&backup_name);
+    if backup_path.exists() {
+        return;
+    }
+    if let Err(err) = fs::copy(path, &backup_path) {
+        eprintln!("[song-library] daily backup failed: {err}");
+        return;
+    }
+    prune_song_library_backups(path);
+}
+
+fn prune_song_library_backups(path: &Path) {
+    let Some(dir) = path.parent() else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let mut backups: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|candidate| {
+            candidate
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name.starts_with(SONG_LIBRARY_BACKUP_PREFIX) && name.ends_with(".json")
+                })
+        })
+        .collect();
+    if backups.len() <= MAX_SONG_LIBRARY_BACKUPS {
+        return;
+    }
+    // 檔名內含 YYYYMMDD，字典序即時間序；移除最舊的多餘備份
+    backups.sort();
+    let excess = backups.len() - MAX_SONG_LIBRARY_BACKUPS;
+    for stale in backups.into_iter().take(excess) {
+        if let Err(err) = fs::remove_file(&stale) {
+            eprintln!("[song-library] backup prune failed: {err}");
+        }
+    }
 }
 
 fn serialize_song_library_records(songs: &[SongProfileRecord]) -> Result<String, AppError> {

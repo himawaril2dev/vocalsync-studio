@@ -230,6 +230,22 @@ function refreshBackingPitchFromCurrentMelody(): void {
   backingPitchTrack.set(melodyToPitchTrack(applyAlignmentToMelody(melody, offsetSecs)));
 }
 
+/**
+ * 清空工作區，準備開始一首新歌曲。
+ * 不會動到歌單存檔本身；呼叫端應先解除啟用中的歌曲，避免自動儲存把清空後的狀態寫回舊歌。
+ */
+export async function resetWorkspaceForNewSong(): Promise<void> {
+  await clearRuntimeMediaState();
+  lyricsFileName.set("");
+  lyricsLines.set([]);
+  guideVocalEnabled.set(false);
+  await setSpeed(1);
+  await setPitchSemitones(0);
+  await saveProjectSessionNow().catch((err) =>
+    console.warn("[session] project session save failed:", err),
+  );
+}
+
 async function clearRuntimeMediaState(): Promise<void> {
   await invoke("pause_playback").catch(() => {});
   await invoke("clear_recording").catch(() => {});

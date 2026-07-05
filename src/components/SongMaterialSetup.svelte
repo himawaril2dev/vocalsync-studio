@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke, convertFileSrc } from "@tauri-apps/api/core";
-  import { open } from "@tauri-apps/plugin-dialog";
+  import { ask, open } from "@tauri-apps/plugin-dialog";
   import { get } from "svelte/store";
   import { t, tSync } from "../i18n";
   import LyricsPrepTools from "./LyricsPrepTools.svelte";
@@ -29,6 +29,11 @@
     resetBackingState,
   } from "../stores/pitch";
   import { guideVocalEnabled } from "../stores/settings";
+  import {
+    activeSongProfileId,
+    activeSongProfileTitle,
+    startNewSong,
+  } from "../stores/songProfiles";
   import { clearLoop, hasRecording } from "../stores/transport";
 
   interface LoadResult {
@@ -50,7 +55,22 @@
     | null
     | { key: string; vars?: Record<string, string | number> };
 
+  const UVR_GUIDE_COLLAPSED_KEY = "vocalsync.uvrGuideCollapsed.v1";
+
+  function readUvrGuideCollapsed(): boolean {
+    if (typeof localStorage === "undefined") return false;
+    return localStorage.getItem(UVR_GUIDE_COLLAPSED_KEY) === "1";
+  }
+
   let showUvrGuide = $state(false);
+  let uvrGuideCollapsed = $state(readUvrGuideCollapsed());
+
+  function toggleUvrGuideCollapsed(): void {
+    uvrGuideCollapsed = !uvrGuideCollapsed;
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(UVR_GUIDE_COLLAPSED_KEY, uvrGuideCollapsed ? "1" : "0");
+    }
+  }
   let pendingStatusText = $state<string | null>(null);
   let lyricsStatus = $state<LyricsStatusMessage>(null);
   let embeddedSubtitles = $state<SubtitleStream[]>([]);
@@ -246,6 +266,25 @@
     });
     if (!path) return;
 
+    // 有啟用中歌曲時匯入不同的伴奏檔：先確認是否要另存為新歌曲，
+    // 避免自動儲存把新素材寫進舊歌的存檔（造成歌單失序、時間軸遺失）
+    if (get(activeSongProfileId) && path !== currentBackingPath) {
+      const replaceCurrent = await ask(
+        tSync("setup.backing.guard.message", {
+          title: get(activeSongProfileTitle),
+        }),
+        {
+          title: tSync("setup.backing.guard.title"),
+          kind: "warning",
+          okLabel: tSync("setup.backing.guard.replace"),
+          cancelLabel: tSync("setup.backing.guard.startNew"),
+        },
+      );
+      if (!replaceCurrent) {
+        await startNewSong();
+      }
+    }
+
     try {
       await loadBackingFromPath(path);
     } catch (error) {
@@ -434,8 +473,20 @@
     return `${sign}${seconds.toFixed(3)} ${tSync("setup.alignment.offset.seconds")}`;
   }
 
+  /** 現有歌詞（可能含調好的時間軸）即將被覆蓋時，先請使用者確認 */
+  async function confirmOverwriteLyrics(): Promise<boolean> {
+    const lines = get(lyricsLines);
+    if (lines.length === 0) return true;
+    const timed = lines.filter((line) => line.end_ms > line.start_ms).length;
+    return ask(
+      tSync("setup.lyrics.guard.reimportMessage", { n: lines.length, timed }),
+      { title: tSync("setup.lyrics.guard.reimportTitle"), kind: "warning" },
+    );
+  }
+
   async function extractAndLoadSubtitle(sub: SubtitleStream): Promise<void> {
     if (!currentBackingPath || subtitleExtracting) return;
+    if (!(await confirmOverwriteLyrics())) return;
     subtitleExtracting = true;
     lyricsStatus = {
       key: "setup.lyrics.status.subExtracting",
@@ -481,6 +532,7 @@
       ],
     });
     if (!path) return;
+    if (!(await confirmOverwriteLyrics())) return;
 
     lyricsStatus = { key: "setup.lyrics.status.parsing" };
     try {
@@ -500,7 +552,15 @@
     }
   }
 
-  function clearLyrics(): void {
+  async function clearLyrics(): Promise<void> {
+    const lines = get(lyricsLines);
+    if (lines.length > 0) {
+      const confirmed = await ask(
+        tSync("setup.lyrics.guard.clearMessage", { n: lines.length }),
+        { title: tSync("setup.lyrics.guard.clearTitle"), kind: "warning" },
+      );
+      if (!confirmed) return;
+    }
     lyricsLines.set([]);
     lyricsFileName.set("");
     lyricsStatus = null;
@@ -513,36 +573,50 @@
     <div class="section-body song-source-section">
       <p class="hint">{$t("songLibrary.material.song.hint")}</p>
 
-      <button class="uvr-info-card" type="button" onclick={() => (showUvrGuide = true)}>
-        <div>
-          <strong>{$t("uvrGuide.entry.title")}</strong>
-          <p>{$t("uvrGuide.entry.body")}</p>
-        </div>
-        <span>{$t("uvrGuide.entry.action")}</span>
-      </button>
+      <div class="uvr-guide-block">
+        <button
+          class="uvr-guide-toggle"
+          type="button"
+          onclick={toggleUvrGuideCollapsed}
+          aria-expanded={!uvrGuideCollapsed}
+        >
+          <span class="uvr-guide-toggle-icon">{uvrGuideCollapsed ? "▸" : "▾"}</span>
+          <span>{$t("setup.uvrGuide.toggle")}</span>
+        </button>
 
-      <div class="uvr-flow-grid">
-        <article class="uvr-step-card">
-          <span>1</span>
-          <div>
-            <strong>{$t("setup.separation.external.step1.title")}</strong>
-            <p>{$t("setup.separation.external.step1.body")}</p>
+        {#if !uvrGuideCollapsed}
+          <button class="uvr-info-card" type="button" onclick={() => (showUvrGuide = true)}>
+            <div>
+              <strong>{$t("uvrGuide.entry.title")}</strong>
+              <p>{$t("uvrGuide.entry.body")}</p>
+            </div>
+            <span>{$t("uvrGuide.entry.action")}</span>
+          </button>
+
+          <div class="uvr-flow-grid">
+            <article class="uvr-step-card">
+              <span>1</span>
+              <div>
+                <strong>{$t("setup.separation.external.step1.title")}</strong>
+                <p>{$t("setup.separation.external.step1.body")}</p>
+              </div>
+            </article>
+            <article class="uvr-step-card">
+              <span>2</span>
+              <div>
+                <strong>{$t("setup.separation.external.step2.title")}</strong>
+                <p>{$t("setup.separation.external.step2.body")}</p>
+              </div>
+            </article>
+            <article class="uvr-step-card">
+              <span>3</span>
+              <div>
+                <strong>{$t("setup.separation.external.step3.title")}</strong>
+                <p>{$t("setup.separation.external.step3.body")}</p>
+              </div>
+            </article>
           </div>
-        </article>
-        <article class="uvr-step-card">
-          <span>2</span>
-          <div>
-            <strong>{$t("setup.separation.external.step2.title")}</strong>
-            <p>{$t("setup.separation.external.step2.body")}</p>
-          </div>
-        </article>
-        <article class="uvr-step-card">
-          <span>3</span>
-          <div>
-            <strong>{$t("setup.separation.external.step3.title")}</strong>
-            <p>{$t("setup.separation.external.step3.body")}</p>
-          </div>
-        </article>
+        {/if}
       </div>
 
       <div class="source-grid">
@@ -826,6 +900,37 @@
   .sub-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .uvr-guide-block {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .uvr-guide-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    align-self: flex-start;
+    padding: 6px 12px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-bg);
+    color: var(--color-text-secondary);
+    font: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+
+  .uvr-guide-toggle:hover {
+    background: var(--color-bg-hover);
+    color: var(--color-text);
+  }
+
+  .uvr-guide-toggle-icon {
+    color: var(--color-brand);
+    font-size: 0.8rem;
   }
 
   .uvr-info-card {

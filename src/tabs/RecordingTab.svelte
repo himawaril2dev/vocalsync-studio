@@ -1114,71 +1114,8 @@
     <div class="time-display time-end">{fmtTime($duration)}</div>
   </div>
 
-  <!-- 控制列：音量 + 調整 + 匯出 -->
-  <div class="control-row">
-    <div class="vu-compact">
-      <div class="vu-item">
-        <span class="vu-label">{$t("recording.volume.backing")}</span>
-        <div class="vu-bar"><div class="vu-fill" style="width: {rmsToWidth($backingRms, 3.0)}%"></div></div>
-        <input type="range" class="vol-slider" min="0" max="1" step="0.01" bind:value={$backingVolume} title={$t("recording.volume.backing.title", { pct: Math.round($backingVolume * 100) })}>
-        <span class="vu-value">{Math.round($backingVolume * 100)}%</span>
-        <button
-          class="vu-reset"
-          onclick={resetBackingVolume}
-          disabled={!hasNonDefaultBacking}
-          aria-label={$t("recording.volume.backing.reset.aria", { pct: Math.round(DEFAULT_BACKING_VOLUME * 100) })}
-          title={$t("recording.volume.backing.reset.title", { pct: Math.round(DEFAULT_BACKING_VOLUME * 100) })}
-        >↺</button>
-      </div>
-      <div class="vu-item">
-        <span class="vu-label">{$t("recording.volume.mic")}</span>
-        <div class="vu-bar"><div class="vu-fill" style="width: {rmsToWidth($micRms, 5.0)}%"></div></div>
-        <input type="range" class="vol-slider" min="0" max="3" step="0.01" bind:value={$micGain} title={$t("recording.volume.mic.title", { pct: Math.round($micGain * 100) })}>
-        <span class="vu-value">{Math.round($micGain * 100)}%</span>
-        <button
-          class="vu-reset"
-          onclick={resetMicGain}
-          disabled={!hasNonDefaultMic}
-          aria-label={$t("recording.volume.mic.reset.aria", { pct: Math.round(DEFAULT_MIC_GAIN * 100) })}
-          title={$t("recording.volume.mic.reset.title", { pct: Math.round(DEFAULT_MIC_GAIN * 100) })}
-        >↺</button>
-      </div>
-      <div class:disabled-guide={!$guideVocalPath} class="vu-item guide-item">
-        <label
-          class="vu-enable"
-          title={$guideVocalPath
-            ? $t("recording.volume.guide.enable.title")
-            : $t("recording.volume.guide.disabledTitle")}
-        >
-          <input type="checkbox" bind:checked={$guideVocalEnabled} disabled={!$guideVocalPath} />
-        </label>
-        <span class="vu-label">{$t("recording.volume.guide")}</span>
-        <div class="vu-bar"><div class="vu-fill guide-fill" style="width: {$guideVocalPath && $guideVocalEnabled ? Math.round($guideVolume * 100) : 0}%"></div></div>
-        <input
-          type="range"
-          class="vol-slider"
-          min="0"
-          max="1"
-          step="0.01"
-          bind:value={$guideVolume}
-          disabled={!$guideVocalPath || !$guideVocalEnabled}
-          title={$guideVocalPath
-            ? $t("recording.volume.guide.title", { pct: Math.round($guideVolume * 100) })
-            : $t("recording.volume.guide.disabledTitle")}
-        >
-        <span class="vu-value">{Math.round($guideVolume * 100)}%</span>
-        <button
-          class="vu-reset"
-          onclick={resetGuideVolume}
-          disabled={!$guideVocalPath || !hasNonDefaultGuide}
-          aria-label={$t("recording.volume.guide.reset.aria", { pct: Math.round(DEFAULT_GUIDE_VOLUME * 100) })}
-          title={$t("recording.volume.guide.reset.title", { pct: Math.round(DEFAULT_GUIDE_VOLUME * 100) })}
-        >↺</button>
-      </div>
-    </div>
-
-    <div class="divider"></div>
-
+  <!-- 控制列（上層）：播放調整與錄音成品 -->
+  <div class="control-row practice-row">
     <div class="sp-control">
       <span class="sp-label">{$t("recording.speed.label")}</span>
       <button
@@ -1280,6 +1217,70 @@
       />
       {$t("recording.export.naming.label")}
     </label>
+  </div>
+
+  <!-- 控制列（下層）：混音（音量監測與自動平衡） -->
+  <div class="control-row mixer-row">
+    <div class="vu-compact">
+      <div class="vu-item">
+        <span class="vu-label">{$t("recording.volume.backing")}</span>
+        <div class="vu-bar"><div class="vu-fill" style="width: {rmsToWidth($backingRms, 3.0)}%"></div></div>
+        <input type="range" class="vol-slider" min="0" max="1" step="0.01" bind:value={$backingVolume} title={$t("recording.volume.backing.title", { pct: Math.round($backingVolume * 100) })}>
+        <span class="vu-value">{Math.round($backingVolume * 100)}%</span>
+        <button
+          class="vu-reset"
+          onclick={resetBackingVolume}
+          disabled={!hasNonDefaultBacking}
+          aria-label={$t("recording.volume.backing.reset.aria", { pct: Math.round(DEFAULT_BACKING_VOLUME * 100) })}
+          title={$t("recording.volume.backing.reset.title", { pct: Math.round(DEFAULT_BACKING_VOLUME * 100) })}
+        >↺</button>
+      </div>
+      <div class="vu-item">
+        <span class="vu-label">{$t("recording.volume.mic")}</span>
+        <div class="vu-bar"><div class="vu-fill" style="width: {rmsToWidth($micRms, 5.0)}%"></div></div>
+        <input type="range" class="vol-slider" min="0" max="3" step="0.01" bind:value={$micGain} title={$t("recording.volume.mic.title", { pct: Math.round($micGain * 100) })}>
+        <span class="vu-value">{Math.round($micGain * 100)}%</span>
+        <button
+          class="vu-reset"
+          onclick={resetMicGain}
+          disabled={!hasNonDefaultMic}
+          aria-label={$t("recording.volume.mic.reset.aria", { pct: Math.round(DEFAULT_MIC_GAIN * 100) })}
+          title={$t("recording.volume.mic.reset.title", { pct: Math.round(DEFAULT_MIC_GAIN * 100) })}
+        >↺</button>
+      </div>
+      <div class:disabled-guide={!$guideVocalPath} class="vu-item guide-item">
+        <label
+          class="vu-enable"
+          title={$guideVocalPath
+            ? $t("recording.volume.guide.enable.title")
+            : $t("recording.volume.guide.disabledTitle")}
+        >
+          <input type="checkbox" bind:checked={$guideVocalEnabled} disabled={!$guideVocalPath} />
+        </label>
+        <span class="vu-label">{$t("recording.volume.guide")}</span>
+        <div class="vu-bar"><div class="vu-fill guide-fill" style="width: {$guideVocalPath && $guideVocalEnabled ? Math.round($guideVolume * 100) : 0}%"></div></div>
+        <input
+          type="range"
+          class="vol-slider"
+          min="0"
+          max="1"
+          step="0.01"
+          bind:value={$guideVolume}
+          disabled={!$guideVocalPath || !$guideVocalEnabled}
+          title={$guideVocalPath
+            ? $t("recording.volume.guide.title", { pct: Math.round($guideVolume * 100) })
+            : $t("recording.volume.guide.disabledTitle")}
+        >
+        <span class="vu-value">{Math.round($guideVolume * 100)}%</span>
+        <button
+          class="vu-reset"
+          onclick={resetGuideVolume}
+          disabled={!$guideVocalPath || !hasNonDefaultGuide}
+          aria-label={$t("recording.volume.guide.reset.aria", { pct: Math.round(DEFAULT_GUIDE_VOLUME * 100) })}
+          title={$t("recording.volume.guide.reset.title", { pct: Math.round(DEFAULT_GUIDE_VOLUME * 100) })}
+        >↺</button>
+      </div>
+    </div>
 
     <div class="auto-balance-group">
       <button
@@ -1716,7 +1717,33 @@
     padding: var(--space-sm) var(--space-lg);
     display: flex;
     align-items: center;
-    gap: var(--space-md);
+    gap: var(--space-sm) var(--space-md);
+    flex-wrap: wrap;
+  }
+
+  /* 上層：匯出等成品操作靠右，與練唱調整分開 */
+  .practice-row .export {
+    margin-left: auto;
+  }
+
+  /* 下層：混音列讓音量滑桿吃滿可用寬度，更好拖 */
+  .mixer-row .vu-compact {
+    flex: 1 1 320px;
+    min-width: 0;
+  }
+
+  .mixer-row .vu-item {
+    min-width: 0;
+  }
+
+  .mixer-row .vu-bar {
+    width: 80px;
+  }
+
+  .mixer-row .vol-slider {
+    width: auto;
+    flex: 1 1 90px;
+    max-width: 240px;
   }
 
   .divider {

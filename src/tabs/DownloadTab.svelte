@@ -54,6 +54,12 @@
   let isSelectingLocalYtdlp = $state(false);
   let isTrustingLocalYtdlp = $state(false);
 
+  // 工具都正常時預設收成一行狀態列，把版面留給下載表單
+  let toolPanelExpanded = $state(false);
+  let toolsAllOk = $derived(
+    ($toolStatus?.ytdlp_available ?? false) && ($toolStatus?.ffmpeg_available ?? false),
+  );
+
   onMount(async () => {
     try {
     // 檢查工具狀態
@@ -440,6 +446,34 @@
 
   <!-- 工具狀態 -->
   {#if $toolStatus}
+    {#if toolsAllOk && !toolPanelExpanded}
+      <!-- 工具都正常：收成一行狀態列，需要時再展開管理 -->
+      <div class="tool-status compact">
+        <div class="status-item ok">
+          <span class="status-dot"></span>
+          <span title={$toolStatus.ytdlp_path ?? ""}>yt-dlp {$toolStatus.ytdlp_version ?? ""}</span>
+          {#if !$toolStatus.ytdlp_hash_matches_managed}
+            <span
+              class="trust-badge"
+              title={$t("download.tool.ytdlp.localTrustedHint")}
+            >{$t("download.tool.ytdlp.localTrustedBadge")}</span>
+          {/if}
+        </div>
+        <div class="status-item ok">
+          <span class="status-dot"></span>
+          <span title={$toolStatus.ffmpeg_path ?? ""}>FFmpeg {$t("download.tool.ffmpeg.installed")}</span>
+        </div>
+        {#if $toolStatus.ytdlp_update_available}
+          <span class="update-badge">{$t("download.tool.updateAvailable")}</span>
+        {/if}
+        <button
+          class="btn btn-secondary btn-tool-toggle"
+          onclick={() => (toolPanelExpanded = true)}
+        >
+          {$t("download.tool.manage")}
+        </button>
+      </div>
+    {:else}
     <div class="tool-status">
       <div class="status-item" class:ok={$toolStatus.ytdlp_available} class:missing={!$toolStatus.ytdlp_available}>
         <span class="status-dot"></span>
@@ -502,6 +536,14 @@
               : $toolStatus.ytdlp_update_available
                 ? $t("download.tool.ytdlp.update")
                 : $t("download.tool.ytdlp.upToDate")}
+          </button>
+        {/if}
+        {#if toolsAllOk}
+          <button
+            class="btn btn-secondary btn-tool-update"
+            onclick={() => (toolPanelExpanded = false)}
+          >
+            {$t("download.tool.collapse")}
           </button>
         {/if}
       </div>
@@ -620,6 +662,7 @@
           </div>
         {/if}
       </div>
+    {/if}
     {/if}
   {/if}
 
@@ -800,6 +843,28 @@
     flex-wrap: wrap;
     gap: 16px;
     font-size: 13px;
+  }
+
+  .tool-status.compact {
+    gap: 12px;
+    padding: 6px 12px;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: var(--color-bg-surface);
+  }
+
+  .btn-tool-toggle {
+    margin-left: auto;
+  }
+
+  .update-badge {
+    border: 1px solid #e5cf96;
+    border-radius: 999px;
+    color: #755700;
+    background: #fff8e1;
+    font-size: 11px;
+    padding: 2px 8px;
+    white-space: nowrap;
   }
 
   .tool-actions {

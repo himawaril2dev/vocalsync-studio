@@ -16,6 +16,7 @@
     saveCurrentSongProfile,
     songProfileDirty,
     songProfiles,
+    startNewSong,
     updateActiveSongProfile,
     type SongProfileSummary,
   } from "../stores/songProfiles";
@@ -29,6 +30,7 @@
   let editingId = $state<string | null>(null);
   let editTitle = $state("");
   let editArtist = $state("");
+  let startingNew = $state(false);
 
   let filteredProfiles = $derived.by(() => {
     const query = searchText.trim().toLowerCase();
@@ -121,6 +123,26 @@
     }
   }
 
+  async function startNewSongFlow(): Promise<void> {
+    if ($isTransportRunning || startingNew || busyId) return;
+    const confirmed = await ask(tSync("songLibrary.startNew.message"), {
+      title: tSync("songLibrary.startNew.title"),
+      kind: "warning",
+    });
+    if (!confirmed) return;
+    startingNew = true;
+    try {
+      await startNewSong();
+      newTitle = "";
+      newArtist = "";
+      showToast(tSync("songLibrary.startNew.done"), "success");
+    } catch (error) {
+      showToast(tSync("songLibrary.startNew.failed", { error: String(error) }), "error");
+    } finally {
+      startingNew = false;
+    }
+  }
+
   async function loadProfile(profile: SongProfileSummary): Promise<void> {
     if ($isTransportRunning || busyId) return;
     if ($hasRecording) {
@@ -194,18 +216,42 @@
       <h1>{$t("songLibrary.title")}</h1>
       <p>{$t("songLibrary.subtitle")}</p>
     </div>
-    {#if $activeSongProfileId}
-      <button
-        class="primary-action"
-        onclick={updateProfile}
-        disabled={updating || !$songProfileDirty}
-      >
-        {$t($songProfileDirty ? "songLibrary.action.updateActive" : "songLibrary.action.upToDate", {
-          title: $activeSongProfileTitle,
-        })}
-      </button>
-    {/if}
+    <div class="current-song-bar">
+      <div class="current-song-info">
+        <span class="current-label">{$t("songLibrary.current.label")}</span>
+        <strong class="current-title">
+          {$activeSongProfileTitle || $t("songLibrary.current.none")}
+        </strong>
+        {#if $activeSongProfileId}
+          {#if $songProfileDirty}
+            <span class="state-badge dirty">{$t("songLibrary.current.dirty")}</span>
+          {:else}
+            <span class="state-badge saved">{$t("songLibrary.current.saved")}</span>
+          {/if}
+        {/if}
+      </div>
+      <div class="header-actions">
+        <button
+          class="secondary-action"
+          onclick={startNewSongFlow}
+          disabled={startingNew || $isTransportRunning}
+        >
+          {$t("songLibrary.action.startNew")}
+        </button>
+        {#if $activeSongProfileId}
+          <button
+            class="primary-action"
+            onclick={updateProfile}
+            disabled={updating || !$songProfileDirty}
+          >
+            {$t($songProfileDirty ? "songLibrary.action.saveActive" : "songLibrary.action.saved")}
+          </button>
+        {/if}
+      </div>
+    </div>
   </header>
+
+  <SongMaterialSetup />
 
   <section class="create-panel">
     <div class="create-copy">
@@ -233,8 +279,6 @@
       {$t("songLibrary.action.saveNew")}
     </button>
   </section>
-
-  <SongMaterialSetup />
 
   <section class="library-toolbar">
     <input
@@ -372,6 +416,62 @@
     gap: var(--space-lg);
   }
 
+  .current-song-bar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: var(--space-md) var(--space-lg);
+    min-width: 0;
+  }
+
+  .current-song-info {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    min-width: 0;
+  }
+
+  .current-label {
+    flex-shrink: 0;
+    color: var(--color-text-secondary);
+    font-size: 0.85rem;
+  }
+
+  .current-title {
+    color: var(--color-text);
+    font-size: 1rem;
+    max-width: 340px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .state-badge {
+    flex-shrink: 0;
+    border-radius: var(--radius-sm);
+    font-size: 0.75rem;
+    font-weight: 800;
+    padding: 3px 8px;
+  }
+
+  .state-badge.dirty {
+    background: var(--color-warning-bg);
+    color: var(--color-warning-text);
+  }
+
+  .state-badge.saved {
+    background: rgba(117, 87, 0, 0.12);
+    color: var(--color-brand);
+  }
+
+  .header-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    align-items: center;
+  }
+
   h1,
   h2,
   p {
@@ -441,8 +541,8 @@
   }
 
   .song-card.active {
-    border-color: var(--color-primary);
-    box-shadow: 0 0 0 1px var(--color-primary);
+    border-color: var(--color-brand);
+    box-shadow: 0 0 0 1px var(--color-brand);
   }
 
   .song-title-row {
@@ -462,7 +562,7 @@
     flex-shrink: 0;
     border-radius: var(--radius-sm);
     background: rgba(117, 87, 0, 0.12);
-    color: var(--color-primary);
+    color: var(--color-brand);
     font-size: 0.75rem;
     font-weight: 800;
     padding: 3px 7px;
